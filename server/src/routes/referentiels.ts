@@ -1,0 +1,105 @@
+import { Router } from 'express';
+import { z } from 'zod';
+import { db, logAudit } from '../db';
+import { authMiddleware, requireRole } from '../auth';
+
+export const referentielsRouter = Router();
+
+referentielsRouter.use(authMiddleware);
+
+// Zones
+referentielsRouter.get('/zones', (_req, res) => {
+  const zones = db.prepare('SELECT * FROM zones ORDER BY code').all();
+  res.json(zones);
+});
+
+const zoneSchema = z.object({
+  code: z.string().min(1),
+  libelle: z.string().min(1),
+  coefficient: z.number().positive(),
+  description: z.string().optional().nullable(),
+});
+
+referentielsRouter.post('/zones', requireRole('admin'), (req, res) => {
+  const parsed = zoneSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const info = db
+    .prepare(
+      `INSERT INTO zones (code, libelle, coefficient, description) VALUES (?, ?, ?, ?)`,
+    )
+    .run(parsed.data.code, parsed.data.libelle, parsed.data.coefficient, parsed.data.description ?? null);
+  logAudit({ userId: req.user!.id, action: 'create', entite: 'zone', entiteId: Number(info.lastInsertRowid) });
+  res.status(201).json({ id: info.lastInsertRowid });
+});
+
+// Types de dispositifs
+referentielsRouter.get('/types', (_req, res) => {
+  const types = db.prepare('SELECT * FROM types_dispositifs ORDER BY categorie, libelle').all();
+  res.json(types);
+});
+
+const typeSchema = z.object({
+  code: z.string().min(1),
+  libelle: z.string().min(1),
+  categorie: z.enum(['publicitaire', 'preenseigne', 'enseigne']),
+});
+
+referentielsRouter.post('/types', requireRole('admin'), (req, res) => {
+  const parsed = typeSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const info = db
+    .prepare('INSERT INTO types_dispositifs (code, libelle, categorie) VALUES (?, ?, ?)')
+    .run(parsed.data.code, parsed.data.libelle, parsed.data.categorie);
+  logAudit({ userId: req.user!.id, action: 'create', entite: 'type_dispositif', entiteId: Number(info.lastInsertRowid) });
+  res.status(201).json({ id: info.lastInsertRowid });
+});
+
+// Baremes
+referentielsRouter.get('/baremes', (req, res) => {
+  const annee = req.query.annee ? Number(req.query.annee) : null;
+  const rows = annee
+    ? db.prepare('SELECT * FROM baremes WHERE annee = ? ORDER BY categorie, surface_min').all(annee)
+    : db.prepare('SELECT * FROM baremes ORDER BY annee DESC, categorie, surface_min').all();
+  res.json(rows);
+});
+
+const baremeSchema = z.object({
+  annee: z.number().int().min(2008).max(2100),
+  categorie: z.enum(['publicitaire', 'preenseigne', 'enseigne']),
+  surface_min: z.number().min(0),
+  surface_max: z.number().positive().nullable().optional(),
+  tarif_m2: z.number().min(0).nullable().optional(),
+  tarif_fixe: z.number().min(0).nullable().optional(),
+  exonere: z.boolean().optional(),
+  libelle: z.string().min(1),
+});
+
+referentielsRouter.post('/baremes', requireRole('admin'), (req, res) => {
+  const parsed = baremeSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const d = parsed.data;
+  const info = db
+    .prepare(
+      `INSERT INTO baremes (annee, categorie, surface_min, surface_max, tarif_m2, tarif_fixe, exonere, libelle)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      d.annee,
+      d.categorie,
+      d.surface_min,
+      d.surface_max ?? null,
+      d.tarif_m2 ?? null,
+      d.tarif_fixe ?? null,
+      d.exonere ? 1 : 0,
+      d.libelle,
+    );
+  logAudit({ userId: req.user!.id, action: 'create', entite: 'bareme', entiteId: Number(info.lastInsertRowid) });
+  res.status(201).json({ id: info.lastInsertRowid });
+});
+
+referentielsRouter.delete('/baremes/:id', requireRole('admin'), (req, res) => {
+  const info = db.prepare('DELETE FROM baremes WHERE id = ?').run(req.params.id);
+  if (info.changes === 0) return res.status(404).json({ error: 'Introuvable' });
+  logAudit({ userId: req.user!.id, action: 'delete', entite: 'bareme', entiteId: Number(req.params.id) });
+  res.status(204).end();
+});
