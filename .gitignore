@@ -8,8 +8,9 @@ build/
 coverage/
 .vscode/
 .idea/
-data/*.db
-data/*.db-journal
-data/*.db-wal
-data/*.db-shm
+**/data/*.db
+**/data/*.db-journal
+**/data/*.db-wal
+**/data/*.db-shm
 uploads/
+TLPE/
