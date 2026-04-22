@@ -76,6 +76,33 @@ Ouvrir ensuite http://localhost:5173.
 7. Reconnexion **contribuable** → il ne voit que ses propres déclarations et titres.
 8. **Simulateur** : tester des cas (enseigne ≤ 7m² exonérée, enseigne 7-12m² forfait 75€, double face, prorata).
 
+## Mise à jour annuelle des barèmes (US1.1)
+
+Le module Référentiels supporte maintenant :
+
+- import unitaire via formulaire (`/referentiels`, onglet Barème)
+- import batch CSV via `POST /api/referentiels/baremes/import`
+- historique des millésimes via `GET /api/referentiels/baremes/history`
+- année active calculée via `GET /api/referentiels/baremes/active-year`
+- activation d'un millésime via `POST /api/referentiels/baremes/activate-year/:annee`
+
+Format CSV attendu (`,` ou `;`) :
+
+```csv
+annee,categorie,surface_min,surface_max,tarif_m2,tarif_fixe,exonere,libelle
+2026,publicitaire,0,8,15.50,,0,Publicitaire <= 8 m2
+2026,enseigne,7,12,,75,0,Enseigne 7-12 m2 (forfait)
+```
+
+Job d'activation (à planifier au 1er janvier):
+
+```bash
+npm run job:activate-baremes --workspace=server
+# optionnel: TLPE_BAREME_YEAR=2027 npm run job:activate-baremes --workspace=server
+```
+
+Chaque création/modification/activation est journalisée dans `audit_log` via `logAudit()`.
+
 ## Barème intégré
 
 Barèmes 2024 et 2025 (revalorisation indicative +2%) pré-chargés pour les 3 catégories :
