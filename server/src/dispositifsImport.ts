@@ -291,21 +291,16 @@ export async function validateDispositifsImportRows(
       }
     }
 
-    const addressParts = adresse.split(',').map((part) => part.trim()).filter(Boolean);
     let adresseRue = adresse || null;
     let adresseCp: string | null = null;
     let adresseVille: string | null = null;
 
-    if (addressParts.length > 1) {
-      adresseRue = addressParts[0];
-      const cpVillePart = addressParts.slice(1).join(' ');
-      const cpVilleMatch = cpVillePart.match(/(\d{5})\s+(.+)/);
-      if (cpVilleMatch) {
-        adresseCp = cpVilleMatch[1];
-        adresseVille = cpVilleMatch[2].trim();
-      } else {
-        adresseVille = cpVillePart || null;
-      }
+    const cpVilleFromTailMatch = adresse.match(/^(.*),\s*(\d{5})\s+(.+)$/);
+    if (cpVilleFromTailMatch) {
+      const ruePart = cpVilleFromTailMatch[1].trim();
+      adresseRue = ruePart || adresse;
+      adresseCp = cpVilleFromTailMatch[2];
+      adresseVille = cpVilleFromTailMatch[3].trim() || null;
     }
 
     const geocodeFromCache = adresse ? geocodeCache.get(adresse) ?? null : null;
