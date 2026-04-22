@@ -124,14 +124,29 @@ const typeSchema = z.object({
   categorie: z.enum(['publicitaire', 'preenseigne', 'enseigne']),
 });
 
-const exonerationSchema = z.object({
-  type: z.enum(['droit', 'deliberee', 'eco']),
-  critere: z.record(z.unknown()),
-  taux: z.number().min(0).max(1),
-  date_debut: z.string().optional().nullable(),
-  date_fin: z.string().optional().nullable(),
-  active: z.boolean().optional(),
-});
+const isoDateRegex = /^\d{4}-\d{2}-\d{2}$/;
+const isoDateFieldSchema = z
+  .string()
+  .regex(isoDateRegex, 'Date invalide (format attendu YYYY-MM-DD)')
+  .optional()
+  .nullable();
+
+const exonerationSchema = z
+  .object({
+    type: z.enum(['droit', 'deliberee', 'eco']),
+    critere: z.record(z.unknown()),
+    taux: z.number().min(0).max(1),
+    date_debut: isoDateFieldSchema,
+    date_fin: isoDateFieldSchema,
+    active: z.boolean().optional(),
+  })
+  .refine(
+    (data) => !data.date_debut || !data.date_fin || data.date_fin >= data.date_debut,
+    {
+      message: 'date_fin doit etre superieure ou egale a date_debut',
+      path: ['date_fin'],
+    },
+  );
 
 referentielsRouter.post('/types', requireRole('admin'), (req, res) => {
   const parsed = typeSchema.safeParse(req.body);
