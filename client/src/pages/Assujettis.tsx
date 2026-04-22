@@ -54,7 +54,27 @@ export default function Assujettis() {
         </div>
         {canWrite && (
           <div style={{ display: 'flex', gap: 8 }}>
-            <button className="btn secondary" onClick={() => window.open('/api/assujettis/import/template', '_blank')}>Template CSV</button>
+            <button
+              className="btn secondary"
+              onClick={async () => {
+                try {
+                  const csv = await api<string>('/api/assujettis/import/template', {
+                    headers: { Accept: 'text/csv' },
+                  });
+                  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = 'assujettis-template.csv';
+                  a.click();
+                  URL.revokeObjectURL(url);
+                } catch (error) {
+                  setErr((error as Error).message);
+                }
+              }}
+            >
+              Template CSV
+            </button>
             <button className="btn secondary" onClick={() => setShowImport(true)}>Importer CSV/Excel</button>
             <button className="btn" onClick={() => setShowModal(true)}>+ Nouvel assujetti</button>
           </div>

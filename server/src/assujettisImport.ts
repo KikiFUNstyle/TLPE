@@ -293,11 +293,22 @@ export function validateImportRows(rows: RawImportRow[]): ValidationResult {
   };
 }
 
-function genIdentifiant(): string {
+function genIdentifiantCandidate(): string {
   const y = new Date().getFullYear();
-  const count = (db.prepare('SELECT COUNT(*) AS c FROM assujettis').get() as { c: number }).c;
-  const next = String(count + 1).padStart(5, '0');
-  return `TLPE-${y}-${next}`;
+  const prefix = `TLPE-${y}-`;
+  const row = db
+    .prepare(
+      `SELECT identifiant_tlpe
+       FROM assujettis
+       WHERE identifiant_tlpe LIKE ?
+       ORDER BY identifiant_tlpe DESC
+       LIMIT 1`,
+    )
+    .get(`${prefix}%`) as { identifiant_tlpe: string } | undefined;
+
+  const current = row?.identifiant_tlpe?.slice(prefix.length) || '00000';
+  const next = Number(current) + 1;
+  return `${prefix}${String(next).padStart(5, '0')}`;
 }
 
 export function executeAssujettisImport(rows: NormalizedImportRow[], userId: number, ip?: string | null): ImportExecutionResult {
@@ -357,26 +368,39 @@ export function executeAssujettisImport(rows: NormalizedImportRow[], userId: num
         );
         updated += 1;
       } else {
-        const identifiant = row.identifiant_tlpe || genIdentifiant();
-        insertStmt.run(
-          identifiant,
-          row.raison_sociale,
-          row.siret,
-          row.forme_juridique,
-          row.adresse_rue,
-          row.adresse_cp,
-          row.adresse_ville,
-          row.adresse_pays,
-          row.contact_nom,
-          row.contact_prenom,
-          row.contact_fonction,
-          row.email,
-          row.telephone,
-          row.portail_actif,
-          row.statut,
-          row.notes,
-        );
-        created += 1;
+        let attempts = 0;
+        while (attempts < 5) {
+          attempts += 1;
+          const identifiant = row.identifiant_tlpe || genIdentifiantCandidate();
+          try {
+            insertStmt.run(
+              identifiant,
+              row.raison_sociale,
+              row.siret,
+              row.forme_juridique,
+              row.adresse_rue,
+              row.adresse_cp,
+              row.adresse_ville,
+              row.adresse_pays,
+              row.contact_nom,
+              row.contact_prenom,
+              row.contact_fonction,
+              row.email,
+              row.telephone,
+              row.portail_actif,
+              row.statut,
+              row.notes,
+            );
+            created += 1;
+            break;
+          } catch (error) {
+            const message = error instanceof Error ? error.message : '';
+            if (!row.identifiant_tlpe && message.includes('assujettis.identifiant_tlpe') && attempts < 5) {
+              continue;
+            }
+            throw error;
+          }
+        }
       }
     }
   });
