@@ -70,6 +70,21 @@ Depuis l'écran **Assujettis** (rôle admin/gestionnaire) :
 
 Contrôles appliqués : SIRET (Luhn), email, champs obligatoires, doublons, cohérence identifiant/SIRET.
 
+## Import en masse des dispositifs (US2.2)
+
+Depuis l'écran **Dispositifs** (rôles admin/gestionnaire/controleur) :
+
+1. Télécharger le **Template CSV**.
+2. Préparer un fichier `.csv` ou `.xlsx` avec les colonnes :
+   `identifiant_assujetti, type_code, adresse, lat, lon, surface, faces, date_pose, zone_code, statut`.
+3. Lancer **Pré-contrôle** pour obtenir le rapport d'anomalies avant commit.
+4. Importer en choisissant :
+   - **Tout annuler si anomalies** (transaction annulée en cas d'erreur),
+   - **Ignorer les lignes en erreur** (seules les lignes valides sont importées).
+5. Optionnel : cocher **Geocoder via BAN** pour compléter `lat/lon` quand absents.
+
+Pré-contrôles appliqués : assujetti existant, type référentiel, zone connue (ou calculée par coordonnées), surface > 0, nombre de faces entre 1 et 4, statut valide, format de date `YYYY-MM-DD`.
+
 ### Comptes de démonstration
 
 | Rôle | Email | Mot de passe |

@@ -10,7 +10,7 @@
     "start": "node dist/index.js",
     "seed": "tsx src/seed.ts",
     "job:activate-baremes": "node dist/jobs/activateBaremes.js",
-    "test": "tsx --test src/calculator.test.ts src/baremes.test.ts src/zones.test.ts src/assujettisImport.test.ts"
+    "test": "tsx --test src/calculator.test.ts src/baremes.test.ts src/zones.test.ts src/assujettisImport.test.ts src/dispositifsImport.test.ts"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

@@ -24,11 +24,24 @@ interface Zone {
   coefficient: number;
 }
 interface Assujetti { id: number; identifiant_tlpe: string; raison_sociale: string; }
+interface ImportAnomaly {
+  line: number;
+  field: string;
+  message: string;
+}
+
+interface ImportPreviewResponse {
+  total: number;
+  valid: number;
+  rejected: number;
+  anomalies: ImportAnomaly[];
+}
 
 export default function Dispositifs() {
   const { hasRole } = useAuth();
   const [rows, setRows] = useState<Dispositif[]>([]);
   const [showModal, setShowModal] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [q, setQ] = useState('');
   const [err, setErr] = useState<string | null>(null);
 
@@ -48,7 +61,33 @@ export default function Dispositifs() {
           <h1>Dispositifs</h1>
           <p>Enseignes, preenseignes et dispositifs publicitaires recenses.</p>
         </div>
-        {canWrite && <button className="btn" onClick={() => setShowModal(true)}>+ Nouveau dispositif</button>}
+        {canWrite && (
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              className="btn secondary"
+              onClick={async () => {
+                try {
+                  const csv = await api<string>('/api/dispositifs/import/template', {
+                    headers: { Accept: 'text/csv' },
+                  });
+                  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = 'dispositifs-template.csv';
+                  a.click();
+                  URL.revokeObjectURL(url);
+                } catch (error) {
+                  setErr((error as Error).message);
+                }
+              }}
+            >
+              Template CSV
+            </button>
+            <button className="btn secondary" onClick={() => setShowImport(true)}>Importer CSV/Excel</button>
+            <button className="btn" onClick={() => setShowModal(true)}>+ Nouveau dispositif</button>
+          </div>
+        )}
       </div>
 
       {err && <div className="alert error">{err}</div>}
@@ -86,8 +125,170 @@ export default function Dispositifs() {
         </table>
       </div>
 
+      {showImport && <ImportModal onClose={() => setShowImport(false)} onImported={() => { setShowImport(false); load(); }} />}
       {showModal && <CreationModal onClose={() => setShowModal(false)} onCreated={() => { setShowModal(false); load(); }} />}
     </>
+  );
+}
+
+function ImportModal({ onClose, onImported }: { onClose: () => void; onImported: () => void }) {
+  const [file, setFile] = useState<File | null>(null);
+  const [preview, setPreview] = useState<ImportPreviewResponse | null>(null);
+  const [errorMode, setErrorMode] = useState<'abort' | 'skip'>('abort');
+  const [geocodeWithBan, setGeocodeWithBan] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const readFileBase64 = (input: File) =>
+    new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const raw = String(reader.result || '');
+        const comma = raw.indexOf(',');
+        resolve(comma >= 0 ? raw.slice(comma + 1) : raw);
+      };
+      reader.onerror = () => reject(new Error('Impossible de lire le fichier'));
+      reader.readAsDataURL(input);
+    });
+
+  const previewImport = async () => {
+    if (!file) {
+      setErr('Veuillez choisir un fichier CSV ou Excel');
+      return;
+    }
+    setErr(null);
+    setLoading(true);
+    try {
+      const contentBase64 = await readFileBase64(file);
+      const response = await api<ImportPreviewResponse>('/api/dispositifs/import', {
+        method: 'POST',
+        body: JSON.stringify({
+          fileName: file.name,
+          contentBase64,
+          mode: 'preview',
+          onError: errorMode,
+          geocodeWithBan,
+        }),
+      });
+      setPreview(response);
+    } catch (error) {
+      setErr((error as Error).message);
+      setPreview(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const commitImport = async () => {
+    if (!file) {
+      setErr('Veuillez choisir un fichier CSV ou Excel');
+      return;
+    }
+    setErr(null);
+    setLoading(true);
+    try {
+      const contentBase64 = await readFileBase64(file);
+      await api('/api/dispositifs/import', {
+        method: 'POST',
+        body: JSON.stringify({
+          fileName: file.name,
+          contentBase64,
+          mode: 'commit',
+          onError: errorMode,
+          geocodeWithBan,
+        }),
+      });
+      onImported();
+    } catch (error) {
+      setErr((error as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="dialog-backdrop" onClick={onClose}>
+      <div className="dialog" onClick={(e) => e.stopPropagation()}>
+        <h2>Import en masse des dispositifs</h2>
+        {err && <div className="alert error">{err}</div>}
+
+        <div className="form">
+          <div>
+            <label>Fichier (.csv, .xlsx, .xls)</label>
+            <input
+              type="file"
+              accept=".csv,.xlsx,.xls"
+              onChange={(e) => {
+                setFile(e.target.files?.[0] ?? null);
+                setPreview(null);
+              }}
+            />
+          </div>
+
+          <div>
+            <label>Gestion des erreurs</label>
+            <select value={errorMode} onChange={(e) => setErrorMode(e.target.value as 'abort' | 'skip')}>
+              <option value="abort">Tout annuler si anomalies</option>
+              <option value="skip">Ignorer les lignes en erreur</option>
+            </select>
+          </div>
+
+          <div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input
+                type="checkbox"
+                checked={geocodeWithBan}
+                onChange={(e) => {
+                  setGeocodeWithBan(e.target.checked);
+                  setPreview(null);
+                }}
+              />
+              Geocoder via BAN si lat/lon absents
+            </label>
+          </div>
+
+          {preview && (
+            <div className="card" style={{ marginTop: 12 }}>
+              <p><strong>Total:</strong> {preview.total}</p>
+              <p><strong>Lignes valides:</strong> {preview.valid}</p>
+              <p><strong>Lignes rejetées:</strong> {preview.rejected}</p>
+              {preview.anomalies.length > 0 && (
+                <div style={{ maxHeight: 180, overflow: 'auto' }}>
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>Ligne</th>
+                        <th>Champ</th>
+                        <th>Message</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {preview.anomalies.map((a, idx) => (
+                        <tr key={`${a.line}-${a.field}-${idx}`}>
+                          <td>{a.line}</td>
+                          <td>{a.field}</td>
+                          <td>{a.message}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="actions">
+            <button type="button" className="btn secondary" onClick={onClose}>Annuler</button>
+            <button type="button" className="btn secondary" onClick={previewImport} disabled={loading}>
+              {loading ? 'Analyse...' : 'Pré-contrôle'}
+            </button>
+            <button type="button" className="btn" onClick={commitImport} disabled={loading}>
+              {loading ? 'Import...' : 'Importer'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 

@@ -3,6 +3,12 @@ import { z } from 'zod';
 import { db, logAudit } from '../db';
 import { authMiddleware, requireRole } from '../auth';
 import { findZoneIdByPoint } from '../zones';
+import {
+  decodeDispositifsImportFile,
+  dispositifsImportTemplateCsv,
+  executeDispositifsImport,
+  validateDispositifsImportRows,
+} from '../dispositifsImport';
 
 export const dispositifsRouter = Router();
 
@@ -73,6 +79,75 @@ const dispositifSchema = z.object({
   statut: z.enum(['declare', 'controle', 'litigieux', 'depose', 'exonere']).optional(),
   exonere: z.boolean().optional(),
   notes: z.string().optional().nullable(),
+});
+
+const dispositifImportSchema = z.object({
+  fileName: z.string().min(1),
+  contentBase64: z.string().min(1),
+  mode: z.enum(['preview', 'commit']).default('preview'),
+  onError: z.enum(['abort', 'skip']).default('abort'),
+  geocodeWithBan: z.boolean().default(false),
+});
+
+
+dispositifsRouter.get('/import/template', requireRole('admin', 'gestionnaire', 'controleur'), (_req, res) => {
+  const content = dispositifsImportTemplateCsv();
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="dispositifs-template.csv"');
+  res.send(content);
+});
+
+
+dispositifsRouter.post('/import', requireRole('admin', 'gestionnaire', 'controleur'), async (req, res) => {
+  const parsed = dispositifImportSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const { fileName, contentBase64, mode, onError, geocodeWithBan } = parsed.data;
+
+  let decoded;
+  try {
+    decoded = decodeDispositifsImportFile(fileName, contentBase64);
+  } catch {
+    return res.status(400).json({ error: 'Fichier invalide ou format non supporte' });
+  }
+
+  const validation = await validateDispositifsImportRows(decoded, { geocodeWithBan });
+
+  if (mode === 'preview') {
+    return res.json({
+      total: validation.total,
+      valid: validation.validRows.length,
+      rejected: validation.anomalies.length > 0 ? validation.total - validation.validRows.length : 0,
+      anomalies: validation.anomalies,
+    });
+  }
+
+  if (validation.anomalies.length > 0 && onError === 'abort') {
+    return res.status(400).json({
+      error: 'Import annule: anomalies detectees',
+      total: validation.total,
+      valid: validation.validRows.length,
+      rejected: validation.total - validation.validRows.length,
+      anomalies: validation.anomalies,
+    });
+  }
+
+  if (validation.validRows.length === 0) {
+    return res.status(400).json({
+      error: 'Aucune ligne valide a importer',
+      total: validation.total,
+      rejected: validation.total,
+      anomalies: validation.anomalies,
+    });
+  }
+
+  const result = executeDispositifsImport(validation.validRows, req.user!.id, req.ip ?? null);
+
+  return res.status(201).json({
+    ...result,
+    rejected: validation.total - validation.validRows.length,
+    anomalies: validation.anomalies,
+  });
 });
 
 dispositifsRouter.post('/', requireRole('admin', 'gestionnaire', 'controleur'), (req, res) => {
