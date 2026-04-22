@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { api } from '../api';
 import { useAuth } from '../auth';
+import { AddressAutocomplete, type AddressSuggestion } from '../components/AddressAutocomplete';
 
 interface Dispositif {
   id: number;
@@ -11,6 +12,7 @@ interface Dispositif {
   categorie: string;
   zone_libelle: string | null;
   adresse_rue: string | null;
+  adresse_cp: string | null;
   adresse_ville: string | null;
   statut: string;
   assujetti_id: number;
@@ -117,7 +119,7 @@ export default function Dispositifs() {
                 <td>{d.surface} m²</td>
                 <td>{d.nombre_faces}</td>
                 <td>{d.zone_libelle ?? '-'}</td>
-                <td>{[d.adresse_rue, d.adresse_ville].filter(Boolean).join(', ')}</td>
+                <td>{[d.adresse_rue, d.adresse_cp, d.adresse_ville].filter(Boolean).join(', ')}</td>
                 <td><span className={`badge ${d.statut === 'declare' ? 'info' : d.statut === 'litigieux' ? 'warn' : ''}`}>{d.statut}</span></td>
               </tr>
             ))}
@@ -252,6 +254,11 @@ function ImportModal({ onClose, onImported }: { onClose: () => void; onImported:
               <p><strong>Total:</strong> {preview.total}</p>
               <p><strong>Lignes valides:</strong> {preview.valid}</p>
               <p><strong>Lignes rejetées:</strong> {preview.rejected}</p>
+              {geocodeWithBan && (
+                <div className="alert info" style={{ marginBottom: 12 }}>
+                  Géocodage BAN activé : les lignes sans lat/lon seront enrichies automatiquement quand possible.
+                </div>
+              )}
               {preview.anomalies.length > 0 && (
                 <div style={{ maxHeight: 180, overflow: 'auto' }}>
                   <table className="table">
@@ -355,6 +362,19 @@ function CreationModal({ onClose, onCreated }: { onClose: () => void; onCreated:
 
   const upd = (k: string, v: string | number | boolean) => setForm((f) => ({ ...f, [k]: v }));
 
+  const applyAddressSuggestion = (suggestion: AddressSuggestion) => {
+    setForm((f) => ({
+      ...f,
+      adresse_rue: suggestion.adresse,
+      adresse_cp: suggestion.codePostal ?? f.adresse_cp,
+      adresse_ville: suggestion.ville ?? f.adresse_ville,
+      latitude: String(suggestion.latitude),
+      longitude: String(suggestion.longitude),
+      zone_id: 0,
+      auto_zone: true,
+    }));
+  };
+
   return (
     <div className="dialog-backdrop" onClick={onClose}>
       <div className="dialog" onClick={(e) => e.stopPropagation()}>
@@ -396,7 +416,11 @@ function CreationModal({ onClose, onCreated }: { onClose: () => void; onCreated:
           </div>
           <div>
             <label>Adresse d'implantation</label>
-            <input value={form.adresse_rue} onChange={(e) => upd('adresse_rue', e.target.value)} />
+            <AddressAutocomplete
+              value={form.adresse_rue}
+              onValueChange={(next) => upd('adresse_rue', next)}
+              onSelect={applyAddressSuggestion}
+            />
           </div>
           <div className="form-row">
             <div>

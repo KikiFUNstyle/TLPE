@@ -101,6 +101,24 @@ Depuis l'écran **Dispositifs** (rôles admin/gestionnaire/controleur) :
 
 Pré-contrôles appliqués : assujetti existant, type référentiel, zone connue (ou calculée par coordonnées), surface > 0, nombre de faces entre 1 et 4, statut valide, format de date `YYYY-MM-DD`.
 
+## Géocodage automatique via BAN (US2.4)
+
+Le formulaire **Nouveau dispositif** et le formulaire **Nouvel assujetti** utilisent désormais un composant d'autocomplete d'adresse (debounce 300 ms) basé sur la BAN :
+
+- suggestion d'adresses en AJAX,
+- sélection d'une suggestion qui renseigne automatiquement l'adresse normalisée,
+- auto-remplissage des coordonnées `lat/lon` (dispositif) et de la ville/code postal,
+- fallback en saisie manuelle avec message explicite si BAN indisponible.
+
+Une API backend dédiée est exposée :
+
+- `GET /api/geocoding/search?q=<adresse>&limit=5`
+
+Le flux d'import en masse de dispositifs enrichit aussi les données :
+
+- si `geocodeWithBan=true` et que `lat/lon` sont absents, la BAN est sollicitée,
+- les champs adresse/CP/ville et coordonnées sont normalisés avant insertion.
+
 ### Comptes de démonstration
 
 | Rôle | Email | Mot de passe |

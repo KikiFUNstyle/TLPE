@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api';
 import { useAuth } from '../auth';
+import { AddressAutocomplete, type AddressSuggestion } from '../components/AddressAutocomplete';
 
 interface Assujetti {
   id: number;
@@ -317,6 +318,15 @@ function CreationModal({ onClose, onCreated }: { onClose: () => void; onCreated:
 
   const upd = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
 
+  const applyAddressSuggestion = (suggestion: AddressSuggestion) => {
+    setForm((f) => ({
+      ...f,
+      adresse_rue: suggestion.adresse,
+      adresse_cp: suggestion.codePostal ?? f.adresse_cp,
+      adresse_ville: suggestion.ville ?? f.adresse_ville,
+    }));
+  };
+
   return (
     <div className="dialog-backdrop" onClick={onClose}>
       <div className="dialog" onClick={(e) => e.stopPropagation()}>
@@ -343,7 +353,11 @@ function CreationModal({ onClose, onCreated }: { onClose: () => void; onCreated:
           </div>
           <div>
             <label>Adresse</label>
-            <input value={form.adresse_rue} onChange={(e) => upd('adresse_rue', e.target.value)} />
+            <AddressAutocomplete
+              value={form.adresse_rue}
+              onValueChange={(next) => upd('adresse_rue', next)}
+              onSelect={applyAddressSuggestion}
+            />
           </div>
           <div className="form-row">
             <div>
