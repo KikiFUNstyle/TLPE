@@ -10,7 +10,7 @@
     "start": "node dist/index.js",
     "seed": "tsx src/seed.ts",
     "job:activate-baremes": "node dist/jobs/activateBaremes.js",
-    "test": "tsx --test src/calculator.test.ts src/baremes.test.ts src/zones.test.ts"
+    "test": "tsx --test src/calculator.test.ts src/baremes.test.ts src/zones.test.ts src/assujettisImport.test.ts"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -19,6 +19,7 @@
     "express": "^4.21.1",
     "jsonwebtoken": "^9.0.2",
     "pdfkit": "^0.15.1",
+    "xlsx": "^0.18.5",
     "zod": "^3.23.8"
   },
   "devDependencies": {

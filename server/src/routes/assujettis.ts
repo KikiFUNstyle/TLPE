@@ -2,25 +2,17 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { db, logAudit } from '../db';
 import { authMiddleware, requireRole } from '../auth';
+import {
+  assujettisImportTemplateCsv,
+  decodeAssujettisImportFile,
+  executeAssujettisImport,
+  isValidSiret,
+  validateImportRows,
+} from '../assujettisImport';
 
 export const assujettisRouter = Router();
 
 assujettisRouter.use(authMiddleware);
-
-// Validation SIRET via algorithme de Luhn (specs section 4.1)
-function isValidSiret(siret: string): boolean {
-  if (!/^\d{14}$/.test(siret)) return false;
-  let sum = 0;
-  for (let i = 0; i < 14; i += 1) {
-    let d = Number(siret[i]);
-    if (i % 2 === 0) {
-      d *= 2;
-      if (d > 9) d -= 9;
-    }
-    sum += d;
-  }
-  return sum % 10 === 0;
-}
 
 function genIdentifiant(): string {
   const y = new Date().getFullYear();
@@ -97,6 +89,13 @@ const assujettiSchema = z.object({
   portail_actif: z.boolean().optional(),
   statut: z.enum(['actif', 'inactif', 'radie', 'contentieux']).optional(),
   notes: z.string().optional().nullable(),
+});
+
+const assujettiImportSchema = z.object({
+  fileName: z.string().min(1),
+  contentBase64: z.string().min(1),
+  mode: z.enum(['preview', 'commit']).default('preview'),
+  onError: z.enum(['abort', 'skip']).default('abort'),
 });
 
 assujettisRouter.post('/', requireRole('admin', 'gestionnaire'), (req, res) => {
@@ -184,6 +183,65 @@ assujettisRouter.put('/:id', requireRole('admin', 'gestionnaire'), (req, res) =>
   if (info.changes === 0) return res.status(404).json({ error: 'Introuvable' });
   logAudit({ userId: req.user!.id, action: 'update', entite: 'assujetti', entiteId: Number(req.params.id) });
   res.json({ ok: true });
+});
+
+assujettisRouter.get('/import/template', requireRole('admin', 'gestionnaire'), (_req, res) => {
+  const content = assujettisImportTemplateCsv();
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="assujettis-template.csv"');
+  res.send(content);
+});
+
+assujettisRouter.post('/import', requireRole('admin', 'gestionnaire'), (req, res) => {
+  const parsed = assujettiImportSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const { fileName, contentBase64, mode, onError } = parsed.data;
+
+  let decoded;
+  try {
+    decoded = decodeAssujettisImportFile(fileName, contentBase64);
+  } catch {
+    return res.status(400).json({ error: 'Fichier invalide ou format non supporte' });
+  }
+
+  const validation = validateImportRows(decoded);
+
+  if (mode === 'preview') {
+    return res.json({
+      total: validation.total,
+      valid: validation.validRows.length,
+      rejected: validation.anomalies.length > 0 ? validation.total - validation.validRows.length : 0,
+      anomalies: validation.anomalies,
+    });
+  }
+
+  if (validation.anomalies.length > 0 && onError === 'abort') {
+    return res.status(400).json({
+      error: 'Import annule: anomalies detectees',
+      total: validation.total,
+      valid: validation.validRows.length,
+      rejected: validation.total - validation.validRows.length,
+      anomalies: validation.anomalies,
+    });
+  }
+
+  if (validation.validRows.length === 0) {
+    return res.status(400).json({
+      error: 'Aucune ligne valide a importer',
+      total: validation.total,
+      rejected: validation.total,
+      anomalies: validation.anomalies,
+    });
+  }
+
+  const result = executeAssujettisImport(validation.validRows, req.user!.id, req.ip ?? null);
+
+  return res.status(201).json({
+    ...result,
+    rejected: validation.total - validation.validRows.length,
+    anomalies: validation.anomalies,
+  });
 });
 
 assujettisRouter.delete('/:id', requireRole('admin'), (req, res) => {

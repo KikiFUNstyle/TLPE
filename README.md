@@ -15,6 +15,7 @@ basée sur les articles L2333-6 à L2333-16 du CGCT.
 |---|---|---|
 | Référentiels (barème, zones, types + import GeoJSON des zones + exonerations/abattements) | §3 | OK |
 | Assujettis (CRUD, contrôle SIRET Luhn) | §4.1 | OK |
+| Import en masse assujettis (CSV/XLSX + pré-contrôle) | §4.3 | OK |
 | Dispositifs (CRUD, géolocalisation) | §4.2 | OK |
 | Moteur de calcul TLPE (tranches, prorata, coef. zone, double face, forfait, exonération) | §6 | OK + tests |
 | Déclarations (brouillon → soumission → validation → rejet) | §5 | OK |
@@ -49,11 +50,25 @@ npm run dev
 # seed explicite (si besoin de réinitialiser)
 rm -f server/data/tlpe.db && npm run seed
 
-# tests du moteur de calcul
+# tests du moteur de calcul + import assujettis
 npm test
 ```
 
 Ouvrir ensuite http://localhost:5173.
+
+## Import en masse des assujettis (US2.1)
+
+Depuis l'écran **Assujettis** (rôle admin/gestionnaire) :
+
+1. Télécharger le **Template CSV**.
+2. Préparer un fichier `.csv` ou `.xlsx` avec les colonnes :
+   `identifiant_tlpe, raison_sociale, siret, forme_juridique, adresse_rue, adresse_cp, adresse_ville, adresse_pays, contact_nom, contact_prenom, contact_fonction, email, telephone, portail_actif, statut, notes`.
+3. Utiliser **Pré-contrôle** pour obtenir un rapport d'anomalies ligne par ligne.
+4. Importer en choisissant :
+   - **Tout annuler si anomalies** (transaction annulée en cas d'erreur),
+   - **Ignorer les lignes en erreur** (seules les lignes valides sont importées).
+
+Contrôles appliqués : SIRET (Luhn), email, champs obligatoires, doublons, cohérence identifiant/SIRET.
 
 ### Comptes de démonstration
 
