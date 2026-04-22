@@ -46,12 +46,29 @@ function normalizeSuggestion(feature: BanFeature): BanSuggestion | null {
   };
 }
 
-export async function searchBanAddresses(query: string, limit = 5): Promise<BanSuggestion[]> {
+const DEFAULT_BAN_TIMEOUT_MS = 5000;
+
+export async function searchBanAddresses(query: string, limit = 5, timeoutMs = DEFAULT_BAN_TIMEOUT_MS): Promise<BanSuggestion[]> {
   const q = query.trim();
   if (q.length < 3) return [];
 
   const endpoint = `https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(q)}&limit=${Math.min(Math.max(limit, 1), 10)}`;
-  const response = await fetch(endpoint);
+  const timeout = Math.max(1, timeoutMs);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+
+  let response: Response;
+  try {
+    response = await fetch(endpoint, { signal: controller.signal });
+  } catch (error) {
+    if ((error as { name?: string })?.name === 'AbortError') {
+      throw new Error('BAN timeout');
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+
   if (!response.ok) {
     throw new Error(`BAN HTTP ${response.status}`);
   }

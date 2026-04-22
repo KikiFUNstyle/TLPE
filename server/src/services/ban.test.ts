@@ -39,6 +39,34 @@ test('searchBanAddresses - renvoie [] pour une requête trop courte', async () =
   assert.deepEqual(suggestions, []);
 });
 
+test('searchBanAddresses - timeout BAN quand le service ne répond pas', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = ((_: string | URL | Request, init?: RequestInit) =>
+    new Promise<Response>((resolve, reject) => {
+      const signal = init?.signal;
+      if (signal) {
+        if (signal.aborted) {
+          const error = new Error('aborted') as Error & { name: string };
+          error.name = 'AbortError';
+          reject(error);
+          return;
+        }
+        signal.addEventListener('abort', () => {
+          const error = new Error('aborted') as Error & { name: string };
+          error.name = 'AbortError';
+          reject(error);
+        });
+      }
+      void resolve;
+    })) as typeof fetch;
+
+  try {
+    await assert.rejects(() => searchBanAddresses('adresse test timeout', 5, 20), /BAN timeout/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('searchBanAddresses - lève une erreur quand BAN répond non-OK', async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async () => ({ ok: false, status: 503 }) as Response) as typeof fetch;
