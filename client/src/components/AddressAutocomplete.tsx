@@ -30,6 +30,8 @@ export function AddressAutocomplete({
 
   useEffect(() => {
     const query = value.trim();
+    const seq = ++requestSeq.current;
+
     if (query.length < 3) {
       setSuggestions([]);
       setLoading(false);
@@ -38,7 +40,6 @@ export function AddressAutocomplete({
     }
 
     const timer = window.setTimeout(async () => {
-      const seq = ++requestSeq.current;
       setLoading(true);
       try {
         const result = await api<{ suggestions: AddressSuggestion[] }>(

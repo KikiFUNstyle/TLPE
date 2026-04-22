@@ -32,7 +32,8 @@ basée sur les articles L2333-6 à L2333-16 du CGCT.
 ### Hors périmètre du MVP (prévu phases ultérieures)
 
 - Application mobile de contrôle terrain (§9.2)
-- Intégrations externes réelles : FranceConnect+, PayFip, BAN, PESV2 (§13.1)
+- Intégrations externes complètes : FranceConnect+, PayFip, PESV2 (§13.1)
+  (le géocodage BAN de base pour l'autocomplete d'adresse est implémenté dans US2.4)
 - Import SIG / Shapefile natif (§4.3)
 - Signature électronique (§13.2)
 - Conformité RGAA 4.1 complète (§11.3)

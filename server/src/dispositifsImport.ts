@@ -309,9 +309,6 @@ export async function validateDispositifsImportRows(
     }
 
     const geocodeFromCache = adresse ? geocodeCache.get(adresse) ?? null : null;
-    if (geocodeFromCache?.adresse?.trim()) {
-      adresseRue = geocodeFromCache.adresse.trim();
-    }
     if (geocodeFromCache?.codePostal) {
       adresseCp = geocodeFromCache.codePostal;
     }

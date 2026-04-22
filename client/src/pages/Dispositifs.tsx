@@ -418,7 +418,9 @@ function CreationModal({ onClose, onCreated }: { onClose: () => void; onCreated:
             <label>Adresse d'implantation</label>
             <AddressAutocomplete
               value={form.adresse_rue}
-              onValueChange={(next) => upd('adresse_rue', next)}
+              onValueChange={(next) => {
+                setForm((f) => ({ ...f, adresse_rue: next, latitude: '', longitude: '', zone_id: 0 }));
+              }}
               onSelect={applyAddressSuggestion}
             />
           </div>
