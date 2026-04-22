@@ -15,7 +15,7 @@ basée sur les articles L2333-6 à L2333-16 du CGCT.
 |---|---|---|
 | Référentiels (barème, zones, types + import GeoJSON des zones + exonerations/abattements) | §3 | OK |
 | Assujettis (CRUD, contrôle SIRET Luhn) | §4.1 | OK |
-| Import en masse assujettis (CSV/XLSX + pré-contrôle) | §4.3 | OK |
+| Import en masse assujettis (CSV/XLSX + pré-contrôle + enrichissement SIRENE) | §4.3 / §13.1 | OK |
 | Dispositifs (CRUD, géolocalisation) | §4.2 | OK |
 | Moteur de calcul TLPE (tranches, prorata, coef. zone, double face, forfait, exonération) | §6 | OK + tests |
 | Déclarations (brouillon → soumission → validation → rejet) | §5 | OK |
@@ -69,6 +69,22 @@ Depuis l'écran **Assujettis** (rôle admin/gestionnaire) :
    - **Ignorer les lignes en erreur** (seules les lignes valides sont importées).
 
 Contrôles appliqués : SIRET (Luhn), email, champs obligatoires, doublons, cohérence identifiant/SIRET.
+
+### Vérification SIRET via API Entreprise (SIRENE)
+
+Les créations/modifications d'assujettis et l'import en masse déclenchent une vérification SIRET via
+`https://entreprise.api.gouv.fr/v3/insee/sirene/etablissements/:siret` quand `API_ENTREPRISE_TOKEN` est défini.
+
+- auto-remplissage de `raison_sociale`, `forme_juridique`, `adresse siège` depuis SIRENE,
+- blocage si statut radié,
+- cache local 30 jours (`api_entreprise_cache`) pour limiter les appels,
+- mode dégradé si réseau/API indisponible ou token absent (la saisie reste possible avec alerte).
+
+Configuration :
+
+```bash
+export API_ENTREPRISE_TOKEN=<token_api_entreprise>
+```
 
 ## Import en masse des dispositifs (US2.2)
 

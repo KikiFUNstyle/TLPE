@@ -7,8 +7,10 @@ import {
   decodeAssujettisImportFile,
   executeAssujettisImport,
   isValidSiret,
+  type NormalizedImportRow,
   validateImportRows,
 } from '../assujettisImport';
+import { enrichAssujettiPayloadWithSirene, fetchSiretData } from '../services/apiEntreprise';
 
 export const assujettisRouter = Router();
 
@@ -98,13 +100,107 @@ const assujettiImportSchema = z.object({
   onError: z.enum(['abort', 'skip']).default('abort'),
 });
 
-assujettisRouter.post('/', requireRole('admin', 'gestionnaire'), (req, res) => {
+type AssujettiPayload = z.infer<typeof assujettiSchema>;
+
+async function enrichAssujettiWithSiretIfNeeded(payload: AssujettiPayload): Promise<{
+  enriched: AssujettiPayload;
+  sireneStatus: 'ok' | 'cache' | 'radie' | 'degraded' | null;
+  sireneMessage?: string;
+}> {
+  const siret = payload.siret?.trim();
+  if (!siret) return { enriched: payload, sireneStatus: null };
+
+  const result = await fetchSiretData(siret);
+  if (result.status === 'radie') {
+    return {
+      enriched: payload,
+      sireneStatus: 'radie',
+      sireneMessage: result.message ?? 'SIRET radié',
+    };
+  }
+
+  if (!result.data) {
+    return {
+      enriched: payload,
+      sireneStatus: result.status,
+      sireneMessage: result.message,
+    };
+  }
+
+  return {
+    enriched: enrichAssujettiPayloadWithSirene(payload, result.data),
+    sireneStatus: result.status,
+    sireneMessage: result.message,
+  };
+}
+
+async function enrichImportRowsWithSiret(rows: NormalizedImportRow[]): Promise<{
+  rows: NormalizedImportRow[];
+  anomalies: Array<{ line: number; field: string; message: string }>;
+  degradedMessages: string[];
+}> {
+  const anomalies: Array<{ line: number; field: string; message: string }> = [];
+  const degradedMessages: string[] = [];
+  const enrichedRows: NormalizedImportRow[] = [];
+
+  for (const row of rows) {
+    if (!row.siret) {
+      enrichedRows.push(row);
+      continue;
+    }
+
+    const result = await fetchSiretData(row.siret);
+
+    if (result.status === 'radie') {
+      anomalies.push({
+        line: row.line,
+        field: 'siret',
+        message: result.message ?? 'SIRET radié (API Entreprise)',
+      });
+      continue;
+    }
+
+    if (result.status === 'degraded' && result.message) {
+      degradedMessages.push(result.message);
+    }
+
+    if (!result.data) {
+      enrichedRows.push(row);
+      continue;
+    }
+
+    enrichedRows.push({
+      ...row,
+      raison_sociale: result.data.raisonSociale ?? row.raison_sociale,
+      forme_juridique: result.data.formeJuridique ?? row.forme_juridique,
+      adresse_rue: result.data.adresseRue ?? row.adresse_rue,
+      adresse_cp: result.data.adresseCp ?? row.adresse_cp,
+      adresse_ville: result.data.adresseVille ?? row.adresse_ville,
+      adresse_pays: result.data.adressePays ?? row.adresse_pays,
+    });
+  }
+
+  return {
+    rows: enrichedRows,
+    anomalies,
+    degradedMessages,
+  };
+}
+
+assujettisRouter.post('/', requireRole('admin', 'gestionnaire'), async (req, res) => {
   const parsed = assujettiSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-  const d = parsed.data;
-  if (d.siret && !isValidSiret(d.siret)) {
+
+  const input = parsed.data;
+  if (input.siret && !isValidSiret(input.siret)) {
     return res.status(400).json({ error: 'SIRET invalide (controle Luhn)' });
   }
+
+  const { enriched, sireneStatus, sireneMessage } = await enrichAssujettiWithSiretIfNeeded(input);
+  if (sireneStatus === 'radie') {
+    return res.status(422).json({ error: sireneMessage ?? 'SIRET radié (API Entreprise)' });
+  }
+
   const identifiant = genIdentifiant();
   try {
     const info = db
@@ -118,24 +214,31 @@ assujettisRouter.post('/', requireRole('admin', 'gestionnaire'), (req, res) => {
       )
       .run(
         identifiant,
-        d.raison_sociale,
-        d.siret || null,
-        d.forme_juridique || null,
-        d.adresse_rue || null,
-        d.adresse_cp || null,
-        d.adresse_ville || null,
-        d.adresse_pays || 'France',
-        d.contact_nom || null,
-        d.contact_prenom || null,
-        d.contact_fonction || null,
-        d.email || null,
-        d.telephone || null,
-        d.portail_actif ? 1 : 0,
-        d.statut || 'actif',
-        d.notes || null,
+        enriched.raison_sociale,
+        enriched.siret || null,
+        enriched.forme_juridique || null,
+        enriched.adresse_rue || null,
+        enriched.adresse_cp || null,
+        enriched.adresse_ville || null,
+        enriched.adresse_pays || 'France',
+        enriched.contact_nom || null,
+        enriched.contact_prenom || null,
+        enriched.contact_fonction || null,
+        enriched.email || null,
+        enriched.telephone || null,
+        enriched.portail_actif ? 1 : 0,
+        enriched.statut || 'actif',
+        enriched.notes || null,
       );
+
     logAudit({ userId: req.user!.id, action: 'create', entite: 'assujetti', entiteId: Number(info.lastInsertRowid) });
-    res.status(201).json({ id: info.lastInsertRowid, identifiant_tlpe: identifiant });
+
+    return res.status(201).json({
+      id: info.lastInsertRowid,
+      identifiant_tlpe: identifiant,
+      sirene_status: sireneStatus,
+      sirene_message: sireneMessage,
+    });
   } catch (e) {
     const err = e as { message: string };
     if (err.message.includes('UNIQUE')) {
@@ -145,13 +248,20 @@ assujettisRouter.post('/', requireRole('admin', 'gestionnaire'), (req, res) => {
   }
 });
 
-assujettisRouter.put('/:id', requireRole('admin', 'gestionnaire'), (req, res) => {
+assujettisRouter.put('/:id', requireRole('admin', 'gestionnaire'), async (req, res) => {
   const parsed = assujettiSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-  const d = parsed.data;
-  if (d.siret && !isValidSiret(d.siret)) {
+
+  const input = parsed.data;
+  if (input.siret && !isValidSiret(input.siret)) {
     return res.status(400).json({ error: 'SIRET invalide (controle Luhn)' });
   }
+
+  const { enriched, sireneStatus, sireneMessage } = await enrichAssujettiWithSiretIfNeeded(input);
+  if (sireneStatus === 'radie') {
+    return res.status(422).json({ error: sireneMessage ?? 'SIRET radié (API Entreprise)' });
+  }
+
   const info = db
     .prepare(
       `UPDATE assujettis SET
@@ -163,26 +273,28 @@ assujettisRouter.put('/:id', requireRole('admin', 'gestionnaire'), (req, res) =>
        WHERE id = ?`,
     )
     .run(
-      d.raison_sociale,
-      d.siret || null,
-      d.forme_juridique || null,
-      d.adresse_rue || null,
-      d.adresse_cp || null,
-      d.adresse_ville || null,
-      d.adresse_pays || 'France',
-      d.contact_nom || null,
-      d.contact_prenom || null,
-      d.contact_fonction || null,
-      d.email || null,
-      d.telephone || null,
-      d.portail_actif ? 1 : 0,
-      d.statut || 'actif',
-      d.notes || null,
+      enriched.raison_sociale,
+      enriched.siret || null,
+      enriched.forme_juridique || null,
+      enriched.adresse_rue || null,
+      enriched.adresse_cp || null,
+      enriched.adresse_ville || null,
+      enriched.adresse_pays || 'France',
+      enriched.contact_nom || null,
+      enriched.contact_prenom || null,
+      enriched.contact_fonction || null,
+      enriched.email || null,
+      enriched.telephone || null,
+      enriched.portail_actif ? 1 : 0,
+      enriched.statut || 'actif',
+      enriched.notes || null,
       req.params.id,
     );
+
   if (info.changes === 0) return res.status(404).json({ error: 'Introuvable' });
+
   logAudit({ userId: req.user!.id, action: 'update', entite: 'assujetti', entiteId: Number(req.params.id) });
-  res.json({ ok: true });
+  return res.json({ ok: true, sirene_status: sireneStatus, sirene_message: sireneMessage });
 });
 
 assujettisRouter.get('/import/template', requireRole('admin', 'gestionnaire'), (_req, res) => {
@@ -192,7 +304,7 @@ assujettisRouter.get('/import/template', requireRole('admin', 'gestionnaire'), (
   res.send(content);
 });
 
-assujettisRouter.post('/import', requireRole('admin', 'gestionnaire'), (req, res) => {
+assujettisRouter.post('/import', requireRole('admin', 'gestionnaire'), async (req, res) => {
   const parsed = assujettiImportSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
@@ -206,41 +318,49 @@ assujettisRouter.post('/import', requireRole('admin', 'gestionnaire'), (req, res
   }
 
   const validation = validateImportRows(decoded);
+  const enrichment = await enrichImportRowsWithSiret(validation.validRows);
+  const validationAnomalies = [...validation.anomalies, ...enrichment.anomalies];
 
   if (mode === 'preview') {
+    const uniqueMessages = Array.from(new Set(enrichment.degradedMessages));
     return res.json({
       total: validation.total,
-      valid: validation.validRows.length,
-      rejected: validation.anomalies.length > 0 ? validation.total - validation.validRows.length : 0,
-      anomalies: validation.anomalies,
+      valid: enrichment.rows.length,
+      rejected: validationAnomalies.length > 0 ? validation.total - enrichment.rows.length : 0,
+      anomalies: validationAnomalies,
+      sirene_status: uniqueMessages.length > 0 ? 'degraded' : 'ok',
+      sirene_messages: uniqueMessages,
     });
   }
 
-  if (validation.anomalies.length > 0 && onError === 'abort') {
+  if (validationAnomalies.length > 0 && onError === 'abort') {
     return res.status(400).json({
       error: 'Import annule: anomalies detectees',
       total: validation.total,
-      valid: validation.validRows.length,
-      rejected: validation.total - validation.validRows.length,
-      anomalies: validation.anomalies,
+      valid: enrichment.rows.length,
+      rejected: validation.total - enrichment.rows.length,
+      anomalies: validationAnomalies,
     });
   }
 
-  if (validation.validRows.length === 0) {
+  if (enrichment.rows.length === 0) {
     return res.status(400).json({
       error: 'Aucune ligne valide a importer',
       total: validation.total,
       rejected: validation.total,
-      anomalies: validation.anomalies,
+      anomalies: validationAnomalies,
     });
   }
 
-  const result = executeAssujettisImport(validation.validRows, req.user!.id, req.ip ?? null);
+  const result = executeAssujettisImport(enrichment.rows, req.user!.id, req.ip ?? null);
+  const uniqueMessages = Array.from(new Set(enrichment.degradedMessages));
 
   return res.status(201).json({
     ...result,
-    rejected: validation.total - validation.validRows.length,
-    anomalies: validation.anomalies,
+    rejected: validation.total - enrichment.rows.length,
+    anomalies: validationAnomalies,
+    sirene_status: uniqueMessages.length > 0 ? 'degraded' : 'ok',
+    sirene_messages: uniqueMessages,
   });
 });
 

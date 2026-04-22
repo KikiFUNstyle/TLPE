@@ -24,6 +24,8 @@ interface ImportPreviewResponse {
   valid: number;
   rejected: number;
   anomalies: ImportAnomaly[];
+  sirene_status?: 'ok' | 'degraded';
+  sirene_messages?: string[];
 }
 
 export default function Assujettis() {
@@ -235,6 +237,16 @@ function ImportModal({ onClose, onImported }: { onClose: () => void; onImported:
               <p><strong>Total:</strong> {preview.total}</p>
               <p><strong>Lignes valides:</strong> {preview.valid}</p>
               <p><strong>Lignes rejetées:</strong> {preview.rejected}</p>
+              {preview.sirene_status === 'degraded' && (preview.sirene_messages?.length ?? 0) > 0 && (
+                <div className="alert" style={{ marginTop: 8 }}>
+                  <strong>Mode dégradé API Entreprise :</strong>
+                  <ul>
+                    {preview.sirene_messages!.map((message) => (
+                      <li key={message}>{message}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               {preview.anomalies.length > 0 && (
                 <div style={{ maxHeight: 180, overflow: 'auto' }}>
                   <table className="table">
