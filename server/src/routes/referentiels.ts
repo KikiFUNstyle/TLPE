@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { db, logAudit } from '../db';
 import { authMiddleware, requireRole } from '../auth';
-import { activateBaremesForYear, getActiveBaremeYear, parseBaremesCsv, upsertBaremes, type BaremeInput } from '../baremes';
+import { activateBaremesForYear, getActiveBaremeYear, parseBaremesCsv, upsertBaremes, type BaremeInput, BaremeValidationError } from '../baremes';
 
 export const referentielsRouter = Router();
 
@@ -128,23 +128,33 @@ referentielsRouter.post('/baremes/import', requireRole('admin'), (req, res) => {
   const parsed = baremeImportSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  try {
-    let rows: BaremeInput[] = [];
-    if (parsed.data.csv) {
+  let rows: BaremeInput[] = [];
+  if (parsed.data.csv) {
+    try {
       rows = parseBaremesCsv(parsed.data.csv);
-    } else if (parsed.data.rows) {
-      rows = parsed.data.rows;
+    } catch (error) {
+      if (error instanceof BaremeValidationError) {
+        return res.status(400).json({ error: error.message });
+      }
+      // eslint-disable-next-line no-console
+      console.error('[TLPE] Erreur import baremes CSV', error);
+      return res.status(500).json({ error: 'Erreur interne' });
     }
+  } else if (parsed.data.rows) {
+    rows = parsed.data.rows as BaremeInput[];
+  }
 
-    if (rows.length === 0) {
-      return res.status(400).json({ error: 'Aucune ligne de bareme a importer' });
-    }
+  if (rows.length === 0) {
+    return res.status(400).json({ error: 'Aucune ligne de bareme a importer' });
+  }
 
+  try {
     const summary = upsertBaremes(rows, req.user!.id, req.ip ?? null);
     return res.status(201).json(summary);
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Import CSV invalide';
-    return res.status(400).json({ error: message });
+    // eslint-disable-next-line no-console
+    console.error('[TLPE] Erreur import baremes', error);
+    return res.status(500).json({ error: 'Erreur interne' });
   }
 });
 

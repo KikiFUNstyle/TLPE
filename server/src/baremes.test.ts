@@ -64,6 +64,26 @@ test('parseBaremesCsv - rejette les tarifs negatifs', () => {
   assert.throws(() => parseBaremesCsv(badCsv), /tarif_m2 invalide/);
 });
 
+test('parseBaremesCsv - rejette si surface_max absente', () => {
+  resetTables();
+  const badCsv = [
+    'annee,categorie,surface_min,tarif_m2,tarif_fixe,exonere,libelle',
+    '2026,publicitaire,0,15.5,,0,Publicitaire <= 8 m2',
+  ].join('\n');
+
+  assert.throws(() => parseBaremesCsv(badCsv), /colonne manquante "surface_max"/);
+});
+
+test('parseBaremesCsv - rejette si exonere absent', () => {
+  resetTables();
+  const badCsv = [
+    'annee,categorie,surface_min,surface_max,tarif_m2,tarif_fixe,libelle',
+    '2026,publicitaire,0,8,15.5,,Publicitaire <= 8 m2',
+  ].join('\n');
+
+  assert.throws(() => parseBaremesCsv(badCsv), /colonne manquante "exonere"/);
+});
+
 test('upsertBaremes - cree puis met a jour avec audit', () => {
   resetTables();
 

@@ -19,6 +19,13 @@ export interface BaremeImportSummary {
   updated: number;
 }
 
+export class BaremeValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'BaremeValidationError';
+  }
+}
+
 function parseNumberOrNull(value: string | undefined): number | null {
   if (value === undefined) return null;
   const v = value.trim();
@@ -82,15 +89,15 @@ export function parseBaremesCsv(csv: string): BaremeInput[] {
     .filter((l) => l.length > 0);
 
   if (lines.length < 2) {
-    throw new Error('CSV invalide: au moins un en-tete et une ligne sont requis');
+    throw new BaremeValidationError('CSV invalide: au moins un en-tete et une ligne sont requis');
   }
 
   const delimiter = detectDelimiter(lines[0]);
   const header = splitCsvLine(lines[0], delimiter).map((h) => h.toLowerCase());
-  const required = ['annee', 'categorie', 'surface_min', 'libelle'];
+  const required = ['annee', 'categorie', 'surface_min', 'surface_max', 'libelle', 'exonere'];
   for (const col of required) {
     if (!header.includes(col)) {
-      throw new Error(`CSV invalide: colonne manquante "${col}"`);
+      throw new BaremeValidationError(`CSV invalide: colonne manquante "${col}"`);
     }
   }
 
@@ -116,21 +123,31 @@ export function parseBaremesCsv(csv: string): BaremeInput[] {
       }
 
       const surfaceMax = parseNumberOrNull(get('surface_max'));
+      if (surfaceMax === null) {
+        throw new BaremeValidationError('surface_max obligatoire pour l\'import CSV');
+      }
       const tarifM2 = parseNumberOrNull(get('tarif_m2'));
       const tarifFixe = parseNumberOrNull(get('tarif_fixe'));
+      const exonereRaw = get('exonere');
       const libelle = (get('libelle') || '').trim();
 
-      if (surfaceMax !== null && surfaceMax <= 0) {
-        throw new Error(`surface_max invalide: ${get('surface_max')}`);
+      if (surfaceMax <= 0) {
+        throw new BaremeValidationError(`surface_max invalide: ${get('surface_max')}`);
+      }
+      if (surfaceMax <= surfaceMin) {
+        throw new BaremeValidationError(`surface_max doit etre > surface_min: ${get('surface_max')}`);
       }
       if (tarifM2 !== null && tarifM2 < 0) {
-        throw new Error(`tarif_m2 invalide: ${get('tarif_m2')}`);
+        throw new BaremeValidationError(`tarif_m2 invalide: ${get('tarif_m2')}`);
       }
       if (tarifFixe !== null && tarifFixe < 0) {
-        throw new Error(`tarif_fixe invalide: ${get('tarif_fixe')}`);
+        throw new BaremeValidationError(`tarif_fixe invalide: ${get('tarif_fixe')}`);
       }
       if (!libelle) {
-        throw new Error('libelle obligatoire');
+        throw new BaremeValidationError('libelle obligatoire');
+      }
+      if (exonereRaw === undefined || !exonereRaw.trim()) {
+        throw new BaremeValidationError('exonere obligatoire pour l\'import CSV');
       }
 
       return {
@@ -144,8 +161,11 @@ export function parseBaremesCsv(csv: string): BaremeInput[] {
         libelle,
       } satisfies BaremeInput;
     } catch (error) {
+      if (error instanceof BaremeValidationError) {
+        throw error;
+      }
       const message = error instanceof Error ? error.message : 'Erreur inconnue';
-      throw new Error(`Ligne ${lineOffset + 2}: ${message}`);
+      throw new BaremeValidationError(`Ligne ${lineOffset + 2}: ${message}`);
     }
   });
 }
