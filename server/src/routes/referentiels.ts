@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { db, logAudit } from '../db';
 import { authMiddleware, requireRole } from '../auth';
+import { activateBaremesForYear, getActiveBaremeYear, parseBaremesCsv, upsertBaremes, type BaremeInput } from '../baremes';
 
 export const referentielsRouter = Router();
 
@@ -63,6 +64,27 @@ referentielsRouter.get('/baremes', (req, res) => {
   res.json(rows);
 });
 
+referentielsRouter.get('/baremes/history', (_req, res) => {
+  const rows = db
+    .prepare(
+      `SELECT b.annee,
+              COUNT(*) AS lignes,
+              MIN(b.id) AS first_bareme_id,
+              ba.activated_at
+       FROM baremes b
+       LEFT JOIN bareme_activation ba ON ba.annee = b.annee
+       GROUP BY b.annee
+       ORDER BY b.annee DESC`,
+    )
+    .all() as Array<{ annee: number; lignes: number; first_bareme_id: number; activated_at: string | null }>;
+  res.json(rows);
+});
+
+referentielsRouter.get('/baremes/active-year', (_req, res) => {
+  const year = getActiveBaremeYear(new Date());
+  res.json({ annee_active: year });
+});
+
 const baremeSchema = z.object({
   annee: z.number().int().min(2008).max(2100),
   categorie: z.enum(['publicitaire', 'preenseigne', 'enseigne']),
@@ -95,6 +117,40 @@ referentielsRouter.post('/baremes', requireRole('admin'), (req, res) => {
     );
   logAudit({ userId: req.user!.id, action: 'create', entite: 'bareme', entiteId: Number(info.lastInsertRowid) });
   res.status(201).json({ id: info.lastInsertRowid });
+});
+
+const baremeImportSchema = z.object({
+  csv: z.string().min(1).optional(),
+  rows: z.array(baremeSchema).optional(),
+});
+
+referentielsRouter.post('/baremes/import', requireRole('admin'), (req, res) => {
+  const parsed = baremeImportSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  let rows: BaremeInput[] = [];
+  if (parsed.data.csv) {
+    rows = parseBaremesCsv(parsed.data.csv);
+  } else if (parsed.data.rows) {
+    rows = parsed.data.rows;
+  }
+
+  if (rows.length === 0) {
+    return res.status(400).json({ error: 'Aucune ligne de bareme a importer' });
+  }
+
+  const summary = upsertBaremes(rows, req.user!.id, req.ip ?? null);
+  res.status(201).json(summary);
+});
+
+referentielsRouter.post('/baremes/activate-year/:annee', requireRole('admin'), (req, res) => {
+  const year = Number(req.params.annee);
+  if (!Number.isInteger(year) || year < 2008 || year > 2100) {
+    return res.status(400).json({ error: 'Annee invalide' });
+  }
+
+  const activated = activateBaremesForYear(year);
+  res.json({ annee: year, activated });
 });
 
 referentielsRouter.delete('/baremes/:id', requireRole('admin'), (req, res) => {

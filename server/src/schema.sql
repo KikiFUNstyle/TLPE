@@ -57,6 +57,12 @@ CREATE TABLE IF NOT EXISTS baremes (
   UNIQUE (annee, categorie, surface_min, surface_max)
 );
 
+-- Activation annuelle des baremes (utilisee par le job au 1er janvier)
+CREATE TABLE IF NOT EXISTS bareme_activation (
+  annee        INTEGER PRIMARY KEY,
+  activated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- =====================================================================
 -- Assujettis
 -- =====================================================================
