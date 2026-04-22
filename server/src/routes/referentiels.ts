@@ -128,19 +128,24 @@ referentielsRouter.post('/baremes/import', requireRole('admin'), (req, res) => {
   const parsed = baremeImportSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  let rows: BaremeInput[] = [];
-  if (parsed.data.csv) {
-    rows = parseBaremesCsv(parsed.data.csv);
-  } else if (parsed.data.rows) {
-    rows = parsed.data.rows;
-  }
+  try {
+    let rows: BaremeInput[] = [];
+    if (parsed.data.csv) {
+      rows = parseBaremesCsv(parsed.data.csv);
+    } else if (parsed.data.rows) {
+      rows = parsed.data.rows;
+    }
 
-  if (rows.length === 0) {
-    return res.status(400).json({ error: 'Aucune ligne de bareme a importer' });
-  }
+    if (rows.length === 0) {
+      return res.status(400).json({ error: 'Aucune ligne de bareme a importer' });
+    }
 
-  const summary = upsertBaremes(rows, req.user!.id, req.ip ?? null);
-  res.status(201).json(summary);
+    const summary = upsertBaremes(rows, req.user!.id, req.ip ?? null);
+    return res.status(201).json(summary);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Import CSV invalide';
+    return res.status(400).json({ error: message });
+  }
 });
 
 referentielsRouter.post('/baremes/activate-year/:annee', requireRole('admin'), (req, res) => {

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { db, initSchema } from './db';
-import { activateBaremesForYear, parseBaremesCsv, upsertBaremes } from './baremes';
+import { activateBaremesForYear, getActiveBaremeYear, parseBaremesCsv, upsertBaremes } from './baremes';
 import { findBareme } from './calculator';
 
 function resetTables() {
@@ -52,6 +52,16 @@ test('parseBaremesCsv - parse virgule et point-virgule', () => {
 
   assert.equal(b[0].categorie, 'enseigne');
   assert.equal(b[0].tarif_fixe, 75);
+});
+
+test('parseBaremesCsv - rejette les tarifs negatifs', () => {
+  resetTables();
+  const badCsv = [
+    'annee,categorie,surface_min,surface_max,tarif_m2,tarif_fixe,exonere,libelle',
+    '2026,publicitaire,0,8,-1,,0,Publicitaire <= 8 m2',
+  ].join('\n');
+
+  assert.throws(() => parseBaremesCsv(badCsv), /tarif_m2 invalide/);
 });
 
 test('upsertBaremes - cree puis met a jour avec audit', () => {
@@ -133,4 +143,21 @@ test('findBareme - prend le bareme le plus recent <= annee (antidatage)', () => 
   assert.ok(from2026);
   assert.equal(from2025?.annee, 2024);
   assert.equal(from2026?.annee, 2026);
+});
+
+test('getActiveBaremeYear - priorise une annee activee', () => {
+  resetTables();
+
+  const stmt = db.prepare(
+    `INSERT INTO baremes (annee, categorie, surface_min, surface_max, tarif_m2, tarif_fixe, exonere, libelle)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+
+  stmt.run(2025, 'publicitaire', 0, 8, 16, null, 0, 'Publicitaire <= 8 m2 (2025)');
+  stmt.run(2026, 'publicitaire', 0, 8, 17, null, 0, 'Publicitaire <= 8 m2 (2026)');
+
+  activateBaremesForYear(2025, '2025-01-01T00:00:00.000Z');
+
+  const active = getActiveBaremeYear(new Date('2026-06-01T00:00:00.000Z'));
+  assert.equal(active, 2025);
 });

@@ -120,6 +120,15 @@ export function parseBaremesCsv(csv: string): BaremeInput[] {
       const tarifFixe = parseNumberOrNull(get('tarif_fixe'));
       const libelle = (get('libelle') || '').trim();
 
+      if (surfaceMax !== null && surfaceMax <= 0) {
+        throw new Error(`surface_max invalide: ${get('surface_max')}`);
+      }
+      if (tarifM2 !== null && tarifM2 < 0) {
+        throw new Error(`tarif_m2 invalide: ${get('tarif_m2')}`);
+      }
+      if (tarifFixe !== null && tarifFixe < 0) {
+        throw new Error(`tarif_fixe invalide: ${get('tarif_fixe')}`);
+      }
       if (!libelle) {
         throw new Error('libelle obligatoire');
       }
@@ -219,13 +228,13 @@ export function activateBaremesForYear(year: number, nowIso: string = new Date()
 
   if (hasRows.c === 0) return false;
 
-  const existing = db
-    .prepare('SELECT annee FROM bareme_activation WHERE annee = ?')
-    .get(year) as { annee: number } | undefined;
+  const insertIfMissing = db.prepare(
+    `INSERT OR IGNORE INTO bareme_activation (annee, activated_at)
+     VALUES (?, ?)`,
+  );
 
-  if (existing) return false;
-
-  db.prepare('INSERT INTO bareme_activation (annee, activated_at) VALUES (?, ?)').run(year, nowIso);
+  const info = insertIfMissing.run(year, nowIso);
+  if (info.changes === 0) return false;
 
   logAudit({
     userId: null,
@@ -241,6 +250,19 @@ export function activateBaremesForYear(year: number, nowIso: string = new Date()
 
 export function getActiveBaremeYear(referenceDate: Date = new Date()): number | null {
   const year = referenceDate.getUTCFullYear();
+
+  const activated = db
+    .prepare(
+      `SELECT ba.annee
+       FROM bareme_activation ba
+       JOIN baremes b ON b.annee = ba.annee
+       WHERE ba.annee <= ?
+       ORDER BY ba.annee DESC
+       LIMIT 1`,
+    )
+    .get(year) as { annee: number } | undefined;
+
+  if (activated) return activated.annee;
 
   const exact = db.prepare('SELECT annee FROM baremes WHERE annee = ? LIMIT 1').get(year) as
     | { annee: number }
