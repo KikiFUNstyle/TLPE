@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useState, type ChangeEvent } from 'react';
 import { api } from '../api';
 import { formatEuro } from '../format';
 import { useAuth } from '../auth';
@@ -358,6 +358,19 @@ function ZonesTab() {
     }
   };
 
+  const onGeoJsonFileSelected = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      setGeoJsonText(text);
+      setMessage(`Fichier charge: ${file.name}`);
+    } catch {
+      setError('Impossible de lire le fichier');
+    }
+  };
+
   const exportGeoJson = async () => {
     setError(null);
     setMessage(null);
@@ -398,6 +411,10 @@ function ZonesTab() {
             style={{ width: '100%' }}
             required
           />
+          <div style={{ marginTop: 8 }}>
+            <input type="file" accept=".json,.geojson,application/geo+json,application/json" onChange={onGeoJsonFileSelected} />
+            <div className="hint">Ou chargez un fichier GeoJSON depuis votre poste.</div>
+          </div>
           <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
             <button className="btn" type="submit">Importer</button>
             <button className="btn secondary" type="button" onClick={exportGeoJson}>Exporter GeoJSON</button>
