@@ -18,7 +18,11 @@ interface Dispositif {
 }
 
 interface Type { id: number; libelle: string; categorie: string; }
-interface Zone { id: number; libelle: string; coefficient: number; }
+interface Zone {
+  id: number;
+  libelle: string;
+  coefficient: number;
+}
 interface Assujetti { id: number; identifiant_tlpe: string; raison_sociale: string; }
 
 export default function Dispositifs() {
@@ -95,9 +99,12 @@ function CreationModal({ onClose, onCreated }: { onClose: () => void; onCreated:
     assujetti_id: 0,
     type_id: 0,
     zone_id: 0,
+    auto_zone: true,
     adresse_rue: '',
     adresse_cp: '',
     adresse_ville: '',
+    latitude: '',
+    longitude: '',
     surface: 1,
     nombre_faces: 1,
     date_pose: '',
@@ -131,6 +138,9 @@ function CreationModal({ onClose, onCreated }: { onClose: () => void; onCreated:
           surface: Number(form.surface),
           nombre_faces: Number(form.nombre_faces),
           zone_id: form.zone_id || null,
+          latitude: form.latitude ? Number(form.latitude) : null,
+          longitude: form.longitude ? Number(form.longitude) : null,
+          auto_zone: form.auto_zone,
           date_pose: form.date_pose || null,
         }),
       });
@@ -142,7 +152,7 @@ function CreationModal({ onClose, onCreated }: { onClose: () => void; onCreated:
     }
   };
 
-  const upd = (k: string, v: string | number) => setForm((f) => ({ ...f, [k]: v }));
+  const upd = (k: string, v: string | number | boolean) => setForm((f) => ({ ...f, [k]: v }));
 
   return (
     <div className="dialog-backdrop" onClick={onClose}>
@@ -178,7 +188,7 @@ function CreationModal({ onClose, onCreated }: { onClose: () => void; onCreated:
             <div>
               <label>Zone</label>
               <select value={form.zone_id} onChange={(e) => upd('zone_id', Number(e.target.value))}>
-                <option value={0}>Aucune</option>
+                <option value={0}>Aucune / auto-detection</option>
                 {zones.map((z) => <option key={z.id} value={z.id}>{z.libelle} (×{z.coefficient})</option>)}
               </select>
             </div>
@@ -195,6 +205,22 @@ function CreationModal({ onClose, onCreated }: { onClose: () => void; onCreated:
             <div>
               <label>Ville</label>
               <input value={form.adresse_ville} onChange={(e) => upd('adresse_ville', e.target.value)} />
+            </div>
+          </div>
+          <div className="form-row cols-3">
+            <div>
+              <label>Latitude</label>
+              <input type="number" step="0.000001" value={form.latitude} onChange={(e) => upd('latitude', e.target.value)} />
+            </div>
+            <div>
+              <label>Longitude</label>
+              <input type="number" step="0.000001" value={form.longitude} onChange={(e) => upd('longitude', e.target.value)} />
+            </div>
+            <div style={{ display: 'flex', alignItems: 'end' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input type="checkbox" checked={form.auto_zone} onChange={(e) => upd('auto_zone', e.target.checked)} />
+                Auto-attribuer la zone par point-in-polygon
+              </label>
             </div>
           </div>
           <div>

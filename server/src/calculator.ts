@@ -29,6 +29,28 @@ export interface CalculInput {
   date_pose?: string | null;
   date_depose?: string | null;
   exonere?: boolean;
+  assujetti_id?: number;
+}
+
+export interface ExonerationRow {
+  id: number;
+  type: 'droit' | 'deliberee' | 'eco';
+  critere: string;
+  taux: number;
+  date_debut: string | null;
+  date_fin: string | null;
+  active: number;
+}
+
+interface ExonerationCritere {
+  categorie?: CalculInput['categorie'];
+  assujetti_id?: number;
+  surface_max?: number;
+  surface_min?: number;
+  coefficient_zone_max?: number;
+  coefficient_zone_min?: number;
+  annee_min?: number;
+  annee_max?: number;
 }
 
 export interface BaremeRow {
@@ -117,6 +139,69 @@ export function computeProrata(
   return { jours, prorata: Math.round(prorata * 10000) / 10000 };
 }
 
+function critereMatches(
+  critere: ExonerationCritere,
+  context: {
+    annee: number;
+    categorie: CalculInput['categorie'];
+    assujettiId?: number;
+    surfaceEffective: number;
+    coefficientZone: number;
+  },
+): boolean {
+  if (critere.categorie && critere.categorie !== context.categorie) return false;
+  if (critere.assujetti_id !== undefined && critere.assujetti_id !== context.assujettiId) return false;
+  if (critere.surface_max !== undefined && context.surfaceEffective > critere.surface_max) return false;
+  if (critere.surface_min !== undefined && context.surfaceEffective < critere.surface_min) return false;
+  if (critere.coefficient_zone_max !== undefined && context.coefficientZone > critere.coefficient_zone_max) return false;
+  if (critere.coefficient_zone_min !== undefined && context.coefficientZone < critere.coefficient_zone_min) return false;
+  if (critere.annee_min !== undefined && context.annee < critere.annee_min) return false;
+  if (critere.annee_max !== undefined && context.annee > critere.annee_max) return false;
+  return true;
+}
+
+export function findExoneration(
+  annee: number,
+  categorie: CalculInput['categorie'],
+  surfaceEffective: number,
+  coefficientZone: number,
+  assujettiId?: number,
+): ExonerationRow | null {
+  const rows = db
+    .prepare(
+      `SELECT id, type, critere, taux, date_debut, date_fin, active
+       FROM exonerations
+       WHERE active = 1
+         AND (date_debut IS NULL OR date_debut <= ?)
+         AND (date_fin IS NULL OR date_fin >= ?)
+       ORDER BY type ASC, id ASC`,
+    )
+    .all(`${annee}-12-31`, `${annee}-01-01`) as ExonerationRow[];
+
+  for (const row of rows) {
+    let critere: ExonerationCritere;
+    try {
+      critere = JSON.parse(row.critere) as ExonerationCritere;
+    } catch {
+      continue;
+    }
+
+    if (
+      critereMatches(critere, {
+        annee,
+        categorie,
+        assujettiId,
+        surfaceEffective,
+        coefficientZone,
+      })
+    ) {
+      return row;
+    }
+  }
+
+  return null;
+}
+
 export function calculerTLPE(input: CalculInput): CalculResult {
   const nombreFaces = input.nombre_faces ?? 1;
   const surfaceEffective = input.surface * nombreFaces;
@@ -175,6 +260,14 @@ export function calculerTLPE(input: CalculInput): CalculResult {
     };
   }
 
+  const exoneration = findExoneration(
+    input.annee,
+    input.categorie,
+    surfaceEffective,
+    coefficient,
+    input.assujetti_id,
+  );
+
   let sousTotal: number;
   if (bareme.tarif_fixe !== null) {
     sousTotal = bareme.tarif_fixe * coefficient * prorata;
@@ -183,7 +276,8 @@ export function calculerTLPE(input: CalculInput): CalculResult {
   } else {
     sousTotal = 0;
   }
-  const montantArrondi = Math.max(0, Math.floor(sousTotal));
+  const montantApresReduction = exoneration ? sousTotal * (1 - exoneration.taux) : sousTotal;
+  const montantArrondi = Math.max(0, Math.floor(montantApresReduction));
 
   return {
     montant: montantArrondi,
@@ -192,15 +286,17 @@ export function calculerTLPE(input: CalculInput): CalculResult {
       nombre_faces: nombreFaces,
       surface_effective: surfaceEffective,
       categorie: input.categorie,
-      tranche_libelle: bareme.libelle,
+      tranche_libelle: exoneration
+        ? `${bareme.libelle} (${exoneration.type} -${Math.round(exoneration.taux * 100)}%)`
+        : bareme.libelle,
       bareme_id: bareme.id,
       tarif_m2: bareme.tarif_m2,
       tarif_fixe: bareme.tarif_fixe,
       coefficient_zone: coefficient,
       jours_exploitation: jours,
       prorata,
-      exonere: false,
-      sous_total: Math.round(sousTotal * 100) / 100,
+      exonere: exoneration ? exoneration.taux >= 1 : false,
+      sous_total: Math.round(montantApresReduction * 100) / 100,
       montant_arrondi: montantArrondi,
     },
   };

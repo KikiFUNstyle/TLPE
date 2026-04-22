@@ -13,7 +13,7 @@ basée sur les articles L2333-6 à L2333-16 du CGCT.
 
 | Module | Spec | Statut |
 |---|---|---|
-| Référentiels (barème, zones, types) | §3 | OK |
+| Référentiels (barème, zones, types + import GeoJSON des zones + exonerations/abattements) | §3 | OK |
 | Assujettis (CRUD, contrôle SIRET Luhn) | §4.1 | OK |
 | Import en masse assujettis (CSV/XLSX + pré-contrôle) | §4.3 | OK |
 | Dispositifs (CRUD, géolocalisation) | §4.2 | OK |
@@ -33,7 +33,7 @@ basée sur les articles L2333-6 à L2333-16 du CGCT.
 
 - Application mobile de contrôle terrain (§9.2)
 - Intégrations externes réelles : FranceConnect+, PayFip, BAN, PESV2 (§13.1)
-- Import SIG / Shapefile (§4.3)
+- Import SIG / Shapefile natif (§4.3)
 - Signature électronique (§13.2)
 - Conformité RGAA 4.1 complète (§11.3)
 - Rapports PDF avancés autres que le titre de recettes (§10.2)
@@ -90,6 +90,51 @@ Contrôles appliqués : SIRET (Luhn), email, champs obligatoires, doublons, coh�
 6. Sur la page Titres → **Enregistrer un paiement** → le statut passe à payé.
 7. Reconnexion **contribuable** → il ne voit que ses propres déclarations et titres.
 8. **Simulateur** : tester des cas (enseigne ≤ 7m² exonérée, enseigne 7-12m² forfait 75€, double face, prorata).
+
+## Mise à jour annuelle des barèmes (US1.1)
+
+Le module Référentiels supporte maintenant :
+
+- import unitaire via formulaire (`/referentiels`, onglet Barème)
+- import batch CSV via `POST /api/referentiels/baremes/import`
+- historique des millésimes via `GET /api/referentiels/baremes/history`
+- année active calculée via `GET /api/referentiels/baremes/active-year`
+- activation d'un millésime via `POST /api/referentiels/baremes/activate-year/:annee`
+
+Format CSV attendu (`,` ou `;`) :
+
+```csv
+annee,categorie,surface_min,surface_max,tarif_m2,tarif_fixe,exonere,libelle
+2026,publicitaire,0,8,15.50,,0,Publicitaire <= 8 m2
+2026,enseigne,7,12,,75,0,Enseigne 7-12 m2 (forfait)
+```
+
+Job d'activation (à planifier au 1er janvier):
+
+```bash
+npm run job:activate-baremes --workspace=server
+# optionnel: TLPE_BAREME_YEAR=2027 npm run job:activate-baremes --workspace=server
+```
+
+Chaque création/modification/activation est journalisée dans `audit_log` via `logAudit()`.
+
+## Exonerations et abattements délibérés (US1.3)
+
+Le module Référentiels expose une gestion CRUD des exonerations dans un onglet dédié (`/referentiels` → `Exonerations`) avec backend associé :
+
+- `GET /api/referentiels/exonerations`
+- `POST /api/referentiels/exonerations`
+- `DELETE /api/referentiels/exonerations/:id`
+
+Structure persistée (`exonerations`) :
+
+- `type` : `droit | deliberee | eco`
+- `critere` : JSON (exemples : `{"categorie":"enseigne","surface_max":7}` ou `{"assujetti_id":12,"annee_min":2026}`)
+- `taux` : `0.0` à `1.0` (1.0 = exonération totale)
+- `date_debut` / `date_fin`
+- `active`
+
+Le moteur `calculerTLPE` applique désormais automatiquement l'abattement/exonération correspondant (hors override manuel `dispositifs.exonere` qui reste prioritaire).
 
 ## Barème intégré
 

@@ -15,6 +15,13 @@ export function initSchema() {
   const schemaPath = path.join(__dirname, 'schema.sql');
   const sql = fs.readFileSync(schemaPath, 'utf-8');
   db.exec(sql);
+
+  // migration legacy -> ajoute geometry sur zones si la table existe deja
+  const zoneColumns = db.prepare("PRAGMA table_info('zones')").all() as Array<{ name: string }>;
+  const hasGeometry = zoneColumns.some((col) => col.name === 'geometry');
+  if (!hasGeometry) {
+    db.exec('ALTER TABLE zones ADD COLUMN geometry TEXT');
+  }
 }
 
 export function logAudit(params: {
