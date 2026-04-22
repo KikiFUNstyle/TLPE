@@ -28,6 +28,8 @@ export interface NormalizedDispositifImportRow {
   type_id: number;
   zone_id: number;
   adresse_rue: string | null;
+  adresse_cp: string | null;
+  adresse_ville: string | null;
   latitude: number | null;
   longitude: number | null;
   surface: number;
@@ -51,6 +53,9 @@ export interface ImportExecutionResult {
 export interface GeocodeResult {
   latitude: number;
   longitude: number;
+  adresse?: string;
+  codePostal?: string | null;
+  ville?: string | null;
 }
 
 export interface ValidateOptions {
@@ -164,7 +169,10 @@ async function geocodeBanAddress(address: string): Promise<GeocodeResult | null>
   if (!response.ok) return null;
 
   const payload = (await response.json()) as {
-    features?: Array<{ geometry?: { coordinates?: [number, number] } }>;
+    features?: Array<{
+      properties?: { label?: string; postcode?: string; city?: string };
+      geometry?: { coordinates?: [number, number] };
+    }>;
   };
   const coordinates = payload.features?.[0]?.geometry?.coordinates;
   if (!coordinates || coordinates.length < 2) return null;
@@ -172,6 +180,9 @@ async function geocodeBanAddress(address: string): Promise<GeocodeResult | null>
   return {
     longitude: Number(coordinates[0]),
     latitude: Number(coordinates[1]),
+    adresse: payload.features?.[0]?.properties?.label,
+    codePostal: payload.features?.[0]?.properties?.postcode ?? null,
+    ville: payload.features?.[0]?.properties?.city ?? null,
   };
 }
 
@@ -280,6 +291,26 @@ export async function validateDispositifsImportRows(
       }
     }
 
+    let adresseRue = adresse || null;
+    let adresseCp: string | null = null;
+    let adresseVille: string | null = null;
+
+    const cpVilleFromTailMatch = adresse.match(/^(.*),\s*(\d{5})\s+(.+)$/);
+    if (cpVilleFromTailMatch) {
+      const ruePart = cpVilleFromTailMatch[1].trim();
+      adresseRue = ruePart || adresse;
+      adresseCp = cpVilleFromTailMatch[2];
+      adresseVille = cpVilleFromTailMatch[3].trim() || null;
+    }
+
+    const geocodeFromCache = adresse ? geocodeCache.get(adresse) ?? null : null;
+    if (geocodeFromCache?.codePostal) {
+      adresseCp = geocodeFromCache.codePostal;
+    }
+    if (geocodeFromCache?.ville) {
+      adresseVille = geocodeFromCache.ville;
+    }
+
     let zoneId: number | undefined;
     if (zoneCode) {
       zoneId = zoneByCode.get(zoneCode);
@@ -304,7 +335,9 @@ export async function validateDispositifsImportRows(
       assujetti_id: assujettiId!,
       type_id: typeId!,
       zone_id: zoneId!,
-      adresse_rue: adresse || null,
+      adresse_rue: adresseRue,
+      adresse_cp: adresseCp,
+      adresse_ville: adresseVille,
       latitude,
       longitude,
       surface: surface!,
@@ -347,9 +380,9 @@ export function executeDispositifsImport(rows: NormalizedDispositifImportRow[], 
   const insertStmt = db.prepare(
     `INSERT INTO dispositifs (
       identifiant, assujetti_id, type_id, zone_id,
-      adresse_rue, latitude, longitude,
+      adresse_rue, adresse_cp, adresse_ville, latitude, longitude,
       surface, nombre_faces, date_pose, statut, exonere, notes
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL)`,
   );
 
   let created = 0;
@@ -363,6 +396,8 @@ export function executeDispositifsImport(rows: NormalizedDispositifImportRow[], 
         row.type_id,
         row.zone_id,
         row.adresse_rue,
+        row.adresse_cp,
+        row.adresse_ville,
         row.latitude,
         row.longitude,
         row.surface,

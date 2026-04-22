@@ -140,6 +140,38 @@ test('validateDispositifsImportRows - detecte anomalies et valide ligne correcte
   assert.ok(result.anomalies.some((a) => a.field === 'surface'));
 });
 
+test('validateDispositifsImportRows - conserve les complements d\'adresse avant CP/ville', async () => {
+  resetTables();
+  seedReferentiels();
+
+  const rows: RawDispositifImportRow[] = [
+    {
+      line: 2,
+      identifiant_assujetti: 'TLPE-2026-00001',
+      type_code: 'PUB-PAPIER',
+      adresse: '12 rue de la Paix, Batiment A, 75001 Paris',
+      lat: '',
+      lon: '',
+      surface: '8',
+      faces: '1',
+      date_pose: '2026-03-10',
+      zone_code: '',
+      statut: 'declare',
+    },
+  ];
+
+  const result = await validateDispositifsImportRows(rows, {
+    geocodeWithBan: true,
+    geocodeFn: async () => ({ latitude: 48.1, longitude: 2.1 }),
+  });
+
+  assert.equal(result.anomalies.length, 0);
+  assert.equal(result.validRows.length, 1);
+  assert.equal(result.validRows[0].adresse_rue, '12 rue de la Paix, Batiment A');
+  assert.equal(result.validRows[0].adresse_cp, '75001');
+  assert.equal(result.validRows[0].adresse_ville, 'Paris');
+});
+
 test('validateDispositifsImportRows - geocodage BAN optionnel quand lat/lon absents', async () => {
   resetTables();
   seedReferentiels();
