@@ -39,7 +39,12 @@ function parseNumberOrNull(value: string | undefined): number | null {
 function parseBoolean(value: string | undefined): boolean {
   if (!value) return false;
   const v = value.trim().toLowerCase();
-  return v === '1' || v === 'true' || v === 'oui' || v === 'yes';
+  if (!v) return false;
+
+  if (v === '1' || v === 'true' || v === 'oui' || v === 'yes') return true;
+  if (v === '0' || v === 'false' || v === 'non' || v === 'no') return false;
+
+  throw new BaremeValidationError(`exonere invalide: ${value}`);
 }
 
 function asCategorie(value: string): BaremeCategorie {
@@ -161,10 +166,10 @@ export function parseBaremesCsv(csv: string): BaremeInput[] {
         libelle,
       } satisfies BaremeInput;
     } catch (error) {
-      if (error instanceof BaremeValidationError) {
-        throw error;
-      }
       const message = error instanceof Error ? error.message : 'Erreur inconnue';
+      if (message.startsWith(`Ligne ${lineOffset + 2}:`)) {
+        throw new BaremeValidationError(message);
+      }
       throw new BaremeValidationError(`Ligne ${lineOffset + 2}: ${message}`);
     }
   });
