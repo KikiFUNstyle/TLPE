@@ -13,7 +13,7 @@ basée sur les articles L2333-6 à L2333-16 du CGCT.
 
 | Module | Spec | Statut |
 |---|---|---|
-| Référentiels (barème, zones, types) | §3 | OK |
+| Référentiels (barème, zones, types + import GeoJSON des zones) | §3 | OK |
 | Assujettis (CRUD, contrôle SIRET Luhn) | §4.1 | OK |
 | Dispositifs (CRUD, géolocalisation) | §4.2 | OK |
 | Moteur de calcul TLPE (tranches, prorata, coef. zone, double face, forfait, exonération) | §6 | OK + tests |
@@ -32,7 +32,7 @@ basée sur les articles L2333-6 à L2333-16 du CGCT.
 
 - Application mobile de contrôle terrain (§9.2)
 - Intégrations externes réelles : FranceConnect+, PayFip, BAN, PESV2 (§13.1)
-- Import SIG / Shapefile (§4.3)
+- Import SIG / Shapefile natif (§4.3)
 - Signature électronique (§13.2)
 - Conformité RGAA 4.1 complète (§11.3)
 - Rapports PDF avancés autres que le titre de recettes (§10.2)
