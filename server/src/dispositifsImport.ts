@@ -74,6 +74,19 @@ const HEADERS = [
 const statutValues = new Set(['declare', 'controle', 'litigieux', 'depose', 'exonere']);
 const isoDateRegex = /^\d{4}-\d{2}-\d{2}$/;
 
+function isValidIsoCalendarDate(value: string): boolean {
+  if (!isoDateRegex.test(value)) return false;
+  const [yearRaw, monthRaw, dayRaw] = value.split('-');
+  const year = Number(yearRaw);
+  const month = Number(monthRaw);
+  const day = Number(dayRaw);
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return false;
+  if (month < 1 || month > 12 || day < 1 || day > 31) return false;
+
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() + 1 === month && date.getUTCDate() === day;
+}
+
 function normalizeHeader(value: string): string {
   return value
     .trim()
@@ -223,8 +236,8 @@ export async function validateDispositifsImportRows(
     }
 
     const datePoseRaw = (row.date_pose || '').trim();
-    if (datePoseRaw && !isoDateRegex.test(datePoseRaw)) {
-      anomalies.push({ line: row.line, field: 'date_pose', message: 'Date invalide (format attendu YYYY-MM-DD)' });
+    if (datePoseRaw && !isValidIsoCalendarDate(datePoseRaw)) {
+      anomalies.push({ line: row.line, field: 'date_pose', message: 'Date invalide (format attendu YYYY-MM-DD avec date calendrier valide)' });
     }
 
     const statutRaw = (row.statut || '').trim().toLowerCase();

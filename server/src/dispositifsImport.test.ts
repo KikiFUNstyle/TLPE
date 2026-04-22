@@ -170,6 +170,31 @@ test('validateDispositifsImportRows - geocodage BAN optionnel quand lat/lon abse
   assert.equal(result.validRows[0].zone_id > 0, true);
 });
 
+test('validateDispositifsImportRows - rejette une date calendrier impossible', async () => {
+  resetTables();
+  seedReferentiels();
+
+  const rows: RawDispositifImportRow[] = [
+    {
+      line: 2,
+      identifiant_assujetti: 'TLPE-2026-00001',
+      type_code: 'PUB-PAPIER',
+      adresse: '12 rue de la Paix',
+      lat: '48.1',
+      lon: '2.1',
+      surface: '5',
+      faces: '2',
+      date_pose: '2026-02-31',
+      zone_code: 'ZC',
+      statut: 'declare',
+    },
+  ];
+
+  const result = await validateDispositifsImportRows(rows);
+  assert.equal(result.validRows.length, 0);
+  assert.ok(result.anomalies.some((a) => a.field === 'date_pose'));
+});
+
 test('executeDispositifsImport - cree des dispositifs et journalise', async () => {
   resetTables();
   seedReferentiels();
