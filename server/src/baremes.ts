@@ -37,13 +37,9 @@ function parseNumberOrNull(value: string | undefined): number | null {
 }
 
 function parseBoolean(value: string | undefined): boolean {
-  if (!value) return false;
-  const v = value.trim().toLowerCase();
-  if (!v) return false;
-
+  const v = (value || '').trim().toLowerCase();
   if (v === '1' || v === 'true' || v === 'oui' || v === 'yes') return true;
   if (v === '0' || v === 'false' || v === 'non' || v === 'no') return false;
-
   throw new BaremeValidationError(`exonere invalide: ${value}`);
 }
 

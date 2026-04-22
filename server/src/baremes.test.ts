@@ -84,7 +84,7 @@ test('parseBaremesCsv - rejette si exonere absent', () => {
   assert.throws(() => parseBaremesCsv(badCsv), /colonne manquante "exonere"/);
 });
 
-test('parseBaremesCsv - rejette les valeurs exonere invalides avec contexte de ligne', () => {
+test('parseBaremesCsv - rejette si exonere invalide', () => {
   resetTables();
   const badCsv = [
     'annee,categorie,surface_min,surface_max,tarif_m2,tarif_fixe,exonere,libelle',
