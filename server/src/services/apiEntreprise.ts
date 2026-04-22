@@ -2,6 +2,7 @@ import { db } from '../db';
 
 const API_ENTREPRISE_BASE_URL = 'https://entreprise.api.gouv.fr/v3/insee/sirene/etablissements';
 const THIRTY_DAYS_IN_MS = 30 * 24 * 60 * 60 * 1000;
+const API_ENTREPRISE_TIMEOUT_MS = 8000;
 
 export interface SireneData {
   siret: string;
@@ -159,14 +160,28 @@ function saveCache(entry: SireneData): void {
 }
 
 async function fetchSireneApi(siret: string, token: string): Promise<SireneData> {
-  const response = await fetch(`${API_ENTREPRISE_BASE_URL}/${siret}`, {
-    method: 'GET',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: 'application/json',
-      'User-Agent': 'TLPE-Manager/1.0',
-    },
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), API_ENTREPRISE_TIMEOUT_MS);
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_ENTREPRISE_BASE_URL}/${siret}`, {
+      method: 'GET',
+      signal: controller.signal,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json',
+        'User-Agent': 'TLPE-Manager/1.0',
+      },
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error(`API Entreprise timeout (${API_ENTREPRISE_TIMEOUT_MS} ms)`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 
   if (!response.ok) {
     throw new Error(`API Entreprise indisponible (${response.status})`);

@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type RequestHandler } from 'express';
 import { z } from 'zod';
 import { db, logAudit } from '../db';
 import { authMiddleware, requireRole } from '../auth';
@@ -100,6 +100,10 @@ const assujettiImportSchema = z.object({
   onError: z.enum(['abort', 'skip']).default('abort'),
 });
 
+const asyncRoute = (handler: RequestHandler): RequestHandler => (req, res, next) => {
+  Promise.resolve(handler(req, res, next)).catch(next);
+};
+
 type AssujettiPayload = z.infer<typeof assujettiSchema>;
 
 async function enrichAssujettiWithSiretIfNeeded(payload: AssujettiPayload): Promise<{
@@ -187,7 +191,7 @@ async function enrichImportRowsWithSiret(rows: NormalizedImportRow[]): Promise<{
   };
 }
 
-assujettisRouter.post('/', requireRole('admin', 'gestionnaire'), async (req, res) => {
+assujettisRouter.post('/', requireRole('admin', 'gestionnaire'), asyncRoute(async (req, res) => {
   const parsed = assujettiSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
@@ -246,9 +250,9 @@ assujettisRouter.post('/', requireRole('admin', 'gestionnaire'), async (req, res
     }
     throw e;
   }
-});
+}));
 
-assujettisRouter.put('/:id', requireRole('admin', 'gestionnaire'), async (req, res) => {
+assujettisRouter.put('/:id', requireRole('admin', 'gestionnaire'), asyncRoute(async (req, res) => {
   const parsed = assujettiSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
@@ -295,7 +299,7 @@ assujettisRouter.put('/:id', requireRole('admin', 'gestionnaire'), async (req, r
 
   logAudit({ userId: req.user!.id, action: 'update', entite: 'assujetti', entiteId: Number(req.params.id) });
   return res.json({ ok: true, sirene_status: sireneStatus, sirene_message: sireneMessage });
-});
+}));
 
 assujettisRouter.get('/import/template', requireRole('admin', 'gestionnaire'), (_req, res) => {
   const content = assujettisImportTemplateCsv();
@@ -304,7 +308,7 @@ assujettisRouter.get('/import/template', requireRole('admin', 'gestionnaire'), (
   res.send(content);
 });
 
-assujettisRouter.post('/import', requireRole('admin', 'gestionnaire'), async (req, res) => {
+assujettisRouter.post('/import', requireRole('admin', 'gestionnaire'), asyncRoute(async (req, res) => {
   const parsed = assujettiImportSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
@@ -362,7 +366,7 @@ assujettisRouter.post('/import', requireRole('admin', 'gestionnaire'), async (re
     sirene_status: uniqueMessages.length > 0 ? 'degraded' : 'ok',
     sirene_messages: uniqueMessages,
   });
-});
+}));
 
 assujettisRouter.delete('/:id', requireRole('admin'), (req, res) => {
   const info = db.prepare('DELETE FROM assujettis WHERE id = ?').run(req.params.id);
