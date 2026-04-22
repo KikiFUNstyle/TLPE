@@ -408,7 +408,17 @@ function CreationModal({ onClose, onCreated }: { onClose: () => void; onCreated:
             </div>
             <div>
               <label>Zone</label>
-              <select value={form.zone_id} onChange={(e) => upd('zone_id', Number(e.target.value))}>
+              <select
+                value={form.zone_id}
+                onChange={(e) => {
+                  const nextZoneId = Number(e.target.value);
+                  setForm((f) => ({
+                    ...f,
+                    zone_id: nextZoneId,
+                    auto_zone: nextZoneId === 0,
+                  }));
+                }}
+              >
                 <option value={0}>Aucune / auto-detection</option>
                 {zones.map((z) => <option key={z.id} value={z.id}>{z.libelle} (×{z.coefficient})</option>)}
               </select>
