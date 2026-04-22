@@ -106,6 +106,23 @@ CREATE TABLE IF NOT EXISTS assujettis (
 CREATE INDEX IF NOT EXISTS idx_assujettis_siret ON assujettis(siret);
 CREATE INDEX IF NOT EXISTS idx_assujettis_raison ON assujettis(raison_sociale);
 
+-- cache API Entreprise (SIRENE)
+CREATE TABLE IF NOT EXISTS api_entreprise_cache (
+  siret               TEXT PRIMARY KEY,
+  raison_sociale      TEXT,
+  forme_juridique     TEXT,
+  adresse_rue         TEXT,
+  adresse_cp          TEXT,
+  adresse_ville       TEXT,
+  adresse_pays        TEXT,
+  est_radie           INTEGER NOT NULL DEFAULT 0 CHECK (est_radie IN (0,1)),
+  source_statut       TEXT,
+  fetched_at          TEXT NOT NULL DEFAULT (datetime('now')),
+  expires_at          TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_entreprise_cache_expires_at ON api_entreprise_cache(expires_at);
+
 -- =====================================================================
 -- Dispositifs
 -- =====================================================================
