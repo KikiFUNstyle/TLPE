@@ -47,6 +47,25 @@ interface ZoneGeoJson {
   }>;
 }
 
+interface Exoneration {
+  id: number;
+  type: 'droit' | 'deliberee' | 'eco';
+  critere: string;
+  taux: number;
+  date_debut: string | null;
+  date_fin: string | null;
+  active: number;
+}
+
+interface ExonerationForm {
+  type: Exoneration['type'];
+  critere: string;
+  taux: string;
+  date_debut: string;
+  date_fin: string;
+  active: boolean;
+}
+
 interface Type {
   id: number;
   code: string;
@@ -55,7 +74,7 @@ interface Type {
 }
 
 export default function Referentiels() {
-  const [tab, setTab] = useState<'bareme' | 'zones' | 'types'>('bareme');
+  const [tab, setTab] = useState<'bareme' | 'zones' | 'types' | 'exonerations'>('bareme');
   return (
     <>
       <div className="page-header">
@@ -68,10 +87,12 @@ export default function Referentiels() {
         <button className={`btn ${tab === 'bareme' ? '' : 'secondary'}`} onClick={() => setTab('bareme')}>Bareme</button>
         <button className={`btn ${tab === 'zones' ? '' : 'secondary'}`} onClick={() => setTab('zones')}>Zones</button>
         <button className={`btn ${tab === 'types' ? '' : 'secondary'}`} onClick={() => setTab('types')}>Types de dispositifs</button>
+        <button className={`btn ${tab === 'exonerations' ? '' : 'secondary'}`} onClick={() => setTab('exonerations')}>Exonerations</button>
       </div>
       {tab === 'bareme' && <BaremeTab />}
       {tab === 'zones' && <ZonesTab />}
       {tab === 'types' && <TypesTab />}
+      {tab === 'exonerations' && <ExonerationsTab />}
     </>
   );
 }
@@ -449,6 +470,137 @@ function TypesTab() {
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function ExonerationsTab() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
+
+  const [rows, setRows] = useState<Exoneration[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [form, setForm] = useState<ExonerationForm>({
+    type: 'droit',
+    critere: '{"categorie":"enseigne","surface_max":7}',
+    taux: '1',
+    date_debut: '',
+    date_fin: '',
+    active: true,
+  });
+
+  const refresh = async () => {
+    setError(null);
+    try {
+      const data = await api<Exoneration[]>('/api/referentiels/exonerations');
+      setRows(data);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Erreur inconnue');
+    }
+  };
+
+  useEffect(() => {
+    refresh();
+  }, []);
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    setError(null);
+    try {
+      const critere = JSON.parse(form.critere);
+      await api('/api/referentiels/exonerations', {
+        method: 'POST',
+        body: JSON.stringify({
+          type: form.type,
+          critere,
+          taux: Number(form.taux),
+          date_debut: form.date_debut || null,
+          date_fin: form.date_fin || null,
+          active: form.active,
+        }),
+      });
+      setForm((prev) => ({ ...prev, critere: '{"categorie":"enseigne","surface_max":7}', taux: '1' }));
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Critere JSON invalide');
+    }
+  };
+
+  const remove = async (id: number) => {
+    setError(null);
+    try {
+      await api(`/api/referentiels/exonerations/${id}`, { method: 'DELETE' });
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Erreur inconnue');
+    }
+  };
+
+  return (
+    <div className="grid" style={{ gap: 16 }}>
+      {error && <div className="card" style={{ borderColor: '#b91c1c', color: '#b91c1c' }}>{error}</div>}
+
+      {isAdmin && (
+        <form className="card" onSubmit={submit}>
+          <h3>Nouvelle exoneration / abattement</h3>
+          <div className="form-grid two" style={{ marginTop: 8 }}>
+            <div>
+              <label>Type</label>
+              <select value={form.type} onChange={(e) => setForm((prev) => ({ ...prev, type: e.target.value as Exoneration['type'] }))}>
+                <option value="droit">Droit</option>
+                <option value="deliberee">Deliberee</option>
+                <option value="eco">Eco</option>
+              </select>
+            </div>
+            <div>
+              <label>Taux (0 a 1)</label>
+              <input type="number" step="0.01" min={0} max={1} value={form.taux} onChange={(e) => setForm((prev) => ({ ...prev, taux: e.target.value }))} required />
+            </div>
+            <div>
+              <label>Date debut</label>
+              <input type="date" value={form.date_debut} onChange={(e) => setForm((prev) => ({ ...prev, date_debut: e.target.value }))} />
+            </div>
+            <div>
+              <label>Date fin</label>
+              <input type="date" value={form.date_fin} onChange={(e) => setForm((prev) => ({ ...prev, date_fin: e.target.value }))} />
+            </div>
+          </div>
+          <label style={{ marginTop: 8 }}>Critere (JSON)</label>
+          <textarea rows={5} style={{ width: '100%' }} value={form.critere} onChange={(e) => setForm((prev) => ({ ...prev, critere: e.target.value }))} required />
+          <label style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <input type="checkbox" checked={form.active} onChange={(e) => setForm((prev) => ({ ...prev, active: e.target.checked }))} />
+            Active
+          </label>
+          <div className="hint">Exemples criteres: {`{"categorie":"enseigne","surface_max":7}`}, {`{"assujetti_id":12,"annee_min":2026}`}</div>
+          <div style={{ marginTop: 12 }}>
+            <button className="btn" type="submit">Enregistrer</button>
+          </div>
+        </form>
+      )}
+
+      <div className="card" style={{ padding: 0 }}>
+        <table className="table">
+          <thead>
+            <tr><th>Type</th><th>Taux</th><th>Periode</th><th>Critere</th><th>Active</th>{isAdmin && <th>Action</th>}</tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.id}>
+                <td>{row.type}</td>
+                <td>{Math.round(row.taux * 100)} %</td>
+                <td>{row.date_debut || '-'} → {row.date_fin || '-'}</td>
+                <td><code>{row.critere}</code></td>
+                <td>{row.active ? 'Oui' : 'Non'}</td>
+                {isAdmin && (
+                  <td>
+                    <button className="btn secondary" onClick={() => remove(row.id)}>Supprimer</button>
+                  </td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

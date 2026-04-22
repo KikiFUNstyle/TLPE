@@ -63,6 +63,23 @@ function seedBareme() {
   stmt.run(2025, 'enseigne', 12, null, 15.81, null, 0, 'Enseigne > 12 m2 (2025)');
 }
 
+function seedExonerations() {
+  const count = (db.prepare('SELECT COUNT(*) AS c FROM exonerations').get() as { c: number }).c;
+  if (count > 0) return;
+
+  const stmt = db.prepare(
+    `INSERT INTO exonerations (type, critere, taux, date_debut, date_fin, active)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  );
+
+  // Exoneration de droit (spec §3.4)
+  stmt.run('droit', JSON.stringify({ categorie: 'enseigne', surface_max: 7 }), 1, null, null, 1);
+  // Exemple d'abattement delibere de 25%
+  stmt.run('deliberee', JSON.stringify({ categorie: 'preenseigne', surface_max: 1.5 }), 0.25, null, null, 1);
+  // Exemple eco-responsable 10%
+  stmt.run('eco', JSON.stringify({ categorie: 'publicitaire', coefficient_zone_max: 1 }), 0.1, null, null, 1);
+}
+
 function seedUsers() {
   const count = (db.prepare('SELECT COUNT(*) AS c FROM users').get() as { c: number }).c;
   if (count > 0) return;
@@ -163,6 +180,7 @@ function seedDonneesDemo() {
 seedZones();
 seedTypes();
 seedBareme();
+seedExonerations();
 seedUsers();
 seedDonneesDemo();
 

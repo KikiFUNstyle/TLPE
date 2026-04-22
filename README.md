@@ -13,7 +13,7 @@ basée sur les articles L2333-6 à L2333-16 du CGCT.
 
 | Module | Spec | Statut |
 |---|---|---|
-| Référentiels (barème, zones, types + import GeoJSON des zones) | §3 | OK |
+| Référentiels (barème, zones, types + import GeoJSON des zones + exonerations/abattements) | §3 | OK |
 | Assujettis (CRUD, contrôle SIRET Luhn) | §4.1 | OK |
 | Dispositifs (CRUD, géolocalisation) | §4.2 | OK |
 | Moteur de calcul TLPE (tranches, prorata, coef. zone, double face, forfait, exonération) | §6 | OK + tests |
@@ -102,6 +102,24 @@ npm run job:activate-baremes --workspace=server
 ```
 
 Chaque création/modification/activation est journalisée dans `audit_log` via `logAudit()`.
+
+## Exonerations et abattements délibérés (US1.3)
+
+Le module Référentiels expose une gestion CRUD des exonerations dans un onglet dédié (`/referentiels` → `Exonerations`) avec backend associé :
+
+- `GET /api/referentiels/exonerations`
+- `POST /api/referentiels/exonerations`
+- `DELETE /api/referentiels/exonerations/:id`
+
+Structure persistée (`exonerations`) :
+
+- `type` : `droit | deliberee | eco`
+- `critere` : JSON (exemples : `{"categorie":"enseigne","surface_max":7}` ou `{"assujetti_id":12,"annee_min":2026}`)
+- `taux` : `0.0` à `1.0` (1.0 = exonération totale)
+- `date_debut` / `date_fin`
+- `active`
+
+Le moteur `calculerTLPE` applique désormais automatiquement l'abattement/exonération correspondant (hors override manuel `dispositifs.exonere` qui reste prioritaire).
 
 ## Barème intégré
 
