@@ -27,8 +27,10 @@ CREATE TABLE IF NOT EXISTS zones (
   code        TEXT NOT NULL UNIQUE,
   libelle     TEXT NOT NULL,
   coefficient REAL NOT NULL DEFAULT 1.0,
-  description TEXT
+  description TEXT,
+  geometry    TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_zones_code ON zones(code);
 
 -- =====================================================================
 -- Referentiel : types de dispositifs (categories + sous-categories)

@@ -27,6 +27,24 @@ interface Zone {
   code: string;
   libelle: string;
   coefficient: number;
+  description?: string | null;
+}
+
+interface ZoneGeoJson {
+  type: 'FeatureCollection';
+  features: Array<{
+    type: 'Feature';
+    properties: {
+      code: string;
+      libelle: string;
+      coefficient: number;
+      description?: string | null;
+    };
+    geometry: {
+      type: 'Polygon' | 'MultiPolygon';
+      coordinates: unknown;
+    };
+  }>;
 }
 
 interface Type {
@@ -300,18 +318,103 @@ function BaremeTab() {
 }
 
 function ZonesTab() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
+
   const [rows, setRows] = useState<Zone[]>([]);
-  useEffect(() => { api<Zone[]>('/api/referentiels/zones').then(setRows); }, []);
+  const [geoJsonText, setGeoJsonText] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const loadZones = async () => {
+    try {
+      const zones = await api<Zone[]>('/api/referentiels/zones');
+      setRows(zones);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Erreur inconnue');
+    }
+  };
+
+  useEffect(() => {
+    loadZones();
+  }, []);
+
+  const importGeoJson = async (e: FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setMessage(null);
+
+    try {
+      const parsed = JSON.parse(geoJsonText);
+      const result = await api<{ imported: number; created: number; updated: number }>('/api/referentiels/zones/import', {
+        method: 'POST',
+        body: JSON.stringify({ geojson: parsed }),
+      });
+      setMessage(`Import termine: ${result.imported} zone(s), ${result.created} creee(s), ${result.updated} mise(s) a jour`);
+      setGeoJsonText('');
+      await loadZones();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Erreur inconnue');
+    }
+  };
+
+  const exportGeoJson = async () => {
+    setError(null);
+    setMessage(null);
+    try {
+      const geojson = await api<ZoneGeoJson>('/api/referentiels/zones/geojson');
+      const blob = new Blob([JSON.stringify(geojson, null, 2)], { type: 'application/geo+json' });
+      const href = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = href;
+      a.download = 'zones.geojson';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(href);
+      setMessage('Export GeoJSON telecharge');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Erreur inconnue');
+    }
+  };
+
   return (
-    <div className="card" style={{ padding: 0 }}>
-      <table className="table">
-        <thead><tr><th>Code</th><th>Libelle</th><th>Coefficient</th></tr></thead>
-        <tbody>
-          {rows.map((z) => (
-            <tr key={z.id}><td>{z.code}</td><td>{z.libelle}</td><td>× {z.coefficient}</td></tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="grid" style={{ gap: 16 }}>
+      {error && <div className="card" style={{ borderColor: '#b91c1c', color: '#b91c1c' }}>{error}</div>}
+      {message && <div className="card" style={{ borderColor: '#15803d', color: '#166534' }}>{message}</div>}
+
+      {isAdmin && (
+        <form className="card" onSubmit={importGeoJson}>
+          <h3>Import GeoJSON des zones (US1.2)</h3>
+          <p style={{ marginTop: 8, marginBottom: 8 }}>
+            Collez un <code>FeatureCollection</code> contenant des zones avec <code>properties.code</code>,
+            <code>properties.libelle</code> et des geometries <code>Polygon</code>/<code>MultiPolygon</code>.
+          </p>
+          <textarea
+            rows={12}
+            placeholder="Collez ici le GeoJSON"
+            value={geoJsonText}
+            onChange={(event) => setGeoJsonText(event.target.value)}
+            style={{ width: '100%' }}
+            required
+          />
+          <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
+            <button className="btn" type="submit">Importer</button>
+            <button className="btn secondary" type="button" onClick={exportGeoJson}>Exporter GeoJSON</button>
+          </div>
+        </form>
+      )}
+
+      <div className="card" style={{ padding: 0 }}>
+        <table className="table">
+          <thead><tr><th>Code</th><th>Libelle</th><th>Coefficient</th><th>Description</th></tr></thead>
+          <tbody>
+            {rows.map((z) => (
+              <tr key={z.id}><td>{z.code}</td><td>{z.libelle}</td><td>× {z.coefficient}</td><td>{z.description ?? '-'}</td></tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

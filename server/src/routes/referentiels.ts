@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { db, logAudit } from '../db';
 import { authMiddleware, requireRole } from '../auth';
 import { activateBaremesForYear, getActiveBaremeYear, parseBaremesCsv, upsertBaremes, type BaremeInput, BaremeValidationError } from '../baremes';
+import { importGeoJsonZones, normalizeGeometry } from '../zones';
 
 export const referentielsRouter = Router();
 
@@ -10,8 +11,41 @@ referentielsRouter.use(authMiddleware);
 
 // Zones
 referentielsRouter.get('/zones', (_req, res) => {
-  const zones = db.prepare('SELECT * FROM zones ORDER BY code').all();
+  const zones = db.prepare('SELECT id, code, libelle, coefficient, description FROM zones ORDER BY code').all();
   res.json(zones);
+});
+
+referentielsRouter.get('/zones/geojson', (_req, res) => {
+  const zones = db
+    .prepare(
+      `SELECT code, libelle, coefficient, description, geometry
+       FROM zones
+       WHERE geometry IS NOT NULL
+       ORDER BY code`,
+    )
+    .all() as Array<{
+      code: string;
+      libelle: string;
+      coefficient: number;
+      description: string | null;
+      geometry: string;
+    }>;
+
+  const features = zones.map((zone) => ({
+    type: 'Feature' as const,
+    properties: {
+      code: zone.code,
+      libelle: zone.libelle,
+      coefficient: zone.coefficient,
+      description: zone.description,
+    },
+    geometry: JSON.parse(zone.geometry),
+  }));
+
+  res.json({
+    type: 'FeatureCollection',
+    features,
+  });
 });
 
 const zoneSchema = z.object({
@@ -19,18 +53,63 @@ const zoneSchema = z.object({
   libelle: z.string().min(1),
   coefficient: z.number().positive(),
   description: z.string().optional().nullable(),
+  geometry: z.object({
+    type: z.enum(['Polygon', 'MultiPolygon']),
+    coordinates: z.unknown(),
+  }).optional().nullable(),
 });
 
 referentielsRouter.post('/zones', requireRole('admin'), (req, res) => {
   const parsed = zoneSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  let geometryJson: string | null = null;
+  if (parsed.data.geometry) {
+    try {
+      geometryJson = JSON.stringify(normalizeGeometry(parsed.data.geometry));
+    } catch (error) {
+      return res.status(400).json({ error: error instanceof Error ? error.message : 'Geometrie invalide' });
+    }
+  }
+
   const info = db
     .prepare(
-      `INSERT INTO zones (code, libelle, coefficient, description) VALUES (?, ?, ?, ?)`,
+      `INSERT INTO zones (code, libelle, coefficient, description, geometry) VALUES (?, ?, ?, ?, ?)`,
     )
-    .run(parsed.data.code, parsed.data.libelle, parsed.data.coefficient, parsed.data.description ?? null);
+    .run(parsed.data.code, parsed.data.libelle, parsed.data.coefficient, parsed.data.description ?? null, geometryJson);
   logAudit({ userId: req.user!.id, action: 'create', entite: 'zone', entiteId: Number(info.lastInsertRowid) });
   res.status(201).json({ id: info.lastInsertRowid });
+});
+
+const zonesImportBodySchema = z.object({
+  geojson: z.unknown().optional(),
+  content: z.string().min(1).optional(),
+});
+
+referentielsRouter.post('/zones/import', requireRole('admin'), (req, res) => {
+  const parsed = zonesImportBodySchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  let geojson: unknown = parsed.data.geojson;
+  if (!geojson && parsed.data.content) {
+    try {
+      geojson = JSON.parse(parsed.data.content);
+    } catch {
+      return res.status(400).json({ error: 'Contenu GeoJSON invalide' });
+    }
+  }
+
+  if (!geojson) {
+    return res.status(400).json({ error: 'Aucun GeoJSON fourni' });
+  }
+
+  try {
+    const summary = importGeoJsonZones(geojson);
+    logAudit({ userId: req.user!.id, action: 'import', entite: 'zone', details: summary, ip: req.ip ?? null });
+    return res.status(201).json(summary);
+  } catch (error) {
+    return res.status(400).json({ error: error instanceof Error ? error.message : 'Import impossible' });
+  }
 });
 
 // Types de dispositifs

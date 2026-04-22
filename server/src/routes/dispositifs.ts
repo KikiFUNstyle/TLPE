@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { db, logAudit } from '../db';
 import { authMiddleware, requireRole } from '../auth';
+import { findZoneIdByPoint } from '../zones';
 
 export const dispositifsRouter = Router();
 
@@ -64,6 +65,7 @@ const dispositifSchema = z.object({
   adresse_ville: z.string().optional().nullable(),
   latitude: z.number().min(-90).max(90).nullable().optional(),
   longitude: z.number().min(-180).max(180).nullable().optional(),
+  auto_zone: z.boolean().optional(),
   surface: z.number().positive(),
   nombre_faces: z.number().int().min(1).max(4).default(1),
   date_pose: z.string().optional().nullable(),
@@ -82,6 +84,11 @@ dispositifsRouter.post('/', requireRole('admin', 'gestionnaire', 'controleur'), 
     return res.status(400).json({ error: 'Date de pose posterieure a la date de depose' });
   }
   const identifiant = genIdentifiantDispositif();
+  const computedZoneId =
+    d.auto_zone !== false && d.latitude !== null && d.latitude !== undefined && d.longitude !== null && d.longitude !== undefined
+      ? findZoneIdByPoint({ latitude: d.latitude, longitude: d.longitude })
+      : null;
+  const zoneId = d.zone_id ?? computedZoneId ?? null;
   const info = db
     .prepare(
       `INSERT INTO dispositifs (
@@ -96,7 +103,7 @@ dispositifsRouter.post('/', requireRole('admin', 'gestionnaire', 'controleur'), 
       identifiant,
       d.assujetti_id,
       d.type_id,
-      d.zone_id ?? null,
+      d.zone_id ?? computedZoneId ?? null,
       d.adresse_rue ?? null,
       d.adresse_cp ?? null,
       d.adresse_ville ?? null,
@@ -121,6 +128,11 @@ dispositifsRouter.put('/:id', requireRole('admin', 'gestionnaire', 'controleur')
   if (d.date_pose && d.date_depose && d.date_pose > d.date_depose) {
     return res.status(400).json({ error: 'Date de pose posterieure a la date de depose' });
   }
+  const computedZoneId =
+    d.auto_zone !== false && d.latitude !== null && d.latitude !== undefined && d.longitude !== null && d.longitude !== undefined
+      ? findZoneIdByPoint({ latitude: d.latitude, longitude: d.longitude })
+      : null;
+  const zoneId = d.zone_id ?? computedZoneId ?? null;
   const info = db
     .prepare(
       `UPDATE dispositifs SET
@@ -134,7 +146,7 @@ dispositifsRouter.put('/:id', requireRole('admin', 'gestionnaire', 'controleur')
     .run(
       d.assujetti_id,
       d.type_id,
-      d.zone_id ?? null,
+      zoneId,
       d.adresse_rue ?? null,
       d.adresse_cp ?? null,
       d.adresse_ville ?? null,
