@@ -258,6 +258,7 @@ declarationsRouter.post('/:id/valider', requireRole('admin', 'gestionnaire'), (r
       date_pose: l.date_pose,
       date_depose: l.date_depose,
       exonere: !!l.exonere,
+      assujetti_id: decl.assujetti_id,
     });
     updateLigne.run(
       result.detail.bareme_id,

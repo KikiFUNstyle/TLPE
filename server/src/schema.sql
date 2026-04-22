@@ -59,6 +59,20 @@ CREATE TABLE IF NOT EXISTS baremes (
   UNIQUE (annee, categorie, surface_min, surface_max)
 );
 
+-- Exonerations et abattements (specs §3.4)
+CREATE TABLE IF NOT EXISTS exonerations (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  type        TEXT NOT NULL CHECK (type IN ('droit','deliberee','eco')),
+  critere     TEXT NOT NULL,
+  taux        REAL NOT NULL CHECK (taux >= 0 AND taux <= 1),
+  date_debut  TEXT,
+  date_fin    TEXT,
+  active      INTEGER NOT NULL DEFAULT 1,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_exonerations_active_dates ON exonerations(active, date_debut, date_fin);
+
 -- Activation annuelle des baremes (utilisee par le job au 1er janvier)
 CREATE TABLE IF NOT EXISTS bareme_activation (
   annee        INTEGER PRIMARY KEY,

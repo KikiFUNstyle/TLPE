@@ -6,6 +6,7 @@ import { calculerTLPE, computeProrata } from './calculator';
 // Bareme de test (valeurs indicatives 2024 du document de specs)
 function seedTestBareme() {
   db.exec('DELETE FROM baremes');
+  db.exec('DELETE FROM exonerations');
   const stmt = db.prepare(
     `INSERT INTO baremes (annee, categorie, surface_min, surface_max, tarif_m2, tarif_fixe, exonere, libelle)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -109,4 +110,43 @@ test('exoneration explicite -> montant 0 sans recherche bareme', () => {
   });
   assert.equal(r.montant, 0);
   assert.equal(r.detail.bareme_id, null);
+});
+
+test('abattement delibere 25% applique sur preenseigne <= 1.5m2', () => {
+  db.exec('DELETE FROM exonerations');
+  db.prepare(
+    `INSERT INTO exonerations (type, critere, taux, date_debut, date_fin, active)
+     VALUES (?, ?, ?, ?, ?, 1)`,
+  ).run('deliberee', JSON.stringify({ categorie: 'preenseigne', surface_max: 1.5 }), 0.25, null, null);
+
+  const r = calculerTLPE({ annee: 2024, categorie: 'preenseigne', surface: 1 });
+  // 1 * 6.2 = 6.2 -> -25% = 4.65 -> floor = 4
+  assert.equal(r.montant, 4);
+  assert.equal(r.detail.sous_total, 4.65);
+});
+
+test('exoneration de droit 100% appliquee via table exonerations', () => {
+  db.exec('DELETE FROM exonerations');
+  db.prepare(
+    `INSERT INTO exonerations (type, critere, taux, date_debut, date_fin, active)
+     VALUES (?, ?, ?, ?, ?, 1)`,
+  ).run('droit', JSON.stringify({ categorie: 'publicitaire', surface_max: 8 }), 1, null, null);
+
+  const r = calculerTLPE({ annee: 2024, categorie: 'publicitaire', surface: 4 });
+  assert.equal(r.montant, 0);
+  assert.equal(r.detail.exonere, true);
+});
+
+test('exoneration ciblee par assujetti_id uniquement', () => {
+  db.exec('DELETE FROM exonerations');
+  db.prepare(
+    `INSERT INTO exonerations (type, critere, taux, date_debut, date_fin, active)
+     VALUES (?, ?, ?, ?, ?, 1)`,
+  ).run('eco', JSON.stringify({ assujetti_id: 999 }), 0.1, null, null);
+
+  const sansMatch = calculerTLPE({ annee: 2024, categorie: 'publicitaire', surface: 4, assujetti_id: 1 });
+  const avecMatch = calculerTLPE({ annee: 2024, categorie: 'publicitaire', surface: 4, assujetti_id: 999 });
+
+  assert.equal(sansMatch.montant, 62);
+  assert.equal(avecMatch.montant, 55);
 });

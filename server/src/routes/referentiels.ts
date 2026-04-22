@@ -124,6 +124,30 @@ const typeSchema = z.object({
   categorie: z.enum(['publicitaire', 'preenseigne', 'enseigne']),
 });
 
+const isoDateRegex = /^\d{4}-\d{2}-\d{2}$/;
+const isoDateFieldSchema = z
+  .string()
+  .regex(isoDateRegex, 'Date invalide (format attendu YYYY-MM-DD)')
+  .optional()
+  .nullable();
+
+const exonerationSchema = z
+  .object({
+    type: z.enum(['droit', 'deliberee', 'eco']),
+    critere: z.record(z.unknown()),
+    taux: z.number().min(0).max(1),
+    date_debut: isoDateFieldSchema,
+    date_fin: isoDateFieldSchema,
+    active: z.boolean().optional(),
+  })
+  .refine(
+    (data) => !data.date_debut || !data.date_fin || data.date_fin >= data.date_debut,
+    {
+      message: 'date_fin doit etre superieure ou egale a date_debut',
+      path: ['date_fin'],
+    },
+  );
+
 referentielsRouter.post('/types', requireRole('admin'), (req, res) => {
   const parsed = typeSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
@@ -132,6 +156,46 @@ referentielsRouter.post('/types', requireRole('admin'), (req, res) => {
     .run(parsed.data.code, parsed.data.libelle, parsed.data.categorie);
   logAudit({ userId: req.user!.id, action: 'create', entite: 'type_dispositif', entiteId: Number(info.lastInsertRowid) });
   res.status(201).json({ id: info.lastInsertRowid });
+});
+
+referentielsRouter.get('/exonerations', (_req, res) => {
+  const rows = db
+    .prepare(
+      `SELECT id, type, critere, taux, date_debut, date_fin, active
+       FROM exonerations
+       ORDER BY active DESC, id DESC`,
+    )
+    .all();
+  res.json(rows);
+});
+
+referentielsRouter.post('/exonerations', requireRole('admin'), (req, res) => {
+  const parsed = exonerationSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const info = db
+    .prepare(
+      `INSERT INTO exonerations (type, critere, taux, date_debut, date_fin, active)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      parsed.data.type,
+      JSON.stringify(parsed.data.critere),
+      parsed.data.taux,
+      parsed.data.date_debut ?? null,
+      parsed.data.date_fin ?? null,
+      parsed.data.active === false ? 0 : 1,
+    );
+
+  logAudit({ userId: req.user!.id, action: 'create', entite: 'exoneration', entiteId: Number(info.lastInsertRowid) });
+  res.status(201).json({ id: info.lastInsertRowid });
+});
+
+referentielsRouter.delete('/exonerations/:id', requireRole('admin'), (req, res) => {
+  const info = db.prepare('DELETE FROM exonerations WHERE id = ?').run(req.params.id);
+  if (info.changes === 0) return res.status(404).json({ error: 'Introuvable' });
+  logAudit({ userId: req.user!.id, action: 'delete', entite: 'exoneration', entiteId: Number(req.params.id) });
+  res.status(204).end();
 });
 
 // Baremes
