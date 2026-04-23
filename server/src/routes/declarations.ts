@@ -1,12 +1,40 @@
 import { Router } from 'express';
-import crypto from 'node:crypto';
+import * as crypto from 'node:crypto';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { z } from 'zod';
 import { db, logAudit } from '../db';
 import { authMiddleware, requireRole } from '../auth';
 import { calculerTLPE, findBareme, computeProrata } from '../calculator';
 import { validateDeclarationSubmission } from '../validations/declaration';
+import {
+  ensureDeclarationReceipt,
+  getDeclarationReceiptByToken,
+  getDeclarationReceiptRecord,
+  getReceiptDownloadPath,
+} from '../services/declarationReceipt';
 
 export const declarationsRouter = Router();
+
+declarationsRouter.get('/receipt/verify/:token', (req, res) => {
+  const token = req.params.token;
+  const receipt = getDeclarationReceiptByToken(token);
+  if (!receipt) return res.status(404).json({ error: 'Accuse introuvable' });
+
+  res.json({
+    declaration_id: receipt.declaration_id,
+    numero: receipt.numero,
+    assujetti: {
+      raison_sociale: receipt.assujetti_raison_sociale,
+      identifiant_tlpe: receipt.assujetti_identifiant_tlpe,
+    },
+    date_soumission: receipt.date_soumission,
+    generated_at: receipt.generated_at,
+    hash_soumission: receipt.payload_hash,
+    verification_token: receipt.verification_token,
+    verified: true,
+  });
+});
 
 declarationsRouter.use(authMiddleware);
 
@@ -79,7 +107,22 @@ declarationsRouter.get('/:id', (req, res) => {
        WHERE l.declaration_id = ?`,
     )
     .all(decl.id);
-  res.json({ ...decl, lignes });
+  const receipt = getDeclarationReceiptRecord(decl.id);
+  res.json({
+    ...decl,
+    lignes,
+    receipt: receipt
+      ? {
+          verification_token: receipt.verification_token,
+          payload_hash: receipt.payload_hash,
+          generated_at: receipt.generated_at,
+          email_status: receipt.email_status,
+          email_error: receipt.email_error,
+          email_sent_at: receipt.email_sent_at,
+          download_url: `/api/declarations/${decl.id}/receipt/pdf`,
+        }
+      : null,
+  });
 });
 
 const createSchema = z.object({
@@ -177,7 +220,7 @@ declarationsRouter.put('/:id/lignes', requireRole('admin', 'gestionnaire', 'cont
 });
 
 // Soumission : controles + hash + passage en statut "soumise"
-declarationsRouter.post('/:id/soumettre', requireRole('admin', 'gestionnaire', 'contribuable'), (req, res) => {
+declarationsRouter.post('/:id/soumettre', requireRole('admin', 'gestionnaire', 'contribuable'), async (req, res) => {
   const decl = db.prepare('SELECT * FROM declarations WHERE id = ?').get(req.params.id) as
     | { id: number; assujetti_id: number; statut: string; annee: number }
     | undefined;
@@ -191,7 +234,7 @@ declarationsRouter.post('/:id/soumettre', requireRole('admin', 'gestionnaire', '
   const lignes = db
     .prepare(
       `SELECT l.id, l.dispositif_id, l.surface_declaree, l.nombre_faces, l.date_pose, l.date_depose,
-              d.type_id, d.adresse_rue, d.adresse_cp, d.adresse_ville, t.categorie
+              d.type_id, d.adresse_rue, d.adresse_cp, d.adresse_ville, t.categorie, t.libelle AS type_libelle
        FROM lignes_declaration l
        JOIN dispositifs d ON d.id = l.dispositif_id
        LEFT JOIN types_dispositifs t ON t.id = d.type_id
@@ -209,6 +252,7 @@ declarationsRouter.post('/:id/soumettre', requireRole('admin', 'gestionnaire', '
     adresse_rue: string | null;
     adresse_cp: string | null;
     adresse_ville: string | null;
+    type_libelle: string | null;
   }>;
 
   const previousYearSurfaceTotal = (
@@ -232,36 +276,134 @@ declarationsRouter.post('/:id/soumettre', requireRole('admin', 'gestionnaire', '
     });
   }
 
-  const snapshot = JSON.stringify({ id: decl.id, lignes });
-  const hash = crypto.createHash('sha256').update(snapshot).digest('hex');
-  db.prepare(
-    `UPDATE declarations
-     SET statut = 'soumise',
-         date_soumission = datetime('now'),
-         hash_soumission = ?,
-         alerte_gestionnaire = ?
-     WHERE id = ?`,
-  ).run(hash, validation.hasManagerAlert ? 1 : 0, decl.id);
+  try {
+    const snapshot = JSON.stringify({ id: decl.id, lignes });
+    const hash = crypto.createHash('sha256').update(snapshot).digest('hex');
+    db.prepare(
+      `UPDATE declarations
+       SET statut = 'soumise',
+           date_soumission = datetime('now'),
+           hash_soumission = ?,
+           alerte_gestionnaire = ?
+       WHERE id = ?`,
+    ).run(hash, validation.hasManagerAlert ? 1 : 0, decl.id);
 
-  logAudit({
-    userId: req.user!.id,
-    action: 'submit',
-    entite: 'declaration',
-    entiteId: decl.id,
-    details: {
+    const declarationMeta = db
+      .prepare(
+        `SELECT d.id, d.numero, d.date_soumission,
+                a.id AS assujetti_id, a.identifiant_tlpe, a.raison_sociale, a.email
+         FROM declarations d
+         JOIN assujettis a ON a.id = d.assujetti_id
+         WHERE d.id = ?`,
+      )
+      .get(decl.id) as
+      | {
+          id: number;
+          numero: string;
+          date_soumission: string;
+          assujetti_id: number;
+          identifiant_tlpe: string;
+          raison_sociale: string;
+          email: string | null;
+        }
+      | undefined;
+
+    if (!declarationMeta) {
+      return res.status(500).json({ error: 'Declaration soumise mais metadonnees indisponibles' });
+    }
+
+    const receipt = await ensureDeclarationReceipt({
+      declarationId: decl.id,
+      numeroDeclaration: declarationMeta.numero,
+      payloadHash: hash,
+      generatedBy: req.user!.id,
+      submittedAtIsoUtc: declarationMeta.date_soumission,
+      assujetti: {
+        id: declarationMeta.assujetti_id,
+        identifiantTlpe: declarationMeta.identifiant_tlpe,
+        raisonSociale: declarationMeta.raison_sociale,
+        email: declarationMeta.email,
+      },
+      lignes: lignes.map((line) => ({
+        dispositifIdentifiant: `DSP-${line.dispositif_id}`,
+        typeLibelle: line.type_libelle ?? line.categorie ?? 'Inconnu',
+        categorie: line.categorie ?? 'inconnu',
+        surfaceDeclaree: line.surface_declaree,
+        nombreFaces: line.nombre_faces,
+        adresseRue: line.adresse_rue,
+        adresseCp: line.adresse_cp,
+        adresseVille: line.adresse_ville,
+      })),
+    });
+
+    logAudit({
+      userId: req.user!.id,
+      action: 'submit',
+      entite: 'declaration',
+      entiteId: decl.id,
+      details: {
+        hash,
+        alerte_gestionnaire: validation.hasManagerAlert,
+        alertes: validation.warnings,
+        previousYearSurfaceTotal,
+        receipt_verification_token: receipt.verificationToken,
+        receipt_email_status: receipt.emailStatus,
+      },
+    });
+
+    res.json({
+      ok: true,
       hash,
       alerte_gestionnaire: validation.hasManagerAlert,
       alertes: validation.warnings,
-      previousYearSurfaceTotal,
-    },
-  });
+      receipt: {
+        verification_token: receipt.verificationToken,
+        payload_hash: receipt.payloadHash,
+        generated_at: receipt.generatedAt,
+        public_verification_url: receipt.publicVerificationUrl,
+        download_url: `/api/declarations/${decl.id}/receipt/pdf`,
+        email_status: receipt.emailStatus,
+        email_error: receipt.emailError,
+        email_sent_at: receipt.emailSentAt,
+      },
+    });
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('[TLPE] Erreur generation accuse declaration', error);
+    return res.status(500).json({ error: 'Erreur lors de la generation de l\'accuse PDF' });
+  }
+});
 
-  res.json({
-    ok: true,
-    hash,
-    alerte_gestionnaire: validation.hasManagerAlert,
-    alertes: validation.warnings,
-  });
+declarationsRouter.get('/:id/receipt/pdf', (req, res) => {
+  const decl = db
+    .prepare(
+      `SELECT d.id, d.assujetti_id, d.numero
+       FROM declarations d
+       WHERE d.id = ?`,
+    )
+    .get(req.params.id) as { id: number; assujetti_id: number; numero: string } | undefined;
+
+  if (!decl) return res.status(404).json({ error: 'Introuvable' });
+  if (req.user!.role === 'contribuable' && req.user!.assujetti_id !== decl.assujetti_id) {
+    return res.status(403).json({ error: 'Droits insuffisants' });
+  }
+
+  const receipt = getDeclarationReceiptRecord(decl.id);
+  if (!receipt) return res.status(404).json({ error: 'Accuse PDF introuvable' });
+
+  const dataRoot = path.resolve(__dirname, '..', '..', 'data');
+  const absolutePath = getReceiptDownloadPath(receipt.pdf_path);
+  if (!absolutePath.startsWith(dataRoot)) {
+    return res.status(400).json({ error: 'Chemin accuse invalide' });
+  }
+  if (!fs.existsSync(absolutePath)) {
+    return res.status(404).json({ error: 'Fichier accuse introuvable' });
+  }
+
+  const fileName = path.basename(absolutePath);
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="accuse-${decl.numero}-${fileName}"`);
+  fs.createReadStream(absolutePath).pipe(res);
 });
 
 // Validation gestionnaire + calcul + passage en "validee"

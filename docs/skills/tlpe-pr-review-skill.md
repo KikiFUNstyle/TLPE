@@ -46,9 +46,15 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
 - Couvrir happy path + edge cases + erreurs validation.
 - Ajouter des tests d'idempotence pour tout envoi batch/notification.
 - Vérifier qu'un test échoue avant fix (TDD) quand c'est possible.
+- Pour toute US avec document généré (PDF, accusé, courrier), ajouter un test API qui valide la présence des métadonnées de restitution (`token/hash/download_url`) et un test service qui vérifie la persistance + réutilisation idempotente.
 - Commandes minimales à exécuter:
   - `npm test`
   - `npm run build`
+
+### 8) Hygiène dépôt & artefacts runtime (appris sur US3.6)
+- Vérifier que les artefacts générés en test/dev (`server/data/receipts/*`, `server/data/mises_en_demeure/*`) ne polluent pas le diff Git.
+- Maintenir `.gitignore` aligné avec les nouveaux répertoires de sorties runtime avant push.
+- En review, confirmer qu'aucun fichier binaire/généré n'est commité par inadvertance.
 
 ## Format de sortie review
 

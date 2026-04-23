@@ -12,6 +12,7 @@ import Titres from './pages/Titres';
 import Referentiels from './pages/Referentiels';
 import Contentieux from './pages/Contentieux';
 import Carte from './pages/Carte';
+import DeclarationReceiptVerify from './pages/DeclarationReceiptVerify';
 
 export default function App() {
   const { user, loading, logout } = useAuth();
@@ -22,7 +23,10 @@ export default function App() {
   }
 
   if (!user) {
-    if (location.pathname === '/login') {
+    if (location.pathname === '/login' || location.pathname.startsWith('/verification/accuse/')) {
+      if (location.pathname.startsWith('/verification/accuse/')) {
+        return <DeclarationReceiptVerify />;
+      }
       return <Login />;
     }
     return <Navigate to="/login" replace />;
@@ -87,6 +91,7 @@ export default function App() {
           <Route path="/carte" element={<Carte />} />
           <Route path="/simulateur" element={<Simulateur />} />
           <Route path="/referentiels" element={<Referentiels />} />
+          <Route path="/verification/accuse/:token" element={<DeclarationReceiptVerify />} />
           <Route path="/login" element={<Navigate to="/" replace />} />
           <Route path="*" element={<div className="empty">Page introuvable</div>} />
         </Routes>

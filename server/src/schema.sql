@@ -264,6 +264,23 @@ CREATE TABLE IF NOT EXISTS declarations (
   UNIQUE (assujetti_id, annee)
 );
 
+-- Accuse de reception de soumission (US3.6)
+CREATE TABLE IF NOT EXISTS declaration_receipts (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  declaration_id      INTEGER NOT NULL UNIQUE,
+  verification_token  TEXT NOT NULL UNIQUE,
+  payload_hash        TEXT NOT NULL,
+  pdf_path            TEXT NOT NULL,
+  generated_by        INTEGER,
+  generated_at        TEXT NOT NULL DEFAULT (datetime('now')),
+  email_status        TEXT NOT NULL DEFAULT 'pending' CHECK (email_status IN ('pending','envoye','echec')),
+  email_error         TEXT,
+  email_sent_at       TEXT,
+  FOREIGN KEY (declaration_id) REFERENCES declarations(id) ON DELETE CASCADE,
+  FOREIGN KEY (generated_by) REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_declaration_receipts_generated_at ON declaration_receipts(generated_at);
+
 -- Lignes de declaration : un dispositif declare pour une annee
 CREATE TABLE IF NOT EXISTS lignes_declaration (
   id                INTEGER PRIMARY KEY AUTOINCREMENT,
