@@ -375,7 +375,8 @@ declarationsRouter.post('/:id/soumettre', requireRole('admin', 'gestionnaire', '
            date_soumission = NULL,
            hash_soumission = NULL,
            alerte_gestionnaire = 0
-       WHERE id = ?`,
+       WHERE id = ?
+         AND statut = 'soumise'`,
     ).run(decl.id);
 
     // eslint-disable-next-line no-console
