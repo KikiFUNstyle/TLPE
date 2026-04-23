@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import PDFDocument from 'pdfkit';
+import XLSX from 'xlsx';
+import * as crypto from 'node:crypto';
 import { db, logAudit } from '../db';
 import { authMiddleware, requireRole } from '../auth';
 
@@ -8,9 +10,181 @@ export const titresRouter = Router();
 
 titresRouter.use(authMiddleware);
 
+const BORDEREAU_COLLECTIVITE = process.env.TLPE_COLLECTIVITE || 'Collectivite territoriale';
+const BORDEREAU_ORDONNATEUR = process.env.TLPE_ORDONNATEUR || 'Ordonnateur TLPE';
+
 function genNumeroTitre(annee: number): string {
   const c = (db.prepare('SELECT COUNT(*) AS c FROM titres WHERE annee = ?').get(annee) as { c: number }).c;
   return `TIT-${annee}-${String(c + 1).padStart(6, '0')}`;
+}
+
+function formatDateTime(date: Date): string {
+  return date.toISOString().replace('T', ' ').slice(0, 19);
+}
+
+type BordereauRow = {
+  id: number;
+  numero: string;
+  assujetti_id: number;
+  annee: number;
+  montant: number;
+  date_emission: string;
+  date_echeance: string;
+  statut: string;
+  raison_sociale: string;
+  identifiant_tlpe: string;
+};
+
+type BordereauPayload = {
+  collectivite: string;
+  ordonnateur: string;
+  annee: number;
+  generatedAt: string;
+  hash: string;
+  totalMontant: number;
+  titres: BordereauRow[];
+};
+
+function buildBordereauPayload(annee: number): BordereauPayload {
+  const titres = db
+    .prepare(
+      `SELECT t.*, a.raison_sociale, a.identifiant_tlpe
+       FROM titres t
+       JOIN assujettis a ON a.id = t.assujetti_id
+       WHERE t.annee = ?
+       ORDER BY t.numero`,
+    )
+    .all(annee) as BordereauRow[];
+
+  const totalMontant = Number(titres.reduce((sum, titre) => sum + titre.montant, 0).toFixed(2));
+  const generatedAt = formatDateTime(new Date());
+  const hash = crypto
+    .createHash('sha256')
+    .update(
+      JSON.stringify({
+        collectivite: BORDEREAU_COLLECTIVITE,
+        ordonnateur: BORDEREAU_ORDONNATEUR,
+        annee,
+        titres: titres.map((titre) => ({
+          numero: titre.numero,
+          debiteur: titre.raison_sociale,
+          identifiant_tlpe: titre.identifiant_tlpe,
+          montant: titre.montant,
+          date_echeance: titre.date_echeance,
+        })),
+        totalMontant,
+      }),
+    )
+    .digest('hex');
+
+  return {
+    collectivite: BORDEREAU_COLLECTIVITE,
+    ordonnateur: BORDEREAU_ORDONNATEUR,
+    annee,
+    generatedAt,
+    hash,
+    totalMontant,
+    titres,
+  };
+}
+
+function exportBordereauPdf(res: import('express').Response, payload: BordereauPayload) {
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="bordereau-titres-${payload.annee}.pdf"`);
+
+  const doc = new PDFDocument({ size: 'A4', margin: 42 });
+  doc.pipe(res);
+
+  doc.fontSize(17).text('BORDEREAU RECAPITULATIF DES TITRES DE RECETTES', { align: 'center' });
+  doc.moveDown(0.4);
+  doc.fontSize(10).fillColor('#555').text(`Collectivite : ${payload.collectivite}`, { align: 'center' });
+  doc.text(`Exercice / campagne : ${payload.annee}`, { align: 'center' });
+  doc.moveDown(0.8).fillColor('black');
+
+  doc.fontSize(10);
+  doc.text(`Horodatage : ${payload.generatedAt}`);
+  doc.text(`Hash SHA-256 : ${payload.hash}`);
+  doc.moveDown();
+
+  const columns = [
+    { label: 'Numero', x: 42, width: 105 },
+    { label: 'Debiteur', x: 147, width: 185 },
+    { label: 'Montant', x: 332, width: 90 },
+    { label: 'Echeance', x: 422, width: 85 },
+  ];
+
+  const printHeader = () => {
+    const tableTop = doc.y;
+    doc.fontSize(9).fillColor('#333');
+    columns.forEach((column) => {
+      doc.text(column.label, column.x, tableTop, { width: column.width });
+    });
+    doc.moveTo(42, tableTop + 14).lineTo(540, tableTop + 14).stroke();
+    doc.y = tableTop + 20;
+  };
+
+  const ensurePage = () => {
+    if (doc.y > 740) {
+      doc.addPage();
+      printHeader();
+    }
+  };
+
+  printHeader();
+  for (const titre of payload.titres) {
+    ensurePage();
+    const y = doc.y;
+    doc.text(titre.numero, columns[0].x, y, { width: columns[0].width });
+    doc.text(`${titre.raison_sociale}\n${titre.identifiant_tlpe}`, columns[1].x, y, { width: columns[1].width });
+    doc.text(`${titre.montant.toFixed(2)} EUR`, columns[2].x, y, { width: columns[2].width, align: 'right' });
+    doc.text(titre.date_echeance, columns[3].x, y, { width: columns[3].width });
+    const rowBottom = Math.max(doc.y, y + 30);
+    doc.moveTo(42, rowBottom + 4).lineTo(540, rowBottom + 4).strokeColor('#d8d8d8').stroke().strokeColor('black');
+    doc.y = rowBottom + 10;
+  }
+
+  if (payload.titres.length === 0) {
+    doc.fontSize(10).fillColor('#666').text('Aucun titre emis pour cet exercice.', 42, doc.y + 4);
+    doc.moveDown(2).fillColor('black');
+  }
+
+  doc.moveDown(1);
+  doc.fontSize(12).text(`Total general : ${payload.totalMontant.toFixed(2)} EUR`, { align: 'right' });
+  doc.moveDown(2);
+  doc.fontSize(11).text(`Signature ordonnateur : ${payload.ordonnateur}`, { align: 'left' });
+  doc.moveDown(0.3);
+  doc.fontSize(9).fillColor('#555').text('Document genere automatiquement pour transmission au comptable public.', {
+    align: 'left',
+  });
+
+  doc.end();
+}
+
+function exportBordereauXlsx(res: import('express').Response, payload: BordereauPayload) {
+  const rows: Array<Array<string | number>> = [
+    ['Bordereau récapitulatif des titres de recettes'],
+    ['Annee', payload.annee],
+    ['Horodatage', payload.generatedAt],
+    ['Hash SHA-256', payload.hash],
+    [],
+    ['Numero', 'Debiteur', 'Montant', 'Echeance'],
+    ...payload.titres.map((titre) => [titre.numero, titre.raison_sociale, titre.montant, titre.date_echeance]),
+    ['TOTAL', '', payload.totalMontant, ''],
+    [],
+    ['Collectivite', payload.collectivite],
+    ['Signature ordonnateur', payload.ordonnateur],
+  ];
+
+  const worksheet = XLSX.utils.aoa_to_sheet(rows);
+  worksheet['!cols'] = [{ wch: 18 }, { wch: 32 }, { wch: 14 }, { wch: 14 }];
+
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Bordereau');
+  const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="bordereau-titres-${payload.annee}.xlsx"`);
+  res.send(Buffer.from(buffer));
 }
 
 titresRouter.get('/', (req, res) => {
@@ -48,6 +222,41 @@ titresRouter.get('/', (req, res) => {
     )
     .all(...params);
   res.json(rows);
+});
+
+const bordereauQuerySchema = z.object({
+  annee: z.coerce.number().int().min(2000).max(2100),
+  format: z.enum(['pdf', 'xlsx']),
+});
+
+titresRouter.get('/bordereau', requireRole('admin', 'financier'), (req, res) => {
+  const parsed = bordereauQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'Parametres de bordereau invalides' });
+  }
+
+  const payload = buildBordereauPayload(parsed.data.annee);
+  logAudit({
+    userId: req.user!.id,
+    action: 'export-bordereau',
+    entite: 'titre',
+    details: {
+      annee: payload.annee,
+      format: parsed.data.format,
+      generated_at: payload.generatedAt,
+      hash: payload.hash,
+      total_montant: payload.totalMontant,
+      titres_count: payload.titres.length,
+    },
+    ip: req.ip ?? null,
+  });
+
+  if (parsed.data.format === 'pdf') {
+    exportBordereauPdf(res, payload);
+    return;
+  }
+
+  exportBordereauXlsx(res, payload);
 });
 
 // Emission d'un titre pour une declaration validee
@@ -200,7 +409,6 @@ titresRouter.get('/:id/pdf', (req, res) => {
     doc.text(l.tarif_applique !== null ? `${l.tarif_applique}` : '-', cols[5].x, y, { width: cols[5].w });
     doc.text(l.coefficient_zone !== null ? `${l.coefficient_zone}` : '-', cols[6].x, y, { width: cols[6].w });
     doc.text(l.prorata !== null ? l.prorata.toFixed(2) : '-', cols[7].x, y, { width: cols[7].w });
-    // 102.30 -> 102 €
     doc.text(`${(l.montant_ligne ?? 0).toFixed(2)} EUR`, cols[8].x, y, { width: cols[8].w });
     y += 16;
   }

@@ -24,7 +24,7 @@ basée sur les articles L2333-6 à L2333-16 du CGCT.
 | Quote-part dispositifs numériques partagés (0-100%, contrôle somme ≤ 100%, impact calcul + PDF titre) | §6.2 (US4.1) | OK + tests |
 | Accusé de réception PDF horodaté avec hash SHA-256 + QR de vérification + téléchargement sur détail déclaration | §5.2 / US3.6 | OK + tests |
 | Hash SHA-256 de soumission (accusé) | §5.2 | OK |
-| Titres de recettes + PDF (ordonnancement) | §7.1 | OK |
+| Titres de recettes + PDF (ordonnancement) + bordereau récapitulatif PDF/Excel horodaté avec hash SHA-256 | §7.1 / US5.1 | OK + tests |
 | Paiements (5 modalités) + recouvrement | §7.2 | OK |
 | Contentieux / réclamations | §8 | OK |
 | Tableau de bord exécutif + KPI déclaratifs temps réel (US3.7: attendus/soumises/validées/rejetées, drilldown zone/type, évolution journalière, auto-refresh 5 min) | §10.1 / §5.4 | OK |
@@ -42,7 +42,7 @@ basée sur les articles L2333-6 à L2333-16 du CGCT.
 - Import SIG / Shapefile natif (§4.3)
 - Signature électronique (§13.2)
 - Conformité RGAA 4.1 complète (§11.3)
-- Rapports PDF avancés autres que le titre de recettes (§10.2)
+- Rapports PDF avancés autres que le titre de recettes, le bordereau récapitulatif des titres (§10.2)
 
 ## Démarrage
 
@@ -81,9 +81,13 @@ Ouvrir ensuite http://localhost:5173.
   - `GET /api/declarations/receipt/verify/:token` retourne `verified=true` sans authentification
   - `GET /api/declarations/:id/receipt/pdf` télécharge l'accusé PDF avec QR code
   - `DeclarationDetail.tsx` affiche le statut email d'envoi de l'accusé + bouton de téléchargement
-- Smoke test US3.7 :
+- Smoke test US3.7:
   - `GET /api/dashboard` expose `operationnel.declarations_soumises|validees|rejetees`, `drilldown.by_zone`, `drilldown.by_type_assujetti`, `evolution_journaliere`
   - le dashboard affiche le taux de déclaration, l'évolution vs N-1, le drilldown par zone/type et le graphe d'évolution journalière
+- Smoke test US5.1:
+  - la page `Titres` affiche les boutons `Bordereau PDF` / `Bordereau Excel` uniquement pour `admin|financier` quand une année est sélectionnée
+  - `GET /api/titres/bordereau?annee=YYYY&format=pdf|xlsx` retourne les titres filtrés de l'exercice, le total, l'horodatage et un hash SHA-256
+  - un export du bordereau écrit une trace `audit_log` (`action=export-bordereau`)
 
 ## API pièces jointes (US2.5)
 

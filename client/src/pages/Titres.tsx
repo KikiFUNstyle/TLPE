@@ -1,7 +1,8 @@
 import { FormEvent, useEffect, useState } from 'react';
-import { api } from '../api';
+import { api, apiBlob } from '../api';
 import { formatDate, formatEuro } from '../format';
 import { useAuth } from '../auth';
+import { buildBordereauFilename, buildBordereauPath, canExportBordereau } from './titresBordereau';
 
 interface Titre {
   id: number;
@@ -22,15 +23,48 @@ export default function Titres() {
   const [annee, setAnnee] = useState<string>('');
   const [statut, setStatut] = useState('');
   const [err, setErr] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
+  const [exporting, setExporting] = useState<null | 'pdf' | 'xlsx'>(null);
   const [paiementFor, setPaiementFor] = useState<Titre | null>(null);
 
   const load = () => {
     const params = new URLSearchParams();
     if (annee) params.set('annee', annee);
     if (statut) params.set('statut', statut);
-    api<Titre[]>(`/api/titres?${params}`).then(setRows).catch((e) => setErr((e as Error).message));
+    api<Titre[]>(`/api/titres?${params}`)
+      .then((data) => {
+        setRows(data);
+        setErr(null);
+      })
+      .catch((e) => setErr((e as Error).message));
   };
   useEffect(load, [annee, statut]);
+
+  const canManageTitres = hasRole('admin', 'financier');
+  const canExport = canExportBordereau({ annee, canManage: canManageTitres });
+
+  const downloadBordereau = async (format: 'pdf' | 'xlsx') => {
+    if (!canExport) return;
+    setExporting(format);
+    setErr(null);
+    setInfo(null);
+    try {
+      const blob = await apiBlob(buildBordereauPath(annee, format));
+      const href = window.URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = href;
+      anchor.download = buildBordereauFilename(annee, format);
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(href);
+      setInfo(`Bordereau ${format.toUpperCase()} téléchargé.`);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setExporting(null);
+    }
+  };
 
   return (
     <>
@@ -42,6 +76,7 @@ export default function Titres() {
       </div>
 
       {err && <div className="alert error">{err}</div>}
+      {info && <div className="alert info">{info}</div>}
 
       <div className="toolbar">
         <select value={annee} onChange={(e) => setAnnee(e.target.value)}>
@@ -58,6 +93,30 @@ export default function Titres() {
           <option value="mise_en_demeure">Mise en demeure</option>
         </select>
         <div className="spacer" />
+        {canManageTitres && (
+          <>
+            <button
+              className="btn secondary"
+              disabled={!canExport || exporting !== null}
+              onClick={() => {
+                void downloadBordereau('pdf');
+              }}
+              title={canExport ? 'Exporter le bordereau PDF' : 'Sélectionner une année pour exporter le bordereau'}
+            >
+              {exporting === 'pdf' ? 'Export PDF...' : 'Bordereau PDF'}
+            </button>
+            <button
+              className="btn secondary"
+              disabled={!canExport || exporting !== null}
+              onClick={() => {
+                void downloadBordereau('xlsx');
+              }}
+              title={canExport ? 'Exporter le bordereau Excel' : 'Sélectionner une année pour exporter le bordereau'}
+            >
+              {exporting === 'xlsx' ? 'Export Excel...' : 'Bordereau Excel'}
+            </button>
+          </>
+        )}
         <span style={{ color: 'var(--c-muted)', fontSize: 13 }}>{rows.length} resultat(s)</span>
       </div>
 
