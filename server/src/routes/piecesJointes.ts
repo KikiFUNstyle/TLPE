@@ -191,8 +191,8 @@ function getEntityTotalSize(entite: 'dispositif' | 'declaration' | 'contentieux'
 async function saveFile(cheminRelatif: string, buffer: Buffer, mimeType: string): Promise<void> {
   if (!useS3) {
     const absolutePath = resolveUploadAbsolutePath(cheminRelatif);
-    fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
-    fs.writeFileSync(absolutePath, buffer);
+    await fs.promises.mkdir(path.dirname(absolutePath), { recursive: true });
+    await fs.promises.writeFile(absolutePath, buffer);
     return;
   }
 
@@ -385,7 +385,9 @@ piecesJointesRouter.post('/', upload.single('fichier'), async (req, res) => {
       await deleteStoredFile(chemin).catch(() => undefined);
       return res.status(500).json({ error: 'Echec lors de l’enregistrement en base' });
     }
-  } catch {
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('[pieces-jointes] erreur upload inattendue', error);
     return res.status(500).json({ error: 'Erreur interne upload' });
   }
 });
@@ -438,7 +440,9 @@ piecesJointesRouter.get('/:id', async (req, res) => {
     } catch {
       return res.status(404).json({ error: 'Fichier introuvable dans le stockage' });
     }
-  } catch {
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('[pieces-jointes] erreur download inattendue', error);
     return res.status(500).json({ error: 'Erreur interne download' });
   }
 });
@@ -472,7 +476,9 @@ piecesJointesRouter.delete('/:id', async (req, res) => {
     });
 
     return res.status(204).end();
-  } catch {
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('[pieces-jointes] erreur suppression inattendue', error);
     return res.status(500).json({ error: 'Erreur interne suppression' });
   }
 });
