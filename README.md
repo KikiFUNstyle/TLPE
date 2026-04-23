@@ -98,7 +98,10 @@ Le module Référentiels expose désormais une gestion des campagnes annuelles d
   - `date_ouverture`
   - `date_limite_declaration`
   - `date_cloture`
-- ouverture d'une campagne (statut `brouillon` -> `ouverte`), qui prépare le job d'invitation (`campagne_jobs`, type `invitation`)
+- ouverture d'une campagne (statut `brouillon` -> `ouverte`), qui prépare puis exécute le job d'invitation (`campagne_jobs`, type `invitation`)
+  - envoi automatique des invitations aux assujettis `actif` avec email renseigné
+  - génération d'un lien d'activation unique (magic link) pour les assujettis sans compte portail
+  - traçabilité de chaque envoi dans `notifications_email`
 - clôture d'une campagne (statut `ouverte` -> `cloturee`), qui:
   - bascule les déclarations `brouillon` de l'année en `en_instruction`
   - crée les entrées de `mises_en_demeure` (préparation US3.5)
@@ -115,12 +118,15 @@ API backend associée:
 - `POST /api/campagnes`
 - `POST /api/campagnes/:id/open`
 - `POST /api/campagnes/:id/close`
+- `POST /api/campagnes/:id/envoyer-invitations` (renvoi manuel global ou ciblé via `assujetti_id`)
 
 Schéma SQL ajouté:
 
 - `campagnes`
 - `campagne_jobs`
 - `mises_en_demeure`
+- `invitation_magic_links`
+- `notifications_email`
 
 Toute action (`create`, `open`, `close`) est tracée dans `audit_log`.
 

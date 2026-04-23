@@ -4,8 +4,11 @@ import { db, initSchema } from './db';
 
 function resetTables() {
   initSchema();
+  db.exec('DELETE FROM notifications_email');
+  db.exec('DELETE FROM invitation_magic_links');
   db.exec('DELETE FROM campagne_jobs');
   db.exec('DELETE FROM mises_en_demeure');
+  db.exec('DELETE FROM campagnes');
   db.exec('DELETE FROM paiements');
   db.exec('DELETE FROM titres');
   db.exec('DELETE FROM lignes_declaration');
@@ -14,7 +17,6 @@ function resetTables() {
   db.exec('DELETE FROM contentieux');
   db.exec('DELETE FROM dispositifs');
   db.exec('DELETE FROM assujettis');
-  db.exec('DELETE FROM campagnes');
   db.exec('DELETE FROM types_dispositifs');
   db.exec('DELETE FROM zones');
   db.exec('DELETE FROM audit_log');

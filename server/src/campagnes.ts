@@ -1,4 +1,5 @@
 import { db, logAudit } from './db';
+import { sendInvitationsForCampagne } from './invitations';
 
 export type CampagneStatut = 'brouillon' | 'ouverte' | 'cloturee';
 
@@ -137,25 +138,41 @@ export function openCampagne(campagneId: number, userId: number, ip?: string | n
       ).run(campagneId, JSON.stringify({ annee: campagne.annee }));
     }
 
-    const totalAssujettis = (db.prepare('SELECT COUNT(*) AS c FROM assujettis').get() as { c: number }).c;
+    const invitations = sendInvitationsForCampagne({
+      campagneId,
+      userId,
+      mode: 'auto',
+      ip: ip ?? null,
+    });
 
     db.prepare(
       `UPDATE campagne_jobs
        SET statut = 'done', started_at = datetime('now'), completed_at = datetime('now'),
-           payload = json_set(COALESCE(payload, '{}'), '$.invitations_preparees', ?)
+           payload = json_set(
+             json_set(
+               json_set(COALESCE(payload, '{}'), '$.invitations_preparees', ?),
+               '$.invitations_failed', ?
+             ),
+             '$.invitations_skipped', ?
+           )
        WHERE campagne_id = ? AND type = 'invitation' AND statut = 'pending'`,
-    ).run(totalAssujettis, campagneId);
+    ).run(invitations.prepared, invitations.failed, invitations.skipped, campagneId);
 
     logAudit({
       userId,
       action: 'open',
       entite: 'campagne',
       entiteId: campagneId,
-      details: { annee: campagne.annee, invitations_preparees: totalAssujettis },
+      details: {
+        annee: campagne.annee,
+        invitations_preparees: invitations.prepared,
+        invitations_failed: invitations.failed,
+        invitations_skipped: invitations.skipped,
+      },
       ip: ip ?? null,
     });
 
-    return { annee: campagne.annee, invitations_preparees: totalAssujettis };
+    return { annee: campagne.annee, invitations_preparees: invitations.prepared };
   });
 
   return tx();

@@ -11,10 +11,16 @@ const uploadsRoot = path.resolve(__dirname, '..', 'data', 'uploads');
 function seedFixture() {
   initSchema();
 
+  db.exec('DELETE FROM notifications_email');
+  db.exec('DELETE FROM invitation_magic_links');
+  db.exec('DELETE FROM campagne_jobs');
+  db.exec('DELETE FROM mises_en_demeure');
+  db.exec('DELETE FROM campagnes');
   db.exec('DELETE FROM pieces_jointes');
   db.exec('DELETE FROM dispositifs');
   db.exec('DELETE FROM declarations');
   db.exec('DELETE FROM contentieux');
+  db.exec('DELETE FROM audit_log');
   db.exec('DELETE FROM users');
   db.exec('DELETE FROM assujettis');
   db.exec('DELETE FROM types_dispositifs');

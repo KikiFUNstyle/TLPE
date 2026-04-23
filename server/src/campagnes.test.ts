@@ -3,8 +3,12 @@ import assert from 'node:assert/strict';
 import { db, initSchema } from './db';
 import { closeCampagne, createCampagne, getCampagneActive, listCampagnes, openCampagne } from './campagnes';
 
+process.env.TLPE_EMAIL_DELIVERY_MODE = 'mock-success';
+
 function resetTables() {
   initSchema();
+  db.exec('DELETE FROM notifications_email');
+  db.exec('DELETE FROM invitation_magic_links');
   db.exec('DELETE FROM campagne_jobs');
   db.exec('DELETE FROM mises_en_demeure');
   db.exec('DELETE FROM declarations');
@@ -24,10 +28,10 @@ function seedAdmin(email = 'admin-campagne@tlpe.local') {
   return Number(info.lastInsertRowid);
 }
 
-function seedAssujetti(code = 'TLPE-CAMP-1') {
+function seedAssujetti(code = 'TLPE-CAMP-1', email?: string | null, statut: 'actif' | 'inactif' = 'actif') {
   const info = db
-    .prepare(`INSERT INTO assujettis (identifiant_tlpe, raison_sociale) VALUES (?, ?)`)
-    .run(code, `Assujetti ${code}`);
+    .prepare(`INSERT INTO assujettis (identifiant_tlpe, raison_sociale, email, statut) VALUES (?, ?, ?, ?)`)
+    .run(code, `Assujetti ${code}`, email ?? null, statut);
   return Number(info.lastInsertRowid);
 }
 
@@ -205,8 +209,8 @@ test('createCampagne rejette une date calendrier invalide', () => {
 test('openCampagne active une campagne et cree/termine un job invitation', () => {
   resetTables();
   const adminId = seedAdmin();
-  seedAssujetti('TLPE-CAMP-OPEN-1');
-  seedAssujetti('TLPE-CAMP-OPEN-2');
+  const assujetti1 = seedAssujetti('TLPE-CAMP-OPEN-1', 'open-1@example.fr');
+  const assujetti2 = seedAssujetti('TLPE-CAMP-OPEN-2', 'open-2@example.fr');
 
   const campagneId = createCampagne({
     annee: 2027,
@@ -231,12 +235,19 @@ test('openCampagne active une campagne et cree/termine un job invitation', () =>
   assert.equal(jobs.length, 1);
   assert.equal(jobs[0].type, 'invitation');
   assert.equal(jobs[0].statut, 'done');
+
+  const notifications = db
+    .prepare('SELECT assujetti_id, statut FROM notifications_email WHERE campagne_id = ? ORDER BY assujetti_id')
+    .all(campagneId) as Array<{ assujetti_id: number; statut: string }>;
+  assert.equal(notifications.length, 2);
+  assert.deepEqual(notifications.map((n) => n.assujetti_id), [assujetti1, assujetti2]);
+  assert.ok(notifications.every((n) => n.statut === 'envoye'));
 });
 
 test('openCampagne rejette une campagne deja ouverte', () => {
   resetTables();
   const adminId = seedAdmin();
-  seedAssujetti('TLPE-CAMP-OPEN-RETRY-1');
+  seedAssujetti('TLPE-CAMP-OPEN-RETRY-1', 'retry@example.fr');
 
   const campagneId = createCampagne({
     annee: 2027,
@@ -258,10 +269,74 @@ test('openCampagne rejette une campagne deja ouverte', () => {
   assert.equal(invitations, 1);
 });
 
+test('openCampagne cree un magic link pour les assujettis sans compte portail', () => {
+  resetTables();
+  const adminId = seedAdmin();
+  const assujettiId = seedAssujetti('TLPE-CAMP-MAGIC-1', 'magic@example.fr');
+
+  const campagneId = createCampagne({
+    annee: 2036,
+    date_ouverture: '2036-01-01',
+    date_limite_declaration: '2036-03-01',
+    date_cloture: '2036-03-10',
+    created_by: adminId,
+  });
+
+  openCampagne(campagneId, adminId);
+
+  const notif = db
+    .prepare('SELECT magic_link FROM notifications_email WHERE campagne_id = ? AND assujetti_id = ?')
+    .get(campagneId, assujettiId) as { magic_link: string | null } | undefined;
+  assert.ok(notif);
+  assert.ok(notif?.magic_link && notif.magic_link.includes('/login?invitation_token=[redacted]'));
+
+  const links = (
+    db
+      .prepare('SELECT COUNT(*) AS c FROM invitation_magic_links WHERE campagne_id = ? AND assujetti_id = ?')
+      .get(campagneId, assujettiId) as { c: number }
+  ).c;
+  assert.equal(links, 1);
+});
+
+test('openCampagne reporte invitations_preparees y compris pending/echec', () => {
+  resetTables();
+  const adminId = seedAdmin();
+  seedAssujetti('TLPE-CAMP-PREP-1', 'prep1@example.fr');
+  seedAssujetti('TLPE-CAMP-PREP-2', 'prep2@example.fr');
+
+  const prevMode = process.env.TLPE_EMAIL_DELIVERY_MODE;
+  process.env.TLPE_EMAIL_DELIVERY_MODE = 'disabled';
+
+  try {
+    const campagneId = createCampagne({
+      annee: 2037,
+      date_ouverture: '2037-01-01',
+      date_limite_declaration: '2037-03-01',
+      date_cloture: '2037-03-10',
+      created_by: adminId,
+    });
+
+    const result = openCampagne(campagneId, adminId);
+    assert.equal(result.invitations_preparees, 2);
+
+    const jobPayloadRaw = (
+      db
+        .prepare("SELECT payload FROM campagne_jobs WHERE campagne_id = ? AND type = 'invitation' LIMIT 1")
+        .get(campagneId) as { payload: string | null }
+    ).payload;
+    assert.ok(jobPayloadRaw);
+    const jobPayload = JSON.parse(jobPayloadRaw!);
+    assert.equal(jobPayload.invitations_preparees, 2);
+    assert.equal(jobPayload.invitations_skipped, 0);
+  } finally {
+    process.env.TLPE_EMAIL_DELIVERY_MODE = prevMode;
+  }
+});
+
 test('openCampagne bascule une ancienne ouverte en brouillon', () => {
   resetTables();
   const adminId = seedAdmin();
-  seedAssujetti('TLPE-CAMP-SWITCH-1');
+  seedAssujetti('TLPE-CAMP-SWITCH-1', 'switch@example.fr');
 
   const firstId = createCampagne({
     annee: 2027,
@@ -290,7 +365,7 @@ test('openCampagne bascule une ancienne ouverte en brouillon', () => {
 test('closeCampagne cloture et bascule les declarations brouillon en en_instruction + mises en demeure', () => {
   resetTables();
   const adminId = seedAdmin();
-  const assujettiId = seedAssujetti('TLPE-CLOSE-1');
+  const assujettiId = seedAssujetti('TLPE-CLOSE-1', 'close1@example.fr');
 
   const campagneId = createCampagne({
     annee: 2029,
@@ -301,9 +376,9 @@ test('closeCampagne cloture et bascule les declarations brouillon en en_instruct
   });
 
   const d1 = seedDeclaration(assujettiId, 2029, 'brouillon');
-  const assujetti2 = seedAssujetti('TLPE-CLOSE-2');
+  const assujetti2 = seedAssujetti('TLPE-CLOSE-2', 'close2@example.fr');
   const d2 = seedDeclaration(assujetti2, 2029, 'brouillon');
-  const assujetti3 = seedAssujetti('TLPE-CLOSE-3');
+  const assujetti3 = seedAssujetti('TLPE-CLOSE-3', 'close3@example.fr');
   const d3 = seedDeclaration(assujetti3, 2029, 'soumise');
   assert.ok(d1 > 0 && d2 > 0 && d3 > 0);
 

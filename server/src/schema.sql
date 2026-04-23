@@ -171,6 +171,46 @@ CREATE TABLE IF NOT EXISTS campagnes (
 CREATE INDEX IF NOT EXISTS idx_campagnes_statut ON campagnes(statut);
 
 -- =====================================================================
+-- Invitations et notifications email de campagne (US3.2 / US11.3)
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS invitation_magic_links (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  campagne_id      INTEGER NOT NULL,
+  assujetti_id     INTEGER NOT NULL,
+  token            TEXT NOT NULL UNIQUE,
+  expires_at       TEXT NOT NULL,
+  used_at          TEXT,
+  created_by       INTEGER,
+  created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (campagne_id) REFERENCES campagnes(id) ON DELETE CASCADE,
+  FOREIGN KEY (assujetti_id) REFERENCES assujettis(id) ON DELETE CASCADE,
+  FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_magic_links_campaign_assujetti ON invitation_magic_links(campagne_id, assujetti_id);
+
+CREATE TABLE IF NOT EXISTS notifications_email (
+  id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+  campagne_id         INTEGER NOT NULL,
+  assujetti_id        INTEGER NOT NULL,
+  email_destinataire  TEXT NOT NULL,
+  objet               TEXT NOT NULL,
+  corps               TEXT NOT NULL,
+  template_code       TEXT NOT NULL DEFAULT 'invitation_campagne',
+  magic_link          TEXT,
+  mode                TEXT NOT NULL DEFAULT 'auto' CHECK (mode IN ('auto','manual')),
+  statut              TEXT NOT NULL DEFAULT 'envoye' CHECK (statut IN ('pending','envoye','echec')),
+  erreur              TEXT,
+  sent_at             TEXT,
+  created_by          INTEGER,
+  created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (campagne_id) REFERENCES campagnes(id) ON DELETE CASCADE,
+  FOREIGN KEY (assujetti_id) REFERENCES assujettis(id) ON DELETE CASCADE,
+  FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_notifications_email_campagne ON notifications_email(campagne_id, assujetti_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_email_statut ON notifications_email(statut, sent_at);
+
+-- =====================================================================
 -- Mises en demeure declenchees a la cloture de campagne (US3.5)
 -- =====================================================================
 CREATE TABLE IF NOT EXISTS mises_en_demeure (
