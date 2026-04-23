@@ -13,7 +13,7 @@ basée sur les articles L2333-6 à L2333-16 du CGCT.
 
 | Module | Spec | Statut |
 |---|---|---|
-| Référentiels (barème, zones, types + import GeoJSON des zones + exonerations/abattements) | §3 | OK |
+| Référentiels (barème, zones, types + import GeoJSON des zones + exonerations/abattements + campagnes déclaratives annuelles) | §3 / §5.1 | OK |
 | Assujettis (CRUD, contrôle SIRET Luhn) | §4.1 | OK |
 | Import en masse assujettis (CSV/XLSX + pré-contrôle + enrichissement SIRENE) | §4.3 / §13.1 | OK |
 | Dispositifs (CRUD, géolocalisation) | §4.2 | OK |
@@ -88,6 +88,41 @@ Stockage:
 Audit:
 
 - `logAudit()` à chaque upload / download / soft delete (entité `piece_jointe`)
+
+## Ouverture et paramétrage d'une campagne déclarative annuelle (US3.1)
+
+Le module Référentiels expose désormais une gestion des campagnes annuelles dans l'onglet **Campagnes**:
+
+- création d'une campagne avec:
+  - `annee`
+  - `date_ouverture`
+  - `date_limite_declaration`
+  - `date_cloture`
+- ouverture d'une campagne (statut `brouillon` -> `ouverte`), qui prépare le job d'invitation (`campagne_jobs`, type `invitation`)
+- clôture d'une campagne (statut `ouverte` -> `cloturee`), qui:
+  - bascule les déclarations `brouillon` de l'année en `en_instruction`
+  - crée les entrées de `mises_en_demeure` (préparation US3.5)
+- tableau de synthèse avec:
+  - état des jobs techniques
+  - volume de mises en demeure préparées
+  - répartition des déclarations par statut
+
+API backend associée:
+
+- `GET /api/campagnes`
+- `GET /api/campagnes/active`
+- `GET /api/campagnes/:id/summary`
+- `POST /api/campagnes`
+- `POST /api/campagnes/:id/open`
+- `POST /api/campagnes/:id/close`
+
+Schéma SQL ajouté:
+
+- `campagnes`
+- `campagne_jobs`
+- `mises_en_demeure`
+
+Toute action (`create`, `open`, `close`) est tracée dans `audit_log`.
 
 ## Import en masse des assujettis (US2.1)
 

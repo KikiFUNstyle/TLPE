@@ -3,6 +3,32 @@ import { api } from '../api';
 import { formatEuro } from '../format';
 import { useAuth } from '../auth';
 
+interface Campagne {
+  id: number;
+  annee: number;
+  date_ouverture: string;
+  date_limite_declaration: string;
+  date_cloture: string;
+  statut: 'brouillon' | 'ouverte' | 'cloturee';
+  created_by_email?: string;
+  created_at: string;
+}
+
+interface CampagneSummary {
+  campagne: Campagne;
+  jobs: Array<{
+    id: number;
+    type: 'invitation' | 'relance' | 'cloture';
+    statut: 'pending' | 'done' | 'failed';
+    payload: string | null;
+    created_at: string;
+    started_at: string | null;
+    completed_at: string | null;
+  }>;
+  mises_en_demeure: number;
+  declarations: Array<{ statut: string; total: number }>;
+}
+
 interface Bareme {
   id: number;
   annee: number;
@@ -74,7 +100,7 @@ interface Type {
 }
 
 export default function Referentiels() {
-  const [tab, setTab] = useState<'bareme' | 'zones' | 'types' | 'exonerations'>('bareme');
+  const [tab, setTab] = useState<'campagnes' | 'bareme' | 'zones' | 'types' | 'exonerations'>('campagnes');
   return (
     <>
       <div className="page-header">
@@ -84,16 +110,284 @@ export default function Referentiels() {
         </div>
       </div>
       <div className="toolbar">
+        <button className={`btn ${tab === 'campagnes' ? '' : 'secondary'}`} onClick={() => setTab('campagnes')}>Campagnes</button>
         <button className={`btn ${tab === 'bareme' ? '' : 'secondary'}`} onClick={() => setTab('bareme')}>Bareme</button>
         <button className={`btn ${tab === 'zones' ? '' : 'secondary'}`} onClick={() => setTab('zones')}>Zones</button>
         <button className={`btn ${tab === 'types' ? '' : 'secondary'}`} onClick={() => setTab('types')}>Types de dispositifs</button>
         <button className={`btn ${tab === 'exonerations' ? '' : 'secondary'}`} onClick={() => setTab('exonerations')}>Exonerations</button>
       </div>
+      {tab === 'campagnes' && <CampagnesTab />}
       {tab === 'bareme' && <BaremeTab />}
       {tab === 'zones' && <ZonesTab />}
       {tab === 'types' && <TypesTab />}
       {tab === 'exonerations' && <ExonerationsTab />}
     </>
+  );
+}
+
+function CampagnesTab() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin' || user?.role === 'gestionnaire';
+
+  const [rows, setRows] = useState<Campagne[]>([]);
+  const [activeCampagneId, setActiveCampagneId] = useState<number | null>(null);
+  const [selectedCampagneId, setSelectedCampagneId] = useState<number | null>(null);
+  const [summary, setSummary] = useState<CampagneSummary | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [form, setForm] = useState({
+    annee: new Date().getFullYear(),
+    date_ouverture: `${new Date().getFullYear()}-01-01`,
+    date_limite_declaration: `${new Date().getFullYear()}-03-01`,
+    date_cloture: `${new Date().getFullYear()}-03-02`,
+  });
+
+  async function refreshCampagnes(preferredCampagneId?: number | null) {
+    setLoading(true);
+    setError(null);
+    try {
+      const [campagnes, active] = await Promise.all([
+        api<Campagne[]>('/api/campagnes'),
+        api<{ campagne: Campagne | null }>('/api/campagnes/active'),
+      ]);
+      setRows(campagnes);
+      setActiveCampagneId(active.campagne?.id ?? null);
+
+      const preferred = preferredCampagneId ?? selectedCampagneId;
+      const nextSelected = preferred && campagnes.some((c) => c.id === preferred) ? preferred : campagnes[0]?.id ?? null;
+      setSelectedCampagneId(nextSelected);
+      if (nextSelected) {
+        const s = await api<CampagneSummary>(`/api/campagnes/${nextSelected}/summary`);
+        setSummary(s);
+      } else {
+        setSummary(null);
+      }
+    } catch (e) {
+      setSummary(null);
+      setError(e instanceof Error ? e.message : 'Erreur inconnue');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadSummary(campagneId: number) {
+    try {
+      const s = await api<CampagneSummary>(`/api/campagnes/${campagneId}/summary`);
+      setSummary(s);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Erreur inconnue');
+    }
+  }
+
+  useEffect(() => {
+    refreshCampagnes();
+  }, []);
+
+  async function createCampagne(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setMessage(null);
+    try {
+      await api('/api/campagnes', {
+        method: 'POST',
+        body: JSON.stringify(form),
+      });
+      setMessage(`Campagne ${form.annee} creee`);
+      await refreshCampagnes();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Erreur inconnue');
+    }
+  }
+
+  async function openSelected(campagneId = selectedCampagneId) {
+    if (!campagneId) return;
+    setError(null);
+    setMessage(null);
+    try {
+      const result = await api<{ ok: true; annee: number; invitations_preparees: number }>(`/api/campagnes/${campagneId}/open`, {
+        method: 'POST',
+      });
+      setMessage(`Campagne ${result.annee} ouverte. Invitations preparees: ${result.invitations_preparees}`);
+      await refreshCampagnes(campagneId);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Erreur inconnue');
+    }
+  }
+
+  async function closeSelected(campagneId = selectedCampagneId) {
+    if (!campagneId) return;
+    setError(null);
+    setMessage(null);
+    try {
+      const result = await api<{ ok: true; annee: number; brouillons_bascules: number }>(`/api/campagnes/${campagneId}/close`, {
+        method: 'POST',
+      });
+      setMessage(`Campagne ${result.annee} cloturee. Brouillons bascules: ${result.brouillons_bascules}`);
+      await refreshCampagnes(campagneId);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Erreur inconnue');
+    }
+  }
+
+  const selectedCampagne = useMemo(
+    () => rows.find((c) => c.id === selectedCampagneId) ?? null,
+    [rows, selectedCampagneId],
+  );
+
+  const canOpen = selectedCampagne?.statut === 'brouillon';
+  const canClose = selectedCampagne?.statut === 'ouverte';
+
+  return (
+    <div className="grid" style={{ gap: 16 }}>
+      {error && <div className="card" style={{ borderColor: '#b91c1c', color: '#b91c1c' }}>{error}</div>}
+      {message && <div className="card" style={{ borderColor: '#15803d', color: '#166534' }}>{message}</div>}
+
+      {isAdmin && (
+        <form className="card" onSubmit={createCampagne}>
+          <h3>Creer une campagne declarative annuelle</h3>
+          <div className="form-grid two" style={{ marginTop: 8 }}>
+            <div>
+              <label>Annee fiscale</label>
+              <input
+                type="number"
+                min={2008}
+                max={2100}
+                value={form.annee}
+                onChange={(e) => setForm((prev) => ({ ...prev, annee: Number(e.target.value) }))}
+                required
+              />
+            </div>
+            <div>
+              <label>Date d'ouverture</label>
+              <input
+                type="date"
+                value={form.date_ouverture}
+                onChange={(e) => setForm((prev) => ({ ...prev, date_ouverture: e.target.value }))}
+                required
+              />
+            </div>
+            <div>
+              <label>Date limite de declaration</label>
+              <input
+                type="date"
+                value={form.date_limite_declaration}
+                onChange={(e) => setForm((prev) => ({ ...prev, date_limite_declaration: e.target.value }))}
+                required
+              />
+            </div>
+            <div>
+              <label>Date de cloture</label>
+              <input
+                type="date"
+                value={form.date_cloture}
+                onChange={(e) => setForm((prev) => ({ ...prev, date_cloture: e.target.value }))}
+                required
+              />
+            </div>
+          </div>
+          <div style={{ marginTop: 12 }}>
+            <button className="btn" type="submit">Creer la campagne</button>
+          </div>
+        </form>
+      )}
+
+      <div className="card" style={{ padding: 0 }}>
+        <div style={{ padding: 12, borderBottom: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <strong>Campagnes declaratives</strong>
+          {loading && <span>Chargement...</span>}
+        </div>
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Annee</th>
+              <th>Ouverture</th>
+              <th>Limite declaration</th>
+              <th>Cloture</th>
+              <th>Statut</th>
+              <th>Creee par</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((c) => (
+              <tr key={c.id} style={{ backgroundColor: selectedCampagneId === c.id ? '#f8fafc' : undefined }}>
+                <td>{c.annee}</td>
+                <td>{c.date_ouverture}</td>
+                <td>{c.date_limite_declaration}</td>
+                <td>{c.date_cloture}</td>
+                <td>
+                  {c.statut}
+                  {activeCampagneId === c.id ? ' (active)' : ''}
+                </td>
+                <td>{c.created_by_email ?? '-'}</td>
+                <td style={{ display: 'flex', gap: 8 }}>
+                  <button className="btn secondary" onClick={() => { setSelectedCampagneId(c.id); loadSummary(c.id); }}>
+                    Voir
+                  </button>
+                  {isAdmin && (
+                    <>
+                      <button className="btn secondary" disabled={c.statut !== 'brouillon'} onClick={async () => { setSelectedCampagneId(c.id); await openSelected(c.id); }}>
+                        Ouvrir
+                      </button>
+                      <button className="btn secondary" disabled={c.statut !== 'ouverte'} onClick={async () => { setSelectedCampagneId(c.id); await closeSelected(c.id); }}>
+                        Cloturer
+                      </button>
+                    </>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {selectedCampagne && isAdmin && (
+        <div className="card" style={{ display: 'flex', gap: 8 }}>
+          <button className="btn" disabled={!canOpen} onClick={() => { void openSelected(); }}>Ouvrir la campagne selectionnee</button>
+          <button className="btn secondary" disabled={!canClose} onClick={() => { void closeSelected(); }}>Cloturer la campagne selectionnee</button>
+        </div>
+      )}
+
+      {summary && (
+        <div className="grid cols-2" style={{ gap: 16 }}>
+          <div className="card" style={{ padding: 0 }}>
+            <div style={{ padding: 12, borderBottom: '1px solid #e5e7eb' }}>
+              <strong>Jobs techniques ({summary.campagne.annee})</strong>
+            </div>
+            <table className="table">
+              <thead>
+                <tr><th>Type</th><th>Statut</th><th>Cree le</th><th>Payload</th></tr>
+              </thead>
+              <tbody>
+                {summary.jobs.length === 0 ? (
+                  <tr><td colSpan={4}>Aucun job</td></tr>
+                ) : summary.jobs.map((job) => (
+                  <tr key={job.id}>
+                    <td>{job.type}</td>
+                    <td>{job.statut}</td>
+                    <td>{new Date(job.created_at).toLocaleString()}</td>
+                    <td><code>{job.payload ?? '-'}</code></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="card">
+            <strong>Etat des declarations ({summary.campagne.annee})</strong>
+            <ul style={{ marginTop: 8 }}>
+              {summary.declarations.map((item) => (
+                <li key={item.statut}>{item.statut}: <strong>{item.total}</strong></li>
+              ))}
+            </ul>
+            <p style={{ marginTop: 12 }}>
+              Mises en demeure preparees: <strong>{summary.mises_en_demeure}</strong>
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

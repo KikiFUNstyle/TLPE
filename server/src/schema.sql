@@ -154,6 +154,53 @@ CREATE INDEX IF NOT EXISTS idx_dispositifs_assujetti ON dispositifs(assujetti_id
 CREATE INDEX IF NOT EXISTS idx_dispositifs_statut ON dispositifs(statut);
 
 -- =====================================================================
+-- Campagnes declaratives annuelles
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS campagnes (
+  id                        INTEGER PRIMARY KEY AUTOINCREMENT,
+  annee                     INTEGER NOT NULL UNIQUE,
+  date_ouverture            TEXT NOT NULL,
+  date_limite_declaration   TEXT NOT NULL,
+  date_cloture              TEXT NOT NULL,
+  statut                    TEXT NOT NULL DEFAULT 'brouillon' CHECK (statut IN ('brouillon','ouverte','cloturee')),
+  created_by                INTEGER NOT NULL,
+  created_at                TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at                TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (created_by) REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_campagnes_statut ON campagnes(statut);
+
+-- =====================================================================
+-- Mises en demeure declenchees a la cloture de campagne (US3.5)
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS mises_en_demeure (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  campagne_id      INTEGER NOT NULL,
+  declaration_id   INTEGER NOT NULL UNIQUE,
+  statut           TEXT NOT NULL DEFAULT 'a_traiter' CHECK (statut IN ('a_traiter','envoyee','annulee')),
+  created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (campagne_id) REFERENCES campagnes(id) ON DELETE CASCADE,
+  FOREIGN KEY (declaration_id) REFERENCES declarations(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_mises_en_demeure_campagne ON mises_en_demeure(campagne_id);
+
+-- =====================================================================
+-- Jobs techniques lies aux campagnes (invitations/relances)
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS campagne_jobs (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  campagne_id        INTEGER NOT NULL,
+  type               TEXT NOT NULL CHECK (type IN ('invitation','relance','cloture')),
+  statut             TEXT NOT NULL DEFAULT 'pending' CHECK (statut IN ('pending','done','failed')),
+  payload            TEXT,
+  created_at         TEXT NOT NULL DEFAULT (datetime('now')),
+  started_at         TEXT,
+  completed_at       TEXT,
+  FOREIGN KEY (campagne_id) REFERENCES campagnes(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_campagne_jobs_campagne ON campagne_jobs(campagne_id, type, statut);
+
+-- =====================================================================
 -- Declarations (annuelles)
 -- =====================================================================
 CREATE TABLE IF NOT EXISTS declarations (
