@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { initSchema, db } from './db';
 import { hashPassword } from './auth';
+import { detectMimeFromMagicBytes } from './routes/piecesJointes';
 
 const uploadsRoot = path.resolve(__dirname, '..', 'data', 'uploads');
 
@@ -207,4 +208,16 @@ test('storage path policy keeps files under server/data/uploads', () => {
 
   fs.unlinkSync(abs);
   assert.ok(!fs.existsSync(abs));
+});
+
+test('detectMimeFromMagicBytes - detects allowed formats and rejects unknown payloads', () => {
+  const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
+  const pdf = Buffer.from('%PDF-1.7\n', 'utf8');
+  const txt = Buffer.from('hello world', 'utf8');
+
+  assert.equal(detectMimeFromMagicBytes(jpeg), 'image/jpeg');
+  assert.equal(detectMimeFromMagicBytes(png), 'image/png');
+  assert.equal(detectMimeFromMagicBytes(pdf), 'application/pdf');
+  assert.equal(detectMimeFromMagicBytes(txt), null);
 });

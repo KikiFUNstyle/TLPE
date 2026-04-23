@@ -94,6 +94,32 @@ function fileExtensionForMime(mime: string): string {
   return '';
 }
 
+export function detectMimeFromMagicBytes(buffer: Buffer): string | null {
+  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+    return 'image/jpeg';
+  }
+
+  if (
+    buffer.length >= 8 &&
+    buffer[0] === 0x89 &&
+    buffer[1] === 0x50 &&
+    buffer[2] === 0x4e &&
+    buffer[3] === 0x47 &&
+    buffer[4] === 0x0d &&
+    buffer[5] === 0x0a &&
+    buffer[6] === 0x1a &&
+    buffer[7] === 0x0a
+  ) {
+    return 'image/png';
+  }
+
+  if (buffer.length >= 5 && buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46 && buffer[4] === 0x2d) {
+    return 'application/pdf';
+  }
+
+  return null;
+}
+
 function buildStorageRelativePath(params: {
   entite: 'dispositif' | 'declaration' | 'contentieux';
   entiteId: number;
@@ -245,193 +271,210 @@ async function readStoredFile(cheminRelatif: string): Promise<{
 }
 
 piecesJointesRouter.post('/', upload.single('fichier'), async (req, res) => {
-  const parsed = createSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: parsed.error.flatten() });
-  }
-
-  const file = req.file;
-  if (!file) {
-    return res.status(400).json({ error: 'Fichier requis (champ "fichier")' });
-  }
-
-  const { entite, entite_id } = parsed.data;
-
-  if (!MIME_WHITELIST.has(file.mimetype)) {
-    return res.status(400).json({ error: 'Type de fichier non autorise (jpeg, png, pdf uniquement)' });
-  }
-
-  if (!checkEntityExists(entite, entite_id)) {
-    return res.status(404).json({ error: 'Entite introuvable' });
-  }
-
-  if (!canAccessEntity(req.user, entite, entite_id)) {
-    return res.status(403).json({ error: 'Droits insuffisants' });
-  }
-
-  const insertPieceJointe = db.transaction(
-    (params: {
-      entite: 'dispositif' | 'declaration' | 'contentieux';
-      entite_id: number;
-      nom: string;
-      mime_type: string;
-      taille: number;
-      chemin: string;
-      uploaded_by: number | null;
-    }) => {
-      const currentSize = getEntityTotalSize(params.entite, params.entite_id);
-      if (currentSize + params.taille > MAX_ENTITY_TOTAL_SIZE) {
-        throw new Error('quota-exceeded');
-      }
-
-      const info = db
-        .prepare(
-          `INSERT INTO pieces_jointes (entite, entite_id, nom, mime_type, taille, chemin, uploaded_by)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-          params.entite,
-          params.entite_id,
-          params.nom,
-          params.mime_type,
-          params.taille,
-          params.chemin,
-          params.uploaded_by,
-        );
-
-      return Number(info.lastInsertRowid);
-    },
-  );
-
-  const nom = sanitizeFileName(file.originalname);
-  const chemin = buildStorageRelativePath({
-    entite,
-    entiteId: entite_id,
-    filename: nom,
-    mimeType: file.mimetype,
-  });
-
   try {
-    await saveFile(chemin, file.buffer, file.mimetype);
-  } catch {
-    return res.status(500).json({ error: 'Echec du stockage de la piece jointe' });
-  }
-
-  try {
-    const id = insertPieceJointe({
-      entite,
-      entite_id,
-      nom,
-      mime_type: file.mimetype,
-      taille: file.size,
-      chemin,
-      uploaded_by: req.user?.id ?? null,
-    });
-    logAudit({
-      userId: req.user?.id ?? null,
-      action: 'upload',
-      entite: 'piece_jointe',
-      entiteId: id,
-      details: { entite, entite_id, nom, mime_type: file.mimetype, taille: file.size },
-      ip: req.ip ?? null,
-    });
-
-    return res.status(201).json({
-      id,
-      entite,
-      entite_id,
-      nom,
-      mime_type: file.mimetype,
-      taille: file.size,
-      created_at: new Date().toISOString(),
-    });
-  } catch (error) {
-    if (error instanceof Error && error.message === 'quota-exceeded') {
-      await deleteStoredFile(chemin).catch(() => undefined);
-      return res.status(400).json({ error: 'Taille totale depassee (50 Mo maximum par entite)' });
+    const parsed = createSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.flatten() });
     }
-    await deleteStoredFile(chemin).catch(() => undefined);
-    return res.status(500).json({ error: 'Echec lors de l’enregistrement en base' });
+
+    const file = req.file;
+    if (!file) {
+      return res.status(400).json({ error: 'Fichier requis (champ "fichier")' });
+    }
+
+    const { entite, entite_id } = parsed.data;
+
+    if (!MIME_WHITELIST.has(file.mimetype)) {
+      return res.status(400).json({ error: 'Type de fichier non autorise (jpeg, png, pdf uniquement)' });
+    }
+
+    const detectedMime = detectMimeFromMagicBytes(file.buffer);
+    if (!detectedMime || detectedMime !== file.mimetype) {
+      return res.status(400).json({ error: 'Contenu du fichier incoherent avec le type MIME annonce' });
+    }
+
+    if (!checkEntityExists(entite, entite_id)) {
+      return res.status(404).json({ error: 'Entite introuvable' });
+    }
+
+    if (!canAccessEntity(req.user, entite, entite_id)) {
+      return res.status(403).json({ error: 'Droits insuffisants' });
+    }
+
+    const insertPieceJointe = db.transaction(
+      (params: {
+        entite: 'dispositif' | 'declaration' | 'contentieux';
+        entite_id: number;
+        nom: string;
+        mime_type: string;
+        taille: number;
+        chemin: string;
+        uploaded_by: number | null;
+      }) => {
+        const currentSize = getEntityTotalSize(params.entite, params.entite_id);
+        if (currentSize + params.taille > MAX_ENTITY_TOTAL_SIZE) {
+          throw new Error('quota-exceeded');
+        }
+
+        const info = db
+          .prepare(
+            `INSERT INTO pieces_jointes (entite, entite_id, nom, mime_type, taille, chemin, uploaded_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            params.entite,
+            params.entite_id,
+            params.nom,
+            params.mime_type,
+            params.taille,
+            params.chemin,
+            params.uploaded_by,
+          );
+
+        return Number(info.lastInsertRowid);
+      },
+    );
+
+    const nom = sanitizeFileName(file.originalname);
+    const chemin = buildStorageRelativePath({
+      entite,
+      entiteId: entite_id,
+      filename: nom,
+      mimeType: file.mimetype,
+    });
+
+    try {
+      await saveFile(chemin, file.buffer, file.mimetype);
+    } catch {
+      return res.status(500).json({ error: 'Echec du stockage de la piece jointe' });
+    }
+
+    try {
+      const id = insertPieceJointe({
+        entite,
+        entite_id,
+        nom,
+        mime_type: file.mimetype,
+        taille: file.size,
+        chemin,
+        uploaded_by: req.user?.id ?? null,
+      });
+      logAudit({
+        userId: req.user?.id ?? null,
+        action: 'upload',
+        entite: 'piece_jointe',
+        entiteId: id,
+        details: { entite, entite_id, nom, mime_type: file.mimetype, taille: file.size },
+        ip: req.ip ?? null,
+      });
+
+      return res.status(201).json({
+        id,
+        entite,
+        entite_id,
+        nom,
+        mime_type: file.mimetype,
+        taille: file.size,
+        created_at: new Date().toISOString(),
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message === 'quota-exceeded') {
+        await deleteStoredFile(chemin).catch(() => undefined);
+        return res.status(400).json({ error: 'Taille totale depassee (50 Mo maximum par entite)' });
+      }
+      await deleteStoredFile(chemin).catch(() => undefined);
+      return res.status(500).json({ error: 'Echec lors de l’enregistrement en base' });
+    }
+  } catch {
+    return res.status(500).json({ error: 'Erreur interne upload' });
   }
 });
 
 piecesJointesRouter.get('/:id', async (req, res) => {
-  const piece = db
-    .prepare(
-      `SELECT id, entite, entite_id, nom, mime_type, taille, chemin, uploaded_by, created_at, deleted_at
-       FROM pieces_jointes
-       WHERE id = ?`,
-    )
-    .get(req.params.id) as PieceJointeRow | undefined;
-
-  if (!piece || piece.deleted_at) {
-    return res.status(404).json({ error: 'Piece jointe introuvable' });
-  }
-
-  if (!canAccessEntity(req.user, piece.entite, piece.entite_id)) {
-    return res.status(403).json({ error: 'Droits insuffisants' });
-  }
-
   try {
-    const stored = await readStoredFile(piece.chemin);
-    res.setHeader('Content-Type', piece.mime_type || stored.contentType || 'application/octet-stream');
-    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(piece.nom)}"`);
-    if (stored.contentLength ?? piece.taille) {
-      res.setHeader('Content-Length', String(stored.contentLength ?? piece.taille));
+    const piece = db
+      .prepare(
+        `SELECT id, entite, entite_id, nom, mime_type, taille, chemin, uploaded_by, created_at, deleted_at
+         FROM pieces_jointes
+         WHERE id = ?`,
+      )
+      .get(req.params.id) as PieceJointeRow | undefined;
+
+    if (!piece || piece.deleted_at) {
+      return res.status(404).json({ error: 'Piece jointe introuvable' });
     }
 
+    if (!canAccessEntity(req.user, piece.entite, piece.entite_id)) {
+      return res.status(403).json({ error: 'Droits insuffisants' });
+    }
+
+    try {
+      const stored = await readStoredFile(piece.chemin);
+      res.setHeader('Content-Type', piece.mime_type || stored.contentType || 'application/octet-stream');
+      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(piece.nom)}"`);
+      if (stored.contentLength ?? piece.taille) {
+        res.setHeader('Content-Length', String(stored.contentLength ?? piece.taille));
+      }
+
+      logAudit({
+        userId: req.user?.id ?? null,
+        action: 'download',
+        entite: 'piece_jointe',
+        entiteId: piece.id,
+        details: { entite: piece.entite, entite_id: piece.entite_id, nom: piece.nom },
+        ip: req.ip ?? null,
+      });
+
+      stored.stream.on('error', () => {
+        if (!res.headersSent) {
+          res.status(500).json({ error: 'Lecture du fichier impossible' });
+        } else {
+          res.end();
+        }
+      });
+
+      stored.stream.pipe(res);
+      return;
+    } catch {
+      return res.status(404).json({ error: 'Fichier introuvable dans le stockage' });
+    }
+  } catch {
+    return res.status(500).json({ error: 'Erreur interne download' });
+  }
+});
+
+piecesJointesRouter.delete('/:id', async (req, res) => {
+  try {
+    const piece = db
+      .prepare(
+        `SELECT id, entite, entite_id, nom, deleted_at
+         FROM pieces_jointes
+         WHERE id = ?`,
+      )
+      .get(req.params.id) as Pick<PieceJointeRow, 'id' | 'entite' | 'entite_id' | 'nom' | 'deleted_at'> | undefined;
+
+    if (!piece || piece.deleted_at) {
+      return res.status(404).json({ error: 'Piece jointe introuvable' });
+    }
+
+    if (!canAccessEntity(req.user, piece.entite, piece.entite_id)) {
+      return res.status(403).json({ error: 'Droits insuffisants' });
+    }
+
+    db.prepare(`UPDATE pieces_jointes SET deleted_at = datetime('now') WHERE id = ?`).run(piece.id);
     logAudit({
       userId: req.user?.id ?? null,
-      action: 'download',
+      action: 'soft_delete',
       entite: 'piece_jointe',
       entiteId: piece.id,
       details: { entite: piece.entite, entite_id: piece.entite_id, nom: piece.nom },
       ip: req.ip ?? null,
     });
 
-    stored.stream.on('error', () => {
-      if (!res.headersSent) {
-        res.status(500).json({ error: 'Lecture du fichier impossible' });
-      } else {
-        res.end();
-      }
-    });
-
-    stored.stream.pipe(res);
-    return;
+    return res.status(204).end();
   } catch {
-    return res.status(404).json({ error: 'Fichier introuvable dans le stockage' });
+    return res.status(500).json({ error: 'Erreur interne suppression' });
   }
-});
-
-piecesJointesRouter.delete('/:id', (req, res) => {
-  const piece = db
-    .prepare(
-      `SELECT id, entite, entite_id, nom, deleted_at
-       FROM pieces_jointes
-       WHERE id = ?`,
-    )
-    .get(req.params.id) as Pick<PieceJointeRow, 'id' | 'entite' | 'entite_id' | 'nom' | 'deleted_at'> | undefined;
-
-  if (!piece || piece.deleted_at) {
-    return res.status(404).json({ error: 'Piece jointe introuvable' });
-  }
-
-  if (!canAccessEntity(req.user, piece.entite, piece.entite_id)) {
-    return res.status(403).json({ error: 'Droits insuffisants' });
-  }
-
-  db.prepare(`UPDATE pieces_jointes SET deleted_at = datetime('now') WHERE id = ?`).run(piece.id);
-  logAudit({
-    userId: req.user?.id ?? null,
-    action: 'soft_delete',
-    entite: 'piece_jointe',
-    entiteId: piece.id,
-    details: { entite: piece.entite, entite_id: piece.entite_id, nom: piece.nom },
-    ip: req.ip ?? null,
-  });
-
-  return res.status(204).end();
 });
 
 piecesJointesRouter.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
