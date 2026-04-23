@@ -155,7 +155,8 @@ export function getDashboardMetrics() {
          COALESCE(s.soumissions_jour, 0) AS soumissions_jour,
          SUM(COALESCE(s.soumissions_jour, 0)) OVER (ORDER BY j.date_jour) AS cumul_soumissions
        FROM jours j
-       LEFT JOIN soumissions s ON s.date_jour = j.date_jour`,
+       LEFT JOIN soumissions s ON s.date_jour = j.date_jour
+       ORDER BY j.date_jour ASC`,
     )
     .all(dateStart, dateEnd, annee);
 
