@@ -108,15 +108,29 @@ function generateMiseEnDemeurePdf(input: {
   const contentStream = `BT /F1 11 Tf ${textOps} ET`;
   const contentLength = Buffer.byteLength(contentStream, 'utf8');
 
-  const pdf = `%PDF-1.4\n`
-    + `1 0 obj<< /Type /Catalog /Pages 2 0 R >>endobj\n`
-    + `2 0 obj<< /Type /Pages /Kids [3 0 R] /Count 1 >>endobj\n`
-    + `3 0 obj<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>endobj\n`
-    + `4 0 obj<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>endobj\n`
-    + `5 0 obj<< /Length ${contentLength} >>stream\n${contentStream}\nendstream endobj\n`
-    + `xref\n0 6\n0000000000 65535 f \n`
-    + `0000000010 00000 n \n0000000060 00000 n \n0000000117 00000 n \n0000000244 00000 n \n0000000314 00000 n \n`
-    + `trailer<< /Size 6 /Root 1 0 R >>\nstartxref\n${314 + contentLength + 33}\n%%EOF\n`;
+  const objects = [
+    `1 0 obj<< /Type /Catalog /Pages 2 0 R >>endobj\n`,
+    `2 0 obj<< /Type /Pages /Kids [3 0 R] /Count 1 >>endobj\n`,
+    `3 0 obj<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>endobj\n`,
+    `4 0 obj<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>endobj\n`,
+    `5 0 obj<< /Length ${contentLength} >>stream\n${contentStream}\nendstream\nendobj\n`,
+  ];
+
+  let pdf = '%PDF-1.4\n';
+  const offsets: number[] = [0];
+  for (const obj of objects) {
+    offsets.push(Buffer.byteLength(pdf, 'utf8'));
+    pdf += obj;
+  }
+
+  const xrefOffset = Buffer.byteLength(pdf, 'utf8');
+  pdf += `xref\n0 ${objects.length + 1}\n`;
+  pdf += '0000000000 65535 f \n';
+  for (const offset of offsets.slice(1)) {
+    pdf += `${String(offset).padStart(10, '0')} 00000 n \n`;
+  }
+  pdf += `trailer<< /Size ${objects.length + 1} /Root 1 0 R >>\n`;
+  pdf += `startxref\n${xrefOffset}\n%%EOF\n`;
 
   fs.writeFileSync(absolutePath, pdf, 'utf8');
   return path.relative(path.resolve(__dirname, '..', 'data'), absolutePath).replace(/\\/g, '/');
