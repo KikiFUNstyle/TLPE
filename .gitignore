@@ -12,5 +12,7 @@ coverage/
 **/data/*.db-journal
 **/data/*.db-wal
 **/data/*.db-shm
+**/data/receipts/
+**/data/mises_en_demeure/
 uploads/
 TLPE/

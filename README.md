@@ -21,6 +21,7 @@ basée sur les articles L2333-6 à L2333-16 du CGCT.
 | Moteur de calcul TLPE (tranches, prorata, coef. zone, double face, forfait, exonération) | §6 | OK + tests |
 | Déclarations (brouillon → soumission → validation → rejet) | §5 | OK |
 | Contrôles automatiques avancés à la soumission (complétude, doublons adresse/type, cohérence dates, variation N/N-1 >30%) + alertes gestionnaire | §5.3 (US3.3) | OK + tests |
+| Accusé de réception PDF horodaté avec hash SHA-256 + QR de vérification + téléchargement sur détail déclaration | §5.2 / US3.6 | OK + tests |
 | Hash SHA-256 de soumission (accusé) | §5.2 | OK |
 | Titres de recettes + PDF (ordonnancement) | §7.1 | OK |
 | Paiements (5 modalités) + recouvrement | §7.2 | OK |
@@ -70,6 +71,11 @@ Ouvrir ensuite http://localhost:5173.
   - soumission KO si doublon adresse+type, surface <= 0, type manquant, date de pose > date de dépose
   - soumission OK avec `alerte_gestionnaire=true` quand la variation de surface N vs N-1 dépasse 30 %
   - visibilité de l'alerte dans la liste des déclarations (colonne `Alertes`) et sur le détail déclaration
+- Smoke test US3.6 :
+  - `POST /api/declarations/:id/soumettre` renvoie `receipt` (token, hash, URL de vérification, URL de téléchargement)
+  - `GET /api/declarations/receipt/verify/:token` retourne `verified=true` sans authentification
+  - `GET /api/declarations/:id/receipt/pdf` télécharge l'accusé PDF avec QR code
+  - `DeclarationDetail.tsx` affiche le statut email d'envoi de l'accusé + bouton de téléchargement
 
 ## API pièces jointes (US2.5)
 

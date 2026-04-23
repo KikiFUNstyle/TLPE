@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { api } from '../api';
+import { api, apiBlob } from '../api';
 import { formatEuro } from '../format';
 import { useAuth } from '../auth';
 
@@ -36,6 +36,15 @@ interface Declaration {
   montant_total: number | null;
   commentaires: string | null;
   lignes: Ligne[];
+  receipt: null | {
+    verification_token: string;
+    payload_hash: string;
+    generated_at: string;
+    email_status: 'pending' | 'envoye' | 'echec';
+    email_error: string | null;
+    email_sent_at: string | null;
+    download_url: string;
+  };
 }
 
 export default function DeclarationDetail() {
@@ -58,6 +67,7 @@ export default function DeclarationDetail() {
   const canSubmit = canEdit && decl.lignes.length > 0;
   const canValidate = decl.statut === 'soumise' && hasRole('admin', 'gestionnaire');
   const canEmit = decl.statut === 'validee' && hasRole('admin', 'financier') && decl.montant_total !== null;
+  const canDownloadReceipt = decl.statut !== 'brouillon' && !!decl.receipt?.download_url;
 
   const saveLignes = async () => {
     setBusy(true);
@@ -102,6 +112,27 @@ export default function DeclarationDetail() {
     catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
   };
 
+  const downloadReceipt = async () => {
+    if (!decl?.receipt?.download_url) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const blob = await apiBlob(decl.receipt.download_url);
+      const href = window.URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = href;
+      anchor.download = `accuse-declaration-${decl.numero}.pdf`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(href);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const updateLigne = (idx: number, patch: Partial<Ligne>) => {
     setDecl({
       ...decl,
@@ -131,6 +162,11 @@ export default function DeclarationDetail() {
           {canValidate && <button className="btn success" disabled={busy} onClick={valider}>Valider &amp; calculer</button>}
           {canValidate && <button className="btn danger" disabled={busy} onClick={rejeter}>Rejeter</button>}
           {canEmit && <button className="btn" disabled={busy} onClick={emettre}>Emettre titre</button>}
+          {canDownloadReceipt && (
+            <button className="btn secondary" disabled={busy} onClick={downloadReceipt}>
+              Télécharger l'accusé PDF
+            </button>
+          )}
         </div>
       </div>
 
@@ -138,6 +174,15 @@ export default function DeclarationDetail() {
       {info && <div className="alert success">{info}</div>}
       {decl.alerte_gestionnaire ? (
         <div className="alert warning">Alerte gestionnaire : variation de surface N vs N-1 supérieure à 30%.</div>
+      ) : null}
+      {decl.receipt ? (
+        <div className="alert info">
+          Accusé de réception généré le {decl.receipt.generated_at}.&nbsp;
+          <code style={{ fontSize: 11 }}>{decl.receipt.payload_hash.substring(0, 16)}...</code>
+          {decl.receipt.email_status === 'envoye' && ' · Email envoyé'}
+          {decl.receipt.email_status === 'pending' && ' · Email en attente (SMTP non configuré)'}
+          {decl.receipt.email_status === 'echec' && ` · Email en échec${decl.receipt.email_error ? `: ${decl.receipt.email_error}` : ''}`}
+        </div>
       ) : null}
       {decl.commentaires && <div className="alert info">Commentaire : {decl.commentaires}</div>}
 
