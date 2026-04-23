@@ -268,33 +268,139 @@ export function initSchema() {
     }
   }
 
-  const paiementColumns = db.prepare("PRAGMA table_info('paiements')").all() as Array<{ name: string }>;
-  const hasProvider = paiementColumns.some((col) => col.name === 'provider');
-  const hasStatut = paiementColumns.some((col) => col.name === 'statut');
-  const hasTransactionId = paiementColumns.some((col) => col.name === 'transaction_id');
-  const hasCallbackPayload = paiementColumns.some((col) => col.name === 'callback_payload');
-  const hasCreatedAt = paiementColumns.some((col) => col.name === 'created_at');
-  if (!hasProvider) db.exec("ALTER TABLE paiements ADD COLUMN provider TEXT NOT NULL DEFAULT 'manuel'");
-  if (!hasStatut) db.exec("ALTER TABLE paiements ADD COLUMN statut TEXT NOT NULL DEFAULT 'confirme'");
-  if (!hasTransactionId) db.exec('ALTER TABLE paiements ADD COLUMN transaction_id TEXT');
-  if (!hasCallbackPayload) db.exec('ALTER TABLE paiements ADD COLUMN callback_payload TEXT');
-  if (!hasCreatedAt) db.exec("ALTER TABLE paiements ADD COLUMN created_at TEXT NOT NULL DEFAULT (datetime('now'))");
-  const duplicateTransactionIds = db
-    .prepare(
-      `SELECT transaction_id, COUNT(*) AS c
-       FROM paiements
-       WHERE transaction_id IS NOT NULL
-       GROUP BY transaction_id
-       HAVING COUNT(*) > 1`,
-    )
-    .all() as Array<{ transaction_id: string; c: number }>;
-  if (duplicateTransactionIds.length > 0) {
-    throw new Error(
-      `Migration paiements.transaction_id unique impossible: ${duplicateTransactionIds.length} transaction(s) dupliquée(s)`,
+  const paiementsSql = (
+    db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'paiements'").get() as
+      | { sql: string }
+      | undefined
+  )?.sql;
+  if (paiementsSql) {
+    const paiementColumns = db.prepare("PRAGMA table_info('paiements')").all() as Array<{ name: string }>;
+    const hasProvider = paiementColumns.some((col) => col.name === 'provider');
+    const hasStatut = paiementColumns.some((col) => col.name === 'statut');
+    const hasTransactionId = paiementColumns.some((col) => col.name === 'transaction_id');
+    const hasCallbackPayload = paiementColumns.some((col) => col.name === 'callback_payload');
+    const hasCreatedAt = paiementColumns.some((col) => col.name === 'created_at');
+    const hasProviderCheck = /provider\s+TEXT\s+NOT\s+NULL\s+DEFAULT\s+'manuel'\s+CHECK\s*\(\s*provider\s+IN\s*\('manuel','payfip'\)\s*\)/i.test(
+      paiementsSql,
     );
+    const hasStatutCheck = /statut\s+TEXT\s+NOT\s+NULL\s+DEFAULT\s+'confirme'\s+CHECK\s*\(\s*statut\s+IN\s*\('confirme','annule','refuse','en_attente'\)\s*\)/i.test(
+      paiementsSql,
+    );
+    const hasTransactionUnique = /transaction_id\s+TEXT\s+UNIQUE/i.test(paiementsSql);
+    const hasCreatedAtDefault = /created_at\s+TEXT\s+NOT\s+NULL\s+DEFAULT\s*\(datetime\('now'\)\)/i.test(
+      paiementsSql,
+    );
+
+    const invalidProviderCount = hasProvider
+      ? (
+          db
+            .prepare(
+              `SELECT COUNT(*) AS c
+               FROM paiements
+               WHERE provider IS NULL OR provider NOT IN ('manuel','payfip')`,
+            )
+            .get() as { c: number }
+        ).c
+      : 0;
+    if (invalidProviderCount > 0) {
+      throw new Error(
+        `Migration paiements.provider impossible: ${invalidProviderCount} paiement(s) ont un provider invalide`,
+      );
+    }
+
+    const invalidStatutCount = hasStatut
+      ? (
+          db
+            .prepare(
+              `SELECT COUNT(*) AS c
+               FROM paiements
+               WHERE statut IS NULL OR statut NOT IN ('confirme','annule','refuse','en_attente')`,
+            )
+            .get() as { c: number }
+        ).c
+      : 0;
+    if (invalidStatutCount > 0) {
+      throw new Error(
+        `Migration paiements.statut impossible: ${invalidStatutCount} paiement(s) ont un statut invalide`,
+      );
+    }
+
+    const duplicateTransactionIds = hasTransactionId
+      ? (
+          db
+            .prepare(
+              `SELECT transaction_id, COUNT(*) AS c
+               FROM paiements
+               WHERE transaction_id IS NOT NULL
+               GROUP BY transaction_id
+               HAVING COUNT(*) > 1`,
+            )
+            .all() as Array<{ transaction_id: string; c: number }>
+        )
+      : [];
+    if (duplicateTransactionIds.length > 0) {
+      throw new Error(
+        `Migration paiements.transaction_id unique impossible: ${duplicateTransactionIds.length} transaction(s) dupliquée(s)`,
+      );
+    }
+
+    if (!hasProvider || !hasStatut || !hasTransactionId || !hasCallbackPayload || !hasCreatedAt || !hasProviderCheck || !hasStatutCheck || !hasTransactionUnique || !hasCreatedAtDefault) {
+      db.pragma('foreign_keys = OFF');
+      try {
+        db.exec('BEGIN TRANSACTION');
+        try {
+          db.exec(`
+            CREATE TABLE paiements_new (
+              id               INTEGER PRIMARY KEY AUTOINCREMENT,
+              titre_id         INTEGER NOT NULL,
+              montant          REAL NOT NULL,
+              date_paiement    TEXT NOT NULL,
+              modalite         TEXT NOT NULL CHECK (modalite IN ('virement','cheque','tipi','sepa','numeraire')),
+              reference        TEXT,
+              commentaire      TEXT,
+              provider         TEXT NOT NULL DEFAULT 'manuel' CHECK (provider IN ('manuel','payfip')),
+              statut           TEXT NOT NULL DEFAULT 'confirme' CHECK (statut IN ('confirme','annule','refuse','en_attente')),
+              transaction_id   TEXT UNIQUE,
+              callback_payload TEXT,
+              created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+              FOREIGN KEY (titre_id) REFERENCES titres(id) ON DELETE CASCADE
+            );
+
+            INSERT INTO paiements_new (
+              id, titre_id, montant, date_paiement, modalite, reference, commentaire,
+              provider, statut, transaction_id, callback_payload, created_at
+            )
+            SELECT
+              id,
+              titre_id,
+              montant,
+              date_paiement,
+              modalite,
+              reference,
+              commentaire,
+              ${hasProvider ? "COALESCE(provider, 'manuel')" : "'manuel'"},
+              ${hasStatut ? "COALESCE(statut, 'confirme')" : "'confirme'"},
+              ${hasTransactionId ? 'transaction_id' : 'NULL'},
+              ${hasCallbackPayload ? 'callback_payload' : 'NULL'},
+              ${hasCreatedAt ? "COALESCE(created_at, datetime('now'))" : "datetime('now')"}
+            FROM paiements;
+
+            DROP TABLE paiements;
+            ALTER TABLE paiements_new RENAME TO paiements;
+          `);
+          db.exec('COMMIT');
+        } catch (error) {
+          db.exec('ROLLBACK');
+          throw error;
+        }
+      } finally {
+        db.pragma('foreign_keys = ON');
+      }
+    }
+
+    db.exec('CREATE INDEX IF NOT EXISTS idx_paiements_titre_date ON paiements(titre_id, date_paiement DESC)');
+    db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_paiements_transaction ON paiements(transaction_id) WHERE transaction_id IS NOT NULL');
   }
-  db.exec('CREATE INDEX IF NOT EXISTS idx_paiements_titre_date ON paiements(titre_id, date_paiement DESC)');
-  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_paiements_transaction ON paiements(transaction_id) WHERE transaction_id IS NOT NULL');
 
   // migration legacy -> ajoute la FK campagnes.created_by -> users(id)
   const campagneFks = db.prepare("PRAGMA foreign_key_list('campagnes')").all() as Array<{ from: string; table: string }>;

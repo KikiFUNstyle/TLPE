@@ -4,6 +4,13 @@ import * as crypto from 'node:crypto';
 import { db, logAudit } from '../db';
 import { requireRole } from '../auth';
 
+function timingSafeEqualHex(left: string, right: string) {
+  const leftBuffer = Buffer.from(left, 'utf8');
+  const rightBuffer = Buffer.from(right, 'utf8');
+  if (leftBuffer.length !== rightBuffer.length) return false;
+  return crypto.timingSafeEqual(leftBuffer, rightBuffer);
+}
+
 type TitreRow = {
   id: number;
   numero: string;
@@ -166,7 +173,7 @@ paiementsRouter.post('/callback/payfip', (req, res) => {
     statut: payload.statut,
     transactionId: payload.transaction_id,
   });
-  if (expectedMac !== payload.mac) {
+  if (!timingSafeEqualHex(expectedMac, String(payload.mac).toLowerCase())) {
     return res.status(400).json({ error: 'Signature PayFip invalide' });
   }
 

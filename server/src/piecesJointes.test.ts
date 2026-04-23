@@ -19,9 +19,9 @@ function seedFixture() {
   db.exec('DELETE FROM campagne_jobs');
   db.exec('DELETE FROM mises_en_demeure');
   db.exec('DELETE FROM paiements');
+  db.exec('DELETE FROM contentieux');
   db.exec('DELETE FROM titres');
   db.exec('DELETE FROM pieces_jointes');
-  db.exec('DELETE FROM contentieux');
   db.exec('DELETE FROM lignes_declaration');
   db.exec('DELETE FROM declarations');
   db.exec('DELETE FROM dispositifs');
