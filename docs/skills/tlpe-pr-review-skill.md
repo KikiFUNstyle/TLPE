@@ -37,7 +37,7 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
 
 ### 6) Règles spécifiques mises en demeure J+1 (US3.5)
 - Le déclenchement doit être basé sur `date_cloture + 1` (et non `date_limite_declaration`).
-- Les non-déclarants sont les assujettis actifs **sans déclaration soumise/validée** sur l'année de campagne.
+- Les non-déclarants sont les assujettis actifs **sans déclaration soumise/validée/rejetée** sur l'année de campagne (un rejet ne doit jamais être rouvert implicitement).
 - La déclaration d'office doit être créée/normalisée au statut `en_instruction` avec marque explicite (commentaire/flag).
 - Le PDF de mise en demeure doit réutiliser l'historique N-1 (lignes de déclaration) et seulement fallback sur les dispositifs courants si l'historique est absent.
 - Si email manquant, tracer un échec explicite (`notifications_email.statut='echec'`) et conserver la mise en demeure en `a_traiter`.
