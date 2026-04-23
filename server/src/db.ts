@@ -76,10 +76,28 @@ export function initSchema() {
       | undefined
   )?.name === 'declarations';
   if (hasDeclarations) {
-    const declarationColumns = db.prepare("PRAGMA table_info('declarations')").all() as Array<{ name: string }>;
-    const hasAlerteGestionnaire = declarationColumns.some((col) => col.name === 'alerte_gestionnaire');
-    if (!hasAlerteGestionnaire) {
-      db.exec("ALTER TABLE declarations ADD COLUMN alerte_gestionnaire INTEGER NOT NULL DEFAULT 0");
+  const declarationColumns = db.prepare("PRAGMA table_info('declarations')").all() as Array<{ name: string }>;
+  const hasAlerteGestionnaire = declarationColumns.some((col) => col.name === 'alerte_gestionnaire');
+  if (!hasAlerteGestionnaire) {
+    db.exec("ALTER TABLE declarations ADD COLUMN alerte_gestionnaire INTEGER NOT NULL DEFAULT 0");
+  }
+  const hasHashSoumission = declarationColumns.some((col) => col.name === 'hash_soumission');
+  if (!hasHashSoumission) {
+    db.exec("ALTER TABLE declarations ADD COLUMN hash_soumission TEXT");
+  }
+}
+
+  // migration legacy -> ajoute quote_part sur lignes_declaration si table deja presente
+  const hasLignesDeclaration = (
+    db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'lignes_declaration'").get() as
+      | { name: string }
+      | undefined
+  )?.name === 'lignes_declaration';
+  if (hasLignesDeclaration) {
+    const lignesColumns = db.prepare("PRAGMA table_info('lignes_declaration')").all() as Array<{ name: string }>;
+    const hasQuotePart = lignesColumns.some((col) => col.name === 'quote_part');
+    if (!hasQuotePart) {
+      db.exec("ALTER TABLE lignes_declaration ADD COLUMN quote_part REAL NOT NULL DEFAULT 1.0");
     }
   }
 

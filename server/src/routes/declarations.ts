@@ -166,11 +166,19 @@ declarationsRouter.post('/', requireRole('admin', 'gestionnaire', 'contribuable'
   }>;
   const insertLigne = db.prepare(
     `INSERT INTO lignes_declaration
-       (declaration_id, dispositif_id, surface_declaree, nombre_faces, date_pose, date_depose)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+       (declaration_id, dispositif_id, surface_declaree, nombre_faces, quote_part, date_pose, date_depose)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
   );
   for (const dsp of dispositifs) {
-    insertLigne.run(info.lastInsertRowid, dsp.id, dsp.surface, dsp.nombre_faces, dsp.date_pose, dsp.date_depose);
+    insertLigne.run(
+      info.lastInsertRowid,
+      dsp.id,
+      dsp.surface,
+      dsp.nombre_faces,
+      1,
+      dsp.date_pose,
+      dsp.date_depose,
+    );
   }
 
   logAudit({ userId: req.user!.id, action: 'create', entite: 'declaration', entiteId: Number(info.lastInsertRowid) });
@@ -182,9 +190,36 @@ const updateLigneSchema = z.object({
   dispositif_id: z.number().int().positive(),
   surface_declaree: z.number().positive(),
   nombre_faces: z.number().int().min(1).max(4),
+  quote_part: z.number().min(0).max(1).default(1),
   date_pose: z.string().nullable().optional(),
   date_depose: z.string().nullable().optional(),
 });
+
+function validateQuotePartSum(
+  rows: Array<{
+    dispositif_id: number;
+    quote_part: number;
+    type_libelle?: string | null;
+  }>,
+): string[] {
+  const totals = new Map<number, { sum: number; typeLabel?: string | null }>();
+  for (const row of rows) {
+    const existing = totals.get(row.dispositif_id) ?? { sum: 0, typeLabel: row.type_libelle };
+    existing.sum += row.quote_part;
+    if (!existing.typeLabel && row.type_libelle) existing.typeLabel = row.type_libelle;
+    totals.set(row.dispositif_id, existing);
+  }
+
+  const errors: string[] = [];
+  totals.forEach((value, dispositifId) => {
+    if (value.sum > 1.0000001) {
+      errors.push(
+        `Dispositif ${dispositifId}: somme des quote-parts ${value.sum.toFixed(3)} > 1.0`,
+      );
+    }
+  });
+  return errors;
+}
 
 declarationsRouter.put('/:id/lignes', requireRole('admin', 'gestionnaire', 'contribuable'), (req, res) => {
   const decl = db.prepare('SELECT * FROM declarations WHERE id = ?').get(req.params.id) as
@@ -200,11 +235,21 @@ declarationsRouter.put('/:id/lignes', requireRole('admin', 'gestionnaire', 'cont
   const parsed = z.array(updateLigneSchema).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
+  const quotePartErrors = validateQuotePartSum(
+    parsed.data.map((l) => ({
+      dispositif_id: l.dispositif_id,
+      quote_part: l.quote_part,
+    })),
+  );
+  if (quotePartErrors.length > 0) {
+    return res.status(400).json({ error: quotePartErrors[0], errors: quotePartErrors });
+  }
+
   db.prepare('DELETE FROM lignes_declaration WHERE declaration_id = ?').run(decl.id);
   const insertLigne = db.prepare(
     `INSERT INTO lignes_declaration
-       (declaration_id, dispositif_id, surface_declaree, nombre_faces, date_pose, date_depose)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+       (declaration_id, dispositif_id, surface_declaree, nombre_faces, quote_part, date_pose, date_depose)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
   );
   for (const l of parsed.data) {
     insertLigne.run(
@@ -212,6 +257,7 @@ declarationsRouter.put('/:id/lignes', requireRole('admin', 'gestionnaire', 'cont
       l.dispositif_id,
       l.surface_declaree,
       l.nombre_faces,
+      l.quote_part,
       l.date_pose ?? null,
       l.date_depose ?? null,
     );
@@ -233,7 +279,7 @@ declarationsRouter.post('/:id/soumettre', requireRole('admin', 'gestionnaire', '
   }
   const lignes = db
     .prepare(
-      `SELECT l.id, l.dispositif_id, l.surface_declaree, l.nombre_faces, l.date_pose, l.date_depose,
+      `SELECT l.id, l.dispositif_id, l.surface_declaree, l.nombre_faces, l.quote_part, l.date_pose, l.date_depose,
               d.type_id, d.adresse_rue, d.adresse_cp, d.adresse_ville, t.categorie, t.libelle AS type_libelle
        FROM lignes_declaration l
        JOIN dispositifs d ON d.id = l.dispositif_id
@@ -245,6 +291,7 @@ declarationsRouter.post('/:id/soumettre', requireRole('admin', 'gestionnaire', '
     dispositif_id: number;
     surface_declaree: number;
     nombre_faces: number;
+    quote_part: number;
     date_pose: string | null;
     date_depose: string | null;
     type_id: number | null;
@@ -269,10 +316,11 @@ declarationsRouter.post('/:id/soumettre', requireRole('admin', 'gestionnaire', '
   ).total;
 
   const validation = validateDeclarationSubmission({ lignes, previousYearSurfaceTotal });
-  if (validation.blockingErrors.length > 0) {
+  const quotePartErrors = validateQuotePartSum(lignes);
+  if (validation.blockingErrors.length > 0 || quotePartErrors.length > 0) {
     return res.status(400).json({
-      error: validation.blockingErrors[0],
-      errors: validation.blockingErrors,
+      error: validation.blockingErrors[0] ?? quotePartErrors[0],
+      errors: [...validation.blockingErrors, ...quotePartErrors],
     });
   }
 
@@ -447,7 +495,7 @@ declarationsRouter.post('/:id/valider', requireRole('admin', 'gestionnaire'), (r
   // Recuperation des lignes avec le contexte du dispositif (categorie, zone)
   const lignes = db
     .prepare(
-      `SELECT l.id, l.dispositif_id, l.surface_declaree, l.nombre_faces, l.date_pose, l.date_depose,
+      `SELECT l.id, l.dispositif_id, l.surface_declaree, l.nombre_faces, l.quote_part, l.date_pose, l.date_depose,
               d.exonere, t.categorie, z.coefficient AS zone_coefficient
        FROM lignes_declaration l
        JOIN dispositifs d ON d.id = l.dispositif_id
@@ -460,6 +508,7 @@ declarationsRouter.post('/:id/valider', requireRole('admin', 'gestionnaire'), (r
     dispositif_id: number;
     surface_declaree: number;
     nombre_faces: number;
+    quote_part: number;
     date_pose: string | null;
     date_depose: string | null;
     exonere: number;
@@ -480,6 +529,7 @@ declarationsRouter.post('/:id/valider', requireRole('admin', 'gestionnaire'), (r
       categorie: l.categorie,
       surface: l.surface_declaree,
       nombre_faces: l.nombre_faces,
+      quote_part: l.quote_part,
       coefficient_zone: l.zone_coefficient ?? 1,
       date_pose: l.date_pose,
       date_depose: l.date_depose,

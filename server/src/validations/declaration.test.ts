@@ -8,6 +8,7 @@ function makeLine(overrides: Partial<Parameters<typeof validateDeclarationSubmis
     dispositif_id: 100,
     surface_declaree: 12,
     nombre_faces: 1,
+    quote_part: 1,
     date_pose: '2025-01-01',
     date_depose: null,
     type_id: 10,
@@ -34,6 +35,7 @@ test('bloque sur complétude et cohérence des dates', () => {
       makeLine({ id: 2, type_id: null, categorie: null }),
       makeLine({ id: 3, date_pose: '2025-13-40' }),
       makeLine({ id: 4, date_pose: '2025-02-01', date_depose: '2025-01-10' }),
+      makeLine({ id: 5, quote_part: 1.2 }),
     ],
     previousYearSurfaceTotal: 0,
   });
@@ -42,6 +44,7 @@ test('bloque sur complétude et cohérence des dates', () => {
   assert.ok(result.blockingErrors.some((e) => e.includes('type de dispositif manquant')));
   assert.ok(result.blockingErrors.some((e) => e.includes('date de pose invalide')));
   assert.ok(result.blockingErrors.some((e) => e.includes('antérieure ou égale')));
+  assert.ok(result.blockingErrors.some((e) => e.includes('quote-part invalide')));
 });
 
 test('bloque sur doublon adresse + type quand adresse complète', () => {

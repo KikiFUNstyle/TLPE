@@ -3,6 +3,7 @@ export interface DeclarationSubmissionLine {
   dispositif_id: number;
   surface_declaree: number;
   nombre_faces: number;
+  quote_part: number;
   date_pose: string | null;
   date_depose: string | null;
   type_id: number | null;
@@ -58,6 +59,10 @@ export function validateDeclarationSubmission(
 
     if (!Number.isFinite(l.nombre_faces) || l.nombre_faces < 1) {
       blockingErrors.push(`Ligne #${l.id}: nombre de faces invalide.`);
+    }
+
+    if (!Number.isFinite(l.quote_part) || l.quote_part < 0 || l.quote_part > 1) {
+      blockingErrors.push(`Ligne #${l.id}: quote-part invalide (doit être comprise entre 0 et 1).`);
     }
 
     if (!l.type_id || !l.categorie) {

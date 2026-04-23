@@ -288,6 +288,7 @@ CREATE TABLE IF NOT EXISTS lignes_declaration (
   dispositif_id     INTEGER NOT NULL,
   surface_declaree  REAL NOT NULL,
   nombre_faces      INTEGER NOT NULL DEFAULT 1,
+  quote_part        REAL NOT NULL DEFAULT 1.0 CHECK (quote_part >= 0 AND quote_part <= 1),
   date_pose         TEXT,
   date_depose       TEXT,
   -- detail de calcul archive (immuable apres emission du titre)

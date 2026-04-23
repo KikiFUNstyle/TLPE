@@ -25,6 +25,7 @@ export interface CalculInput {
   categorie: 'publicitaire' | 'preenseigne' | 'enseigne';
   surface: number;
   nombre_faces?: number;
+  quote_part?: number;
   coefficient_zone?: number;
   date_pose?: string | null;
   date_depose?: string | null;
@@ -70,6 +71,7 @@ export interface CalculResult {
   detail: {
     surface_unitaire: number;
     nombre_faces: number;
+    quote_part: number;
     surface_effective: number;
     categorie: string;
     tranche_libelle: string;
@@ -204,6 +206,10 @@ export function findExoneration(
 
 export function calculerTLPE(input: CalculInput): CalculResult {
   const nombreFaces = input.nombre_faces ?? 1;
+  const quotePart = input.quote_part ?? 1;
+  if (!Number.isFinite(quotePart) || quotePart < 0 || quotePart > 1) {
+    throw new Error('quote_part invalide: valeur attendue entre 0 et 1');
+  }
   const surfaceEffective = input.surface * nombreFaces;
   const coefficient = input.coefficient_zone ?? 1;
   const { jours, prorata } = computeProrata(input.annee, input.date_pose, input.date_depose);
@@ -215,6 +221,7 @@ export function calculerTLPE(input: CalculInput): CalculResult {
       detail: {
         surface_unitaire: input.surface,
         nombre_faces: nombreFaces,
+        quote_part: quotePart,
         surface_effective: surfaceEffective,
         categorie: input.categorie,
         tranche_libelle: 'Exoneration',
@@ -244,6 +251,7 @@ export function calculerTLPE(input: CalculInput): CalculResult {
       detail: {
         surface_unitaire: input.surface,
         nombre_faces: nombreFaces,
+        quote_part: quotePart,
         surface_effective: surfaceEffective,
         categorie: input.categorie,
         tranche_libelle: bareme.libelle,
@@ -277,13 +285,15 @@ export function calculerTLPE(input: CalculInput): CalculResult {
     sousTotal = 0;
   }
   const montantApresReduction = exoneration ? sousTotal * (1 - exoneration.taux) : sousTotal;
-  const montantArrondi = Math.max(0, Math.floor(montantApresReduction));
+  const montantAvecQuotePart = montantApresReduction * quotePart;
+  const montantArrondi = Math.max(0, Math.floor(montantAvecQuotePart));
 
   return {
     montant: montantArrondi,
     detail: {
       surface_unitaire: input.surface,
       nombre_faces: nombreFaces,
+      quote_part: quotePart,
       surface_effective: surfaceEffective,
       categorie: input.categorie,
       tranche_libelle: exoneration
@@ -296,7 +306,7 @@ export function calculerTLPE(input: CalculInput): CalculResult {
       jours_exploitation: jours,
       prorata,
       exonere: exoneration ? exoneration.taux >= 1 : false,
-      sous_total: Math.round(montantApresReduction * 100) / 100,
+      sous_total: Math.round(montantAvecQuotePart * 100) / 100,
       montant_arrondi: montantArrondi,
     },
   };

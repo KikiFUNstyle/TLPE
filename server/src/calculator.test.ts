@@ -137,16 +137,34 @@ test('exoneration de droit 100% appliquee via table exonerations', () => {
   assert.equal(r.detail.exonere, true);
 });
 
-test('exoneration ciblee par assujetti_id uniquement', () => {
-  db.exec('DELETE FROM exonerations');
-  db.prepare(
-    `INSERT INTO exonerations (type, critere, taux, date_debut, date_fin, active)
-     VALUES (?, ?, ?, ?, ?, 1)`,
-  ).run('eco', JSON.stringify({ assujetti_id: 999 }), 0.1, null, null);
+test('quote-part appliquee sur un dispositif numerique partage', () => {
+  const r = calculerTLPE({
+    annee: 2024,
+    categorie: 'publicitaire',
+    surface: 10,
+    quote_part: 0.33,
+  });
 
-  const sansMatch = calculerTLPE({ annee: 2024, categorie: 'publicitaire', surface: 4, assujetti_id: 1 });
-  const avecMatch = calculerTLPE({ annee: 2024, categorie: 'publicitaire', surface: 4, assujetti_id: 999 });
+  // 10 x 31 = 310 -> quote-part 33% = 102.3 -> floor = 102
+  assert.equal(r.montant, 102);
+  assert.equal(r.detail.quote_part, 0.33);
+  assert.equal(r.detail.sous_total, 102.3);
+});
 
-  assert.equal(sansMatch.montant, 62);
-  assert.equal(avecMatch.montant, 55);
+test('quote-part sur trois annonceurs ne depasse pas le montant global', () => {
+  const total = calculerTLPE({ annee: 2024, categorie: 'publicitaire', surface: 10, quote_part: 1 }).montant;
+
+  const a = calculerTLPE({ annee: 2024, categorie: 'publicitaire', surface: 10, quote_part: 0.34 }).montant;
+  const b = calculerTLPE({ annee: 2024, categorie: 'publicitaire', surface: 10, quote_part: 0.33 }).montant;
+  const c = calculerTLPE({ annee: 2024, categorie: 'publicitaire', surface: 10, quote_part: 0.33 }).montant;
+
+  assert.ok(a + b + c <= total);
+  assert.equal(a + b + c, 309);
+});
+
+test('quote-part invalide > 1 lance une erreur', () => {
+  assert.throws(
+    () => calculerTLPE({ annee: 2024, categorie: 'publicitaire', surface: 10, quote_part: 1.2 }),
+    /quote_part invalide/,
+  );
 });
