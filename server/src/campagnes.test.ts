@@ -141,6 +141,78 @@ test('initSchema restaure foreign_keys=ON meme si migration campagnes echoue', (
   }
 });
 
+test('initSchema ajoute quote_part avec une contrainte CHECK sur les bases legacy', () => {
+  resetTables();
+
+  db.pragma('foreign_keys = OFF');
+  db.exec('BEGIN TRANSACTION');
+  try {
+    db.exec(`
+      CREATE TABLE lignes_declaration_legacy (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        declaration_id    INTEGER NOT NULL,
+        dispositif_id     INTEGER NOT NULL,
+        surface_declaree  REAL NOT NULL,
+        nombre_faces      INTEGER NOT NULL DEFAULT 1,
+        date_pose         TEXT,
+        date_depose       TEXT,
+        bareme_id         INTEGER,
+        tarif_applique    REAL,
+        coefficient_zone  REAL,
+        prorata           REAL,
+        montant_ligne     REAL,
+        FOREIGN KEY (declaration_id) REFERENCES declarations(id) ON DELETE CASCADE,
+        FOREIGN KEY (dispositif_id) REFERENCES dispositifs(id),
+        FOREIGN KEY (bareme_id) REFERENCES baremes(id)
+      );
+
+      INSERT INTO lignes_declaration_legacy (
+        id, declaration_id, dispositif_id, surface_declaree, nombre_faces, date_pose, date_depose,
+        bareme_id, tarif_applique, coefficient_zone, prorata, montant_ligne
+      )
+      SELECT
+        id, declaration_id, dispositif_id, surface_declaree, nombre_faces, date_pose, date_depose,
+        bareme_id, tarif_applique, coefficient_zone, prorata, montant_ligne
+      FROM lignes_declaration;
+
+      DROP TABLE lignes_declaration;
+      ALTER TABLE lignes_declaration_legacy RENAME TO lignes_declaration;
+    `);
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  } finally {
+    db.pragma('foreign_keys = ON');
+  }
+
+  initSchema();
+
+  const quotePartColumn = (
+    db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'lignes_declaration'").get() as
+      | { sql: string }
+      | undefined
+  )?.sql;
+  assert.match(
+    quotePartColumn ?? '',
+    /quote_part\s+REAL\s+NOT\s+NULL\s+DEFAULT\s+1(?:\.0)?\s+CHECK\s*\(\s*quote_part\s*>=\s*0\s+AND\s+quote_part\s*<=\s*1\s*\)/i,
+  );
+
+  db.pragma('foreign_keys = OFF');
+  try {
+    assert.throws(
+      () =>
+        db.prepare(
+          `INSERT INTO lignes_declaration (declaration_id, dispositif_id, surface_declaree, nombre_faces, quote_part)
+           VALUES (1, 1, 12, 1, 1.2)`,
+        ).run(),
+      /CHECK constraint failed/,
+    );
+  } finally {
+    db.pragma('foreign_keys = ON');
+  }
+});
+
 test('createCampagne cree une campagne brouillon et journalise', () => {
   resetTables();
   const adminId = seedAdmin();
