@@ -20,6 +20,7 @@ basée sur les articles L2333-6 à L2333-16 du CGCT.
 | Pièces jointes (upload/download, soft delete, ACL contribuable, limites taille) | §4.2 / §5.2 / §8.2 | OK |
 | Moteur de calcul TLPE (tranches, prorata, coef. zone, double face, forfait, exonération) | §6 | OK + tests |
 | Déclarations (brouillon → soumission → validation → rejet) | §5 | OK |
+| Contrôles automatiques avancés à la soumission (complétude, doublons adresse/type, cohérence dates, variation N/N-1 >30%) + alertes gestionnaire | §5.3 (US3.3) | OK + tests |
 | Hash SHA-256 de soumission (accusé) | §5.2 | OK |
 | Titres de recettes + PDF (ordonnancement) | §7.1 | OK |
 | Paiements (5 modalités) + recouvrement | §7.2 | OK |
@@ -65,6 +66,10 @@ Ouvrir ensuite http://localhost:5173.
 - Smoke test backend : `GET /api/health` → `{"status":"ok"...}`
 - Smoke test pièces jointes : login + création dispositif + upload PDF + download + soft delete + vérif 404 post-delete (script Node)
 - Smoke test cartographie : accès `/carte`, tuiles OSM + points affichés, export GeoJSON téléchargeable
+- Smoke test US3.3 :
+  - soumission KO si doublon adresse+type, surface <= 0, type manquant, date de pose > date de dépose
+  - soumission OK avec `alerte_gestionnaire=true` quand la variation de surface N vs N-1 dépasse 30 %
+  - visibilité de l'alerte dans la liste des déclarations (colonne `Alertes`) et sur le détail déclaration
 
 ## API pièces jointes (US2.5)
 

@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { db, logAudit } from '../db';
 import { authMiddleware, requireRole } from '../auth';
 import { calculerTLPE, findBareme, computeProrata } from '../calculator';
+import { validateDeclarationSubmission } from '../validations/declaration';
 
 export const declarationsRouter = Router();
 
@@ -188,24 +189,79 @@ declarationsRouter.post('/:id/soumettre', requireRole('admin', 'gestionnaire', '
     return res.status(409).json({ error: `Statut ${decl.statut} : soumission impossible` });
   }
   const lignes = db
-    .prepare('SELECT * FROM lignes_declaration WHERE declaration_id = ?')
-    .all(decl.id) as Array<{ id: number; surface_declaree: number }>;
-  if (lignes.length === 0) {
-    return res.status(400).json({ error: 'Aucun dispositif declare' });
+    .prepare(
+      `SELECT l.id, l.dispositif_id, l.surface_declaree, l.nombre_faces, l.date_pose, l.date_depose,
+              d.type_id, d.adresse_rue, d.adresse_cp, d.adresse_ville, t.categorie
+       FROM lignes_declaration l
+       JOIN dispositifs d ON d.id = l.dispositif_id
+       LEFT JOIN types_dispositifs t ON t.id = d.type_id
+       WHERE l.declaration_id = ?`,
+    )
+    .all(decl.id) as Array<{
+    id: number;
+    dispositif_id: number;
+    surface_declaree: number;
+    nombre_faces: number;
+    date_pose: string | null;
+    date_depose: string | null;
+    type_id: number | null;
+    categorie: 'publicitaire' | 'preenseigne' | 'enseigne' | null;
+    adresse_rue: string | null;
+    adresse_cp: string | null;
+    adresse_ville: string | null;
+  }>;
+
+  const previousYearSurfaceTotal = (
+    db
+      .prepare(
+        `SELECT COALESCE(SUM(l.surface_declaree), 0) AS total
+         FROM declarations d
+         JOIN lignes_declaration l ON l.declaration_id = d.id
+         WHERE d.assujetti_id = ?
+           AND d.annee = ?
+           AND d.statut IN ('soumise', 'validee', 'en_instruction')`,
+      )
+      .get(decl.assujetti_id, decl.annee - 1) as { total: number }
+  ).total;
+
+  const validation = validateDeclarationSubmission({ lignes, previousYearSurfaceTotal });
+  if (validation.blockingErrors.length > 0) {
+    return res.status(400).json({
+      error: validation.blockingErrors[0],
+      errors: validation.blockingErrors,
+    });
   }
-  for (const l of lignes) {
-    if (l.surface_declaree <= 0) {
-      return res.status(400).json({ error: 'Surface invalide sur une ligne' });
-    }
-  }
+
   const snapshot = JSON.stringify({ id: decl.id, lignes });
   const hash = crypto.createHash('sha256').update(snapshot).digest('hex');
   db.prepare(
-    `UPDATE declarations SET statut = 'soumise', date_soumission = datetime('now'), hash_soumission = ? WHERE id = ?`,
-  ).run(hash, decl.id);
+    `UPDATE declarations
+     SET statut = 'soumise',
+         date_soumission = datetime('now'),
+         hash_soumission = ?,
+         alerte_gestionnaire = ?
+     WHERE id = ?`,
+  ).run(hash, validation.hasManagerAlert ? 1 : 0, decl.id);
 
-  logAudit({ userId: req.user!.id, action: 'submit', entite: 'declaration', entiteId: decl.id, details: { hash } });
-  res.json({ ok: true, hash });
+  logAudit({
+    userId: req.user!.id,
+    action: 'submit',
+    entite: 'declaration',
+    entiteId: decl.id,
+    details: {
+      hash,
+      alerte_gestionnaire: validation.hasManagerAlert,
+      alertes: validation.warnings,
+      previousYearSurfaceTotal,
+    },
+  });
+
+  res.json({
+    ok: true,
+    hash,
+    alerte_gestionnaire: validation.hasManagerAlert,
+    alertes: validation.warnings,
+  });
 });
 
 // Validation gestionnaire + calcul + passage en "validee"
