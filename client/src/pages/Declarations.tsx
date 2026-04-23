@@ -9,6 +9,7 @@ interface Declaration {
   numero: string;
   annee: number;
   statut: string;
+  alerte_gestionnaire: number;
   raison_sociale: string;
   identifiant_tlpe: string;
   montant_total: number | null;
@@ -64,12 +65,12 @@ export default function Declarations() {
           <thead>
             <tr>
               <th>Numero</th><th>Annee</th><th>Assujetti</th>
-              <th>Statut</th><th>Montant</th><th>Soumise le</th><th></th>
+              <th>Statut</th><th>Alertes</th><th>Montant</th><th>Soumise le</th><th></th>
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 ? (
-              <tr><td colSpan={7} className="empty">
+              <tr><td colSpan={8} className="empty">
                 Aucune declaration.
                 {hasRole('admin', 'gestionnaire') && (
                   <div style={{ marginTop: 8 }}>Ouvrez une declaration depuis la fiche d'un assujetti.</div>
@@ -81,6 +82,7 @@ export default function Declarations() {
                 <td>{d.annee}</td>
                 <td>{d.raison_sociale}</td>
                 <td><StatutBadge statut={d.statut} /></td>
+                <td>{d.alerte_gestionnaire ? <span className="badge warn">Alerte</span> : <span style={{ color: 'var(--c-muted)' }}>-</span>}</td>
                 <td>{formatEuro(d.montant_total)}</td>
                 <td>{d.date_soumission ?? '-'}</td>
                 <td><Link to={`/declarations/${d.id}`}>Ouvrir</Link></td>

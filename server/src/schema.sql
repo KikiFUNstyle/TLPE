@@ -252,6 +252,7 @@ CREATE TABLE IF NOT EXISTS declarations (
   date_soumission TEXT,
   date_validation TEXT,
   hash_soumission TEXT,
+  alerte_gestionnaire INTEGER NOT NULL DEFAULT 0,
   montant_total   REAL,
   commentaires    TEXT,
   created_at      TEXT NOT NULL DEFAULT (datetime('now')),

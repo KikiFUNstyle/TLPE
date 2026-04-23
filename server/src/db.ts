@@ -37,6 +37,20 @@ export function initSchema() {
     }
   }
 
+  // migration legacy -> ajoute alerte_gestionnaire sur declarations si table deja presente
+  const hasDeclarations = (
+    db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'declarations'").get() as
+      | { name: string }
+      | undefined
+  )?.name === 'declarations';
+  if (hasDeclarations) {
+    const declarationColumns = db.prepare("PRAGMA table_info('declarations')").all() as Array<{ name: string }>;
+    const hasAlerteGestionnaire = declarationColumns.some((col) => col.name === 'alerte_gestionnaire');
+    if (!hasAlerteGestionnaire) {
+      db.exec("ALTER TABLE declarations ADD COLUMN alerte_gestionnaire INTEGER NOT NULL DEFAULT 0");
+    }
+  }
+
   // migration legacy -> ajoute la FK campagnes.created_by -> users(id)
   const campagneFks = db.prepare("PRAGMA foreign_key_list('campagnes')").all() as Array<{ from: string; table: string }>;
   const hasCampagneCreatedByFk = campagneFks.some((fk) => fk.from === 'created_by' && fk.table === 'users');

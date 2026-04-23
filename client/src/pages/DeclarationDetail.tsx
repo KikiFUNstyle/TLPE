@@ -29,6 +29,7 @@ interface Declaration {
   assujetti_id: number;
   annee: number;
   statut: string;
+  alerte_gestionnaire: number;
   date_soumission: string | null;
   date_validation: string | null;
   hash_soumission: string | null;
@@ -135,6 +136,9 @@ export default function DeclarationDetail() {
 
       {err && <div className="alert error">{err}</div>}
       {info && <div className="alert success">{info}</div>}
+      {decl.alerte_gestionnaire ? (
+        <div className="alert warning">Alerte gestionnaire : variation de surface N vs N-1 supérieure à 30%.</div>
+      ) : null}
       {decl.commentaires && <div className="alert info">Commentaire : {decl.commentaires}</div>}
 
       <h3>Dispositifs declares ({decl.lignes.length})</h3>

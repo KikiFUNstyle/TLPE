@@ -233,6 +233,7 @@ a:hover { text-decoration: underline; }
 .alert.error { background: #f8d7da; color: var(--c-accent); border-left: 4px solid var(--c-accent); }
 .alert.success { background: #d4edda; color: var(--c-success); border-left: 4px solid var(--c-success); }
 .alert.info { background: #d1e7f9; color: var(--c-info); border-left: 4px solid var(--c-info); }
+.alert.warning { background: #fff0da; color: var(--c-warning); border-left: 4px solid var(--c-warning); }
 
 /* Simulator result */
 .calc-detail {
