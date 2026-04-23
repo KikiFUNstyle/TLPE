@@ -1,5 +1,6 @@
 import { db, logAudit } from './db';
 import { sendInvitationsForCampagne } from './invitations';
+import { runRelancesDeclarations } from './relances';
 
 export type CampagneStatut = 'brouillon' | 'ouverte' | 'cloturee';
 
@@ -8,6 +9,7 @@ export interface CampagneInput {
   date_ouverture: string;
   date_limite_declaration: string;
   date_cloture: string;
+  relance_j7_courrier?: boolean;
   created_by: number;
 }
 
@@ -80,14 +82,15 @@ export function createCampagne(input: CampagneInput) {
 
   const info = db
     .prepare(
-      `INSERT INTO campagnes (annee, date_ouverture, date_limite_declaration, date_cloture, statut, created_by)
-       VALUES (?, ?, ?, ?, 'brouillon', ?)`,
+      `INSERT INTO campagnes (annee, date_ouverture, date_limite_declaration, date_cloture, statut, relance_j7_courrier, created_by)
+       VALUES (?, ?, ?, ?, 'brouillon', ?, ?)`,
     )
     .run(
       input.annee,
       input.date_ouverture,
       input.date_limite_declaration,
       input.date_cloture,
+      input.relance_j7_courrier ? 1 : 0,
       input.created_by,
     );
 
@@ -102,6 +105,7 @@ export function createCampagne(input: CampagneInput) {
       date_ouverture: input.date_ouverture,
       date_limite_declaration: input.date_limite_declaration,
       date_cloture: input.date_cloture,
+      relance_j7_courrier: input.relance_j7_courrier ? 1 : 0,
     },
   });
 
@@ -181,10 +185,17 @@ export function openCampagne(campagneId: number, userId: number, ip?: string | n
 export function closeCampagne(campagneId: number, userId: number, ip?: string | null) {
   const tx = db.transaction(() => {
     const campagne = db.prepare('SELECT * FROM campagnes WHERE id = ?').get(campagneId) as
-      | { id: number; annee: number; statut: CampagneStatut }
+      | { id: number; annee: number; statut: CampagneStatut; date_limite_declaration: string }
       | undefined;
     if (!campagne) throw new Error('Campagne introuvable');
     if (campagne.statut !== 'ouverte') throw new Error('Seule une campagne ouverte peut etre cloturee');
+
+    const runDate = campagne.date_limite_declaration;
+    const relances = runRelancesDeclarations({
+      runDateIso: runDate,
+      userId,
+      ip: ip ?? null,
+    });
 
     db.prepare("UPDATE campagnes SET statut = 'cloturee', updated_at = datetime('now') WHERE id = ?").run(campagneId);
 
@@ -217,18 +228,18 @@ export function closeCampagne(campagneId: number, userId: number, ip?: string | 
     db.prepare(
       `INSERT INTO campagne_jobs (campagne_id, type, statut, payload, started_at, completed_at)
        VALUES (?, 'cloture', 'done', ?, datetime('now'), datetime('now'))`,
-    ).run(campagneId, JSON.stringify({ brouillons_bascules: changed }));
+    ).run(campagneId, JSON.stringify({ brouillons_bascules: changed, relances }));
 
     logAudit({
       userId,
       action: 'close',
       entite: 'campagne',
       entiteId: campagneId,
-      details: { annee: campagne.annee, brouillons_bascules: changed },
+      details: { annee: campagne.annee, brouillons_bascules: changed, relances },
       ip: ip ?? null,
     });
 
-    return { annee: campagne.annee, brouillons_bascules: changed };
+    return { annee: campagne.annee, brouillons_bascules: changed, relances };
   });
 
   return tx();

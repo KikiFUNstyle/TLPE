@@ -9,6 +9,7 @@ interface Campagne {
   date_ouverture: string;
   date_limite_declaration: string;
   date_cloture: string;
+  relance_j7_courrier: number;
   statut: 'brouillon' | 'ouverte' | 'cloturee';
   created_by_email?: string;
   created_at: string;
@@ -141,6 +142,7 @@ function CampagnesTab() {
     date_ouverture: `${new Date().getFullYear()}-01-01`,
     date_limite_declaration: `${new Date().getFullYear()}-03-01`,
     date_cloture: `${new Date().getFullYear()}-03-02`,
+    relance_j7_courrier: false,
   });
 
   async function refreshCampagnes(preferredCampagneId?: number | null) {
@@ -285,6 +287,15 @@ function CampagnesTab() {
                 required
               />
             </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input
+                id="relance-j7-courrier"
+                type="checkbox"
+                checked={form.relance_j7_courrier}
+                onChange={(e) => setForm((prev) => ({ ...prev, relance_j7_courrier: e.target.checked }))}
+              />
+              <label htmlFor="relance-j7-courrier">Generer un courrier PDF postal en relance J-7</label>
+            </div>
           </div>
           <div style={{ marginTop: 12 }}>
             <button className="btn" type="submit">Creer la campagne</button>
@@ -305,6 +316,7 @@ function CampagnesTab() {
               <th>Limite declaration</th>
               <th>Cloture</th>
               <th>Statut</th>
+              <th>Relance J-7 courrier</th>
               <th>Creee par</th>
               <th>Actions</th>
             </tr>
@@ -320,6 +332,7 @@ function CampagnesTab() {
                   {c.statut}
                   {activeCampagneId === c.id ? ' (active)' : ''}
                 </td>
+                <td>{c.relance_j7_courrier ? 'Oui' : 'Non'}</td>
                 <td>{c.created_by_email ?? '-'}</td>
                 <td style={{ display: 'flex', gap: 8 }}>
                   <button className="btn secondary" onClick={() => { setSelectedCampagneId(c.id); loadSummary(c.id); }}>

@@ -103,11 +103,18 @@ Le module Référentiels expose désormais une gestion des campagnes annuelles d
   - `date_ouverture`
   - `date_limite_declaration`
   - `date_cloture`
+  - option `relance_j7_courrier` (génération PDF courrier postal à J-7)
 - ouverture d'une campagne (statut `brouillon` -> `ouverte`), qui prépare puis exécute le job d'invitation (`campagne_jobs`, type `invitation`)
   - envoi automatique des invitations aux assujettis `actif` avec email renseigné
   - génération d'un lien d'activation unique (magic link) pour les assujettis sans compte portail
   - traçabilité de chaque envoi dans `notifications_email`
+- relances automatiques US3.4 :
+  - job quotidien (scheduler) qui déclenche les relances J-30 / J-15 / J-7 selon `date_limite_declaration`
+  - relance uniquement pour les assujettis sans déclaration `soumise` / `validee`
+  - J-15 inclut un lien direct vers le formulaire
+  - J-7 peut générer un courrier PDF (si `relance_j7_courrier = 1`) stocké et référencé dans `notifications_email.piece_jointe_path`
 - clôture d'une campagne (statut `ouverte` -> `cloturee`), qui:
+  - exécute la relance J-7 à la date limite (si applicable)
   - bascule les déclarations `brouillon` de l'année en `en_instruction`
   - crée les entrées de `mises_en_demeure` (préparation US3.5)
 - tableau de synthèse avec:
@@ -124,6 +131,7 @@ API backend associée:
 - `POST /api/campagnes/:id/open`
 - `POST /api/campagnes/:id/close`
 - `POST /api/campagnes/:id/envoyer-invitations` (renvoi manuel global ou ciblé via `assujetti_id`)
+- `POST /api/campagnes/:id/run-relances` (exécution manuelle du job de relances, option `run_date`)
 
 Schéma SQL ajouté:
 
@@ -131,9 +139,9 @@ Schéma SQL ajouté:
 - `campagne_jobs`
 - `mises_en_demeure`
 - `invitation_magic_links`
-- `notifications_email`
+- `notifications_email` (inclut désormais `relance_niveau`, `piece_jointe_path`)
 
-Toute action (`create`, `open`, `close`) est tracée dans `audit_log`.
+Toute action (`create`, `open`, `close`) est tracée dans `audit_log`. Les relances automatiques et manuelles sont également tracées (`send-relance`).
 
 ## Import en masse des assujettis (US2.1)
 
