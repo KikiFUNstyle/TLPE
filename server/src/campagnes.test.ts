@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { db, initSchema } from './db';
 import { closeCampagne, createCampagne, getCampagneActive, listCampagnes, openCampagne } from './campagnes';
 
@@ -362,51 +364,138 @@ test('openCampagne bascule une ancienne ouverte en brouillon', () => {
   assert.equal(secondStatus, 'ouverte');
 });
 
-test('closeCampagne cloture et bascule les declarations brouillon en en_instruction + mises en demeure', () => {
+test('closeCampagne genere les mises en demeure J+1, declaration d\'office et notifications associees', () => {
   resetTables();
   const adminId = seedAdmin();
-  const assujettiId = seedAssujetti('TLPE-CLOSE-1', 'close1@example.fr');
+
+  const assujettiSansDecl = seedAssujetti('TLPE-J1-A1', 'j1-a1@example.fr');
+  const assujettiAvecSoumise = seedAssujetti('TLPE-J1-A2', 'j1-a2@example.fr');
+  const assujettiSansEmail = seedAssujetti('TLPE-J1-A3', null);
 
   const campagneId = createCampagne({
-    annee: 2029,
-    date_ouverture: '2029-01-01',
-    date_limite_declaration: '2029-03-01',
-    date_cloture: '2029-03-10',
+    annee: 2031,
+    date_ouverture: '2031-01-01',
+    date_limite_declaration: '2031-03-01',
+    date_cloture: '2031-03-10',
     created_by: adminId,
   });
 
-  const d1 = seedDeclaration(assujettiId, 2029, 'brouillon');
-  const assujetti2 = seedAssujetti('TLPE-CLOSE-2', 'close2@example.fr');
-  const d2 = seedDeclaration(assujetti2, 2029, 'brouillon');
-  const assujetti3 = seedAssujetti('TLPE-CLOSE-3', 'close3@example.fr');
-  const d3 = seedDeclaration(assujetti3, 2029, 'soumise');
-  assert.ok(d1 > 0 && d2 > 0 && d3 > 0);
+  // Historique N-1 pour reprise PDF
+  const declN1 = seedDeclaration(assujettiSansDecl, 2030, 'validee');
+  const typeId = Number(
+    (
+      db
+        .prepare(`INSERT INTO types_dispositifs (code, libelle, categorie) VALUES ('AFF', 'Affiche', 'publicitaire')`)
+        .run().lastInsertRowid
+    ),
+  );
+  const dispositifId = Number(
+    (
+      db
+        .prepare(
+          `INSERT INTO dispositifs (identifiant, assujetti_id, type_id, surface, nombre_faces, statut)
+           VALUES ('DSP-J1-0001', ?, ?, 12.5, 2, 'declare')`,
+        )
+        .run(assujettiSansDecl, typeId).lastInsertRowid
+    ),
+  );
+  db.prepare(
+    `INSERT INTO lignes_declaration (declaration_id, dispositif_id, surface_declaree, nombre_faces)
+     VALUES (?, ?, 12.5, 2)`,
+  ).run(declN1, dispositifId);
+
+  // Deja declare pour annee courante -> doit etre exclu
+  seedDeclaration(assujettiAvecSoumise, 2031, 'soumise');
 
   openCampagne(campagneId, adminId);
-  const result = closeCampagne(campagneId, adminId, '127.0.0.1');
+  const result = closeCampagne(campagneId, adminId, '127.0.0.1') as {
+    annee: number;
+    mises_en_demeure_j1: {
+      run_date: string;
+      eligibles: number;
+      declarations_office_creees: number;
+      notifications_envoyees: number;
+      pdf_generes: number;
+    };
+  };
 
-  assert.equal(result.annee, 2029);
-  assert.equal(result.brouillons_bascules, 2);
+  assert.equal(result.annee, 2031);
+  assert.equal(result.mises_en_demeure_j1.run_date, '2031-03-11');
+  assert.equal(result.mises_en_demeure_j1.eligibles, 2);
+  assert.equal(result.mises_en_demeure_j1.declarations_office_creees, 2);
+  assert.equal(result.mises_en_demeure_j1.notifications_envoyees, 2);
+  assert.equal(result.mises_en_demeure_j1.pdf_generes, 2);
 
-  const statusCampagne = (db.prepare('SELECT statut FROM campagnes WHERE id = ?').get(campagneId) as { statut: string }).statut;
-  assert.equal(statusCampagne, 'cloturee');
+  const decl2031 = db
+    .prepare(`SELECT assujetti_id, statut, commentaires, alerte_gestionnaire FROM declarations WHERE annee = 2031 ORDER BY assujetti_id`)
+    .all() as Array<{ assujetti_id: number; statut: string; commentaires: string | null; alerte_gestionnaire: number }>;
 
-  const counts = db
+  const byAssujetti = new Map(decl2031.map((row) => [row.assujetti_id, row]));
+  assert.equal(byAssujetti.get(assujettiSansDecl)?.statut, 'en_instruction');
+  assert.equal(byAssujetti.get(assujettiSansDecl)?.alerte_gestionnaire, 1);
+  assert.match(byAssujetti.get(assujettiSansDecl)?.commentaires ?? '', /Declaration d'office auto-generee/);
+  assert.equal(byAssujetti.get(assujettiSansEmail)?.statut, 'en_instruction');
+  assert.equal(byAssujetti.get(assujettiAvecSoumise)?.statut, 'soumise');
+
+  const mises = db
     .prepare(
-      `SELECT statut, COUNT(*) AS total
-       FROM declarations
-       WHERE annee = 2029
-       GROUP BY statut`,
+      `SELECT m.statut, d.assujetti_id
+       FROM mises_en_demeure m
+       JOIN declarations d ON d.id = m.declaration_id
+       WHERE m.campagne_id = ?
+       ORDER BY d.assujetti_id`,
     )
-    .all() as Array<{ statut: string; total: number }>;
+    .all(campagneId) as Array<{ statut: string; assujetti_id: number }>;
+  assert.equal(mises.length, 2);
+  const statutA1 = mises.find((m) => m.assujetti_id === assujettiSansDecl)?.statut;
+  const statutA3 = mises.find((m) => m.assujetti_id === assujettiSansEmail)?.statut;
+  assert.equal(statutA1, 'envoyee');
+  assert.equal(statutA3, 'a_traiter');
 
-  const byStatus = new Map(counts.map((c) => [c.statut, c.total]));
-  assert.equal(byStatus.get('en_instruction'), 2);
-  assert.equal(byStatus.get('soumise'), 1);
+  const notif = db
+    .prepare(
+      `SELECT assujetti_id, template_code, statut, erreur, piece_jointe_path
+       FROM notifications_email
+       WHERE campagne_id = ?
+       AND template_code = 'mise_en_demeure_auto'
+       ORDER BY assujetti_id`,
+    )
+    .all(campagneId) as Array<{
+    assujetti_id: number;
+    template_code: string;
+    statut: string;
+    erreur: string | null;
+    piece_jointe_path: string | null;
+  }>;
+  assert.equal(notif.length, 2);
+  const notifA1 = notif.find((n) => n.assujetti_id === assujettiSansDecl);
+  const notifA3 = notif.find((n) => n.assujetti_id === assujettiSansEmail);
+  assert.equal(notifA1?.statut, 'envoye');
+  assert.equal(notifA1?.erreur, null);
+  assert.ok(notifA1?.piece_jointe_path);
+  assert.equal(notifA3?.statut, 'echec');
+  assert.match(notifA3?.erreur ?? '', /Email manquant/);
+  assert.ok(notifA3?.piece_jointe_path);
 
-  const mises = (db.prepare('SELECT COUNT(*) AS c FROM mises_en_demeure WHERE campagne_id = ?').get(campagneId) as { c: number }).c;
-  assert.equal(mises, 2);
+  const pdfAbs = path.resolve(__dirname, '..', 'data', notifA1!.piece_jointe_path!);
+  assert.equal(fs.existsSync(pdfAbs), true);
+
+  const closeJob = db
+    .prepare(`SELECT payload FROM campagne_jobs WHERE campagne_id = ? AND type = 'cloture' ORDER BY id DESC LIMIT 1`)
+    .get(campagneId) as { payload: string } | undefined;
+  assert.ok(closeJob);
+  const payload = JSON.parse(closeJob!.payload);
+  assert.equal(payload.run_date, '2031-03-11');
+  assert.equal(payload.eligibles, 2);
+
+  const auditCount = (
+    db
+      .prepare(`SELECT COUNT(*) AS c FROM audit_log WHERE entite = 'campagne' AND action = 'mise-en-demeure-j1' AND entite_id = ?`)
+      .get(campagneId) as { c: number }
+  ).c;
+  assert.equal(auditCount, 2);
 });
+
 
 test('closeCampagne rejette une campagne non ouverte', () => {
   resetTables();
