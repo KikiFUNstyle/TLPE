@@ -15,6 +15,7 @@ import { contentieuxRouter } from './routes/contentieux';
 import { geocodingRouter } from './routes/geocoding';
 import { piecesJointesRouter } from './routes/piecesJointes';
 import { campagnesRouter } from './routes/campagnes';
+import { startRelancesScheduler } from './jobs/relancesScheduler';
 
 const PORT = Number(process.env.PORT || 4000);
 
@@ -68,4 +69,5 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 app.listen(PORT, () => {
   // eslint-disable-next-line no-console
   console.log(`[TLPE] API en ecoute sur http://localhost:${PORT}`);
+  startRelancesScheduler();
 });

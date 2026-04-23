@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
-import fs from 'node:fs';
-import path from 'node:path';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 const DATA_DIR = path.resolve(__dirname, '..', 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -34,6 +34,38 @@ export function initSchema() {
     const hasDeletedAt = pieceColumns.some((col) => col.name === 'deleted_at');
     if (!hasDeletedAt) {
       db.exec('ALTER TABLE pieces_jointes ADD COLUMN deleted_at TEXT');
+    }
+  }
+
+  // migration legacy -> ajoute relance_j7_courrier sur campagnes si table deja presente
+  const hasCampagnes = (
+    db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'campagnes'").get() as
+      | { name: string }
+      | undefined
+  )?.name === 'campagnes';
+  if (hasCampagnes) {
+    const campagneColumns = db.prepare("PRAGMA table_info('campagnes')").all() as Array<{ name: string }>;
+    const hasRelanceJ7Courrier = campagneColumns.some((col) => col.name === 'relance_j7_courrier');
+    if (!hasRelanceJ7Courrier) {
+      db.exec("ALTER TABLE campagnes ADD COLUMN relance_j7_courrier INTEGER NOT NULL DEFAULT 0");
+    }
+  }
+
+  // migration legacy -> ajoute relance_niveau et piece_jointe_path sur notifications_email
+  const hasNotificationsEmail = (
+    db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'notifications_email'").get() as
+      | { name: string }
+      | undefined
+  )?.name === 'notifications_email';
+  if (hasNotificationsEmail) {
+    const notifColumns = db.prepare("PRAGMA table_info('notifications_email')").all() as Array<{ name: string }>;
+    const hasRelanceNiveau = notifColumns.some((col) => col.name === 'relance_niveau');
+    const hasPieceJointePath = notifColumns.some((col) => col.name === 'piece_jointe_path');
+    if (!hasRelanceNiveau) {
+      db.exec('ALTER TABLE notifications_email ADD COLUMN relance_niveau TEXT');
+    }
+    if (!hasPieceJointePath) {
+      db.exec('ALTER TABLE notifications_email ADD COLUMN piece_jointe_path TEXT');
     }
   }
 
@@ -84,14 +116,16 @@ export function initSchema() {
             date_limite_declaration   TEXT NOT NULL,
             date_cloture              TEXT NOT NULL,
             statut                    TEXT NOT NULL DEFAULT 'brouillon' CHECK (statut IN ('brouillon','ouverte','cloturee')),
+            relance_j7_courrier       INTEGER NOT NULL DEFAULT 0 CHECK (relance_j7_courrier IN (0,1)),
             created_by                INTEGER NOT NULL,
             created_at                TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at                TEXT NOT NULL DEFAULT (datetime('now')),
             FOREIGN KEY (created_by) REFERENCES users(id)
           );
 
-          INSERT INTO campagnes_new (id, annee, date_ouverture, date_limite_declaration, date_cloture, statut, created_by, created_at, updated_at)
-          SELECT id, annee, date_ouverture, date_limite_declaration, date_cloture, statut, created_by, created_at, updated_at
+          INSERT INTO campagnes_new (id, annee, date_ouverture, date_limite_declaration, date_cloture, statut, relance_j7_courrier, created_by, created_at, updated_at)
+          SELECT id, annee, date_ouverture, date_limite_declaration, date_cloture, statut,
+                 0, created_by, created_at, updated_at
           FROM campagnes;
 
           DROP TABLE campagnes;

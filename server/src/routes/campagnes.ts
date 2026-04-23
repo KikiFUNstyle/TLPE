@@ -4,6 +4,7 @@ import { authMiddleware, requireRole } from '../auth';
 import { closeCampagne, createCampagne, getCampagneActive, listCampagnes, openCampagne } from '../campagnes';
 import { db } from '../db';
 import { sendInvitationsForCampagne } from '../invitations';
+import { runRelancesDeclarations } from '../relances';
 
 export const campagnesRouter = Router();
 
@@ -16,6 +17,7 @@ const createCampagneSchema = z
     date_ouverture: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     date_limite_declaration: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     date_cloture: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    relance_j7_courrier: z.boolean().optional(),
   })
   .refine((data) => data.date_limite_declaration >= data.date_ouverture, {
     message: 'date_limite_declaration doit etre >= date_ouverture',
@@ -94,6 +96,7 @@ campagnesRouter.post('/', (req, res) => {
       date_ouverture: data.date_ouverture,
       date_limite_declaration: data.date_limite_declaration,
       date_cloture: data.date_cloture,
+      relance_j7_courrier: data.relance_j7_courrier ?? false,
       created_by: req.user!.id,
     });
     return res.status(201).json({ id });
@@ -151,6 +154,39 @@ campagnesRouter.post('/:id/envoyer-invitations', (req, res) => {
     mode: 'manual',
     ip: req.ip ?? null,
   });
+
+  return res.json({ ok: true, ...result });
+});
+
+campagnesRouter.post('/:id/run-relances', (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: 'Identifiant de campagne invalide' });
+  }
+
+  const bodySchema = z
+    .object({ run_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() })
+    .optional();
+  const parsed = bodySchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const campagne = db
+    .prepare('SELECT id, statut, date_limite_declaration FROM campagnes WHERE id = ?')
+    .get(id) as { id: number; statut: string; date_limite_declaration: string } | undefined;
+  if (!campagne) return res.status(404).json({ error: 'Campagne introuvable' });
+  if (campagne.statut !== 'ouverte') {
+    return res.status(409).json({ error: 'La campagne doit etre ouverte pour lancer les relances' });
+  }
+
+  const result = runRelancesDeclarations({
+    runDateIso: parsed.data?.run_date ?? undefined,
+    userId: req.user!.id,
+    ip: req.ip ?? null,
+  });
+
+  if (result.campagne_id !== campagne.id) {
+    return res.status(409).json({ error: 'Aucune campagne active compatible pour cette date' });
+  }
 
   return res.json({ ok: true, ...result });
 });
