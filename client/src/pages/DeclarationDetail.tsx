@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { api, clearToken, getToken } from '../api';
+import { api, apiBlob } from '../api';
 import { formatEuro } from '../format';
 import { useAuth } from '../auth';
 
@@ -117,26 +117,7 @@ export default function DeclarationDetail() {
     setBusy(true);
     setErr(null);
     try {
-      const token = getToken();
-      const response = await fetch(decl.receipt.download_url, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-
-      if (!response.ok) {
-        if (response.status === 401) {
-          clearToken();
-          window.location.href = '/login';
-          return;
-        }
-        const contentType = response.headers.get('content-type') || '';
-        if (contentType.includes('application/json')) {
-          const body = await response.json();
-          throw new Error(typeof body.error === 'string' ? body.error : `HTTP ${response.status}`);
-        }
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      const blob = await response.blob();
+      const blob = await apiBlob(decl.receipt.download_url);
       const href = window.URL.createObjectURL(blob);
       const anchor = document.createElement('a');
       anchor.href = href;

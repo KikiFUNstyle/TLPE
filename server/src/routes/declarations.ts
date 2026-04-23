@@ -407,7 +407,7 @@ declarationsRouter.get('/:id/receipt/pdf', (req, res) => {
   const receipt = getDeclarationReceiptRecord(decl.id);
   if (!receipt) return res.status(404).json({ error: 'Accuse PDF introuvable' });
 
-  const dataRoot = path.resolve(__dirname, '..', '..', 'data');
+  const dataRoot = path.resolve(__dirname, '..', '..', 'data') + path.sep;
   const absolutePath = getReceiptDownloadPath(receipt.pdf_path);
   if (!absolutePath.startsWith(dataRoot)) {
     return res.status(400).json({ error: 'Chemin accuse invalide' });
@@ -419,7 +419,18 @@ declarationsRouter.get('/:id/receipt/pdf', (req, res) => {
   const fileName = path.basename(absolutePath);
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `attachment; filename="accuse-${decl.numero}-${fileName}"`);
-  fs.createReadStream(absolutePath).pipe(res);
+
+  const stream = fs.createReadStream(absolutePath);
+  stream.on('error', (error) => {
+    // eslint-disable-next-line no-console
+    console.error('[TLPE] Erreur lecture accuse declaration', error);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Erreur lors de la lecture de l\'accuse PDF' });
+    } else {
+      res.destroy(error as Error);
+    }
+  });
+  stream.pipe(res);
 });
 
 // Validation gestionnaire + calcul + passage en "validee"

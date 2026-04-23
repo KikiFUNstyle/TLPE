@@ -33,7 +33,10 @@ export default function DeclarationReceiptVerify() {
         if (!res.ok) {
           throw new Error(typeof body.error === 'string' ? body.error : `HTTP ${res.status}`);
         }
-        if (mounted) setData(body as ReceiptVerificationResponse);
+        if (mounted) {
+          setError(null);
+          setData(body as ReceiptVerificationResponse);
+        }
       } catch (e) {
         if (mounted) setError((e as Error).message);
       }
