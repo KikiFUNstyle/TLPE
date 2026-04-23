@@ -288,7 +288,7 @@ test('openCampagne cree un magic link pour les assujettis sans compte portail', 
     .prepare('SELECT magic_link FROM notifications_email WHERE campagne_id = ? AND assujetti_id = ?')
     .get(campagneId, assujettiId) as { magic_link: string | null } | undefined;
   assert.ok(notif);
-  assert.ok(notif?.magic_link && notif.magic_link.includes('/login?invitation_token='));
+  assert.ok(notif?.magic_link && notif.magic_link.includes('/login?invitation_token=[redacted]'));
 
   const links = (
     db
@@ -296,6 +296,38 @@ test('openCampagne cree un magic link pour les assujettis sans compte portail', 
       .get(campagneId, assujettiId) as { c: number }
   ).c;
   assert.equal(links, 1);
+});
+
+test('openCampagne reporte invitations_preparees y compris pending/echec', () => {
+  resetTables();
+  const adminId = seedAdmin();
+  seedAssujetti('TLPE-CAMP-PREP-1', 'prep1@example.fr');
+  seedAssujetti('TLPE-CAMP-PREP-2', 'prep2@example.fr');
+
+  process.env.TLPE_EMAIL_DELIVERY_MODE = 'disabled';
+
+  const campagneId = createCampagne({
+    annee: 2037,
+    date_ouverture: '2037-01-01',
+    date_limite_declaration: '2037-03-01',
+    date_cloture: '2037-03-10',
+    created_by: adminId,
+  });
+
+  const result = openCampagne(campagneId, adminId);
+  assert.equal(result.invitations_preparees, 2);
+
+  const jobPayloadRaw = (
+    db
+      .prepare("SELECT payload FROM campagne_jobs WHERE campagne_id = ? AND type = 'invitation' LIMIT 1")
+      .get(campagneId) as { payload: string | null }
+  ).payload;
+  assert.ok(jobPayloadRaw);
+  const jobPayload = JSON.parse(jobPayloadRaw!);
+  assert.equal(jobPayload.invitations_preparees, 2);
+  assert.equal(jobPayload.invitations_skipped, 2);
+
+  process.env.TLPE_EMAIL_DELIVERY_MODE = 'mock-success';
 });
 
 test('openCampagne bascule une ancienne ouverte en brouillon', () => {

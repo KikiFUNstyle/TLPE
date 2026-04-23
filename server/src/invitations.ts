@@ -15,6 +15,9 @@ interface SendInvitationResult {
   sent: number;
   failed: number;
   skipped: number;
+  pending: number;
+  nonEligible: number;
+  prepared: number;
 }
 
 interface CampagneInfo {
@@ -31,6 +34,14 @@ interface DeliveryResult {
 }
 
 const PORTAL_BASE_URL = (process.env.TLPE_PORTAL_BASE_URL || 'http://localhost:5173').replace(/\/$/, '');
+
+function hashToken(token: string): string {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+function redactMagicLink(link: string): string {
+  return link.replace(/(invitation_token=)[^&]+/, '$1[redacted]');
+}
 
 function deliverInvitationEmail(): DeliveryResult {
   const mode = process.env.TLPE_EMAIL_DELIVERY_MODE ?? 'disabled';
@@ -93,14 +104,15 @@ function hasContribuableAccount(assujettiId: number): boolean {
   return !!row;
 }
 
-function createMagicLink(campagneId: number, assujettiId: number, userId?: number): string {
+function createMagicLink(campagneId: number, assujettiId: number, userId?: number): { link: string; tokenHash: string } {
   const token = crypto.randomBytes(24).toString('hex');
+  const tokenHash = hashToken(token);
   db.prepare(
     `INSERT INTO invitation_magic_links (campagne_id, assujetti_id, token, expires_at, created_by)
      VALUES (?, ?, ?, datetime('now', '+30 days'), ?)`,
-  ).run(campagneId, assujettiId, token, userId ?? null);
+  ).run(campagneId, assujettiId, tokenHash, userId ?? null);
 
-  return `${PORTAL_BASE_URL}/login?invitation_token=${token}`;
+  return { link: `${PORTAL_BASE_URL}/login?invitation_token=${token}`, tokenHash };
 }
 
 function buildInvitationEmail(input: {
@@ -134,7 +146,8 @@ export function sendInvitationsForCampagne(args: SendInvitationArgs): SendInvita
 
   let sent = 0;
   let failed = 0;
-  let skipped = 0;
+  let pending = 0;
+  let nonEligible = 0;
 
   const insertNotif = db.prepare(
     `INSERT INTO notifications_email (
@@ -146,17 +159,19 @@ export function sendInvitationsForCampagne(args: SendInvitationArgs): SendInvita
   for (const assujetti of assujettis) {
     try {
       const hasPortal = hasContribuableAccount(assujetti.id);
-      const magicLink = hasPortal ? null : createMagicLink(args.campagneId, assujetti.id, args.userId);
+      const magic = hasPortal ? null : createMagicLink(args.campagneId, assujetti.id, args.userId);
+      const magicLink = magic?.link ?? null;
       const delivery = deliverInvitationEmail();
       const content = buildInvitationEmail({ campagne, assujetti, magicLink });
+      const storedCorps = magicLink ? content.corps.replace(magicLink, redactMagicLink(magicLink)) : content.corps;
 
       insertNotif.run(
         args.campagneId,
         assujetti.id,
         assujetti.email,
         content.objet,
-        content.corps,
-        magicLink,
+        storedCorps,
+        magicLink ? redactMagicLink(magicLink) : null,
         mode,
         delivery.status,
         delivery.erreur,
@@ -176,6 +191,7 @@ export function sendInvitationsForCampagne(args: SendInvitationArgs): SendInvita
           annee: campagne.annee,
           statut: delivery.status,
           erreur: delivery.erreur,
+          magic_link_token_hash: magic?.tokenHash ?? null,
         },
         ip: args.ip ?? null,
       });
@@ -183,7 +199,7 @@ export function sendInvitationsForCampagne(args: SendInvitationArgs): SendInvita
       if (delivery.status === 'envoye') {
         sent += 1;
       } else if (delivery.status === 'pending') {
-        skipped += 1;
+        pending += 1;
       } else {
         failed += 1;
       }
@@ -192,9 +208,12 @@ export function sendInvitationsForCampagne(args: SendInvitationArgs): SendInvita
     }
   }
 
-  if (assujettis.length === 0) {
-    skipped = args.assujettiId ? 1 : 0;
+  if (assujettis.length === 0 && args.assujettiId) {
+    nonEligible = 1;
   }
 
-  return { sent, failed, skipped };
+  const skipped = pending + nonEligible;
+  const prepared = assujettis.length;
+
+  return { sent, failed, skipped, pending, nonEligible, prepared };
 }

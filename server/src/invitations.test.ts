@@ -97,7 +97,11 @@ test('openCampagne envoie les invitations email et trace notifications_email', (
   assert.equal(avecCompte?.magic_link, null);
 
   assert.ok(sansCompte);
-  assert.ok(sansCompte?.magic_link && sansCompte.magic_link.includes('/login?invitation_token='));
+  assert.ok(sansCompte?.magic_link && sansCompte.magic_link.includes('/login?invitation_token=[redacted]'));
+  assert.ok(sansCompte?.corps.includes('/login?invitation_token=[redacted]'));
+
+  const rawTokenLeak = /invitation_token=[a-f0-9]{32,}/.test(sansCompte?.corps ?? '');
+  assert.equal(rawTokenLeak, false);
 
   const tokenCount = (
     db
@@ -105,6 +109,12 @@ test('openCampagne envoie les invitations email et trace notifications_email', (
       .get(campagneId, aSansCompte) as { c: number }
   ).c;
   assert.equal(tokenCount, 1);
+
+  const storedToken = db
+    .prepare('SELECT token FROM invitation_magic_links WHERE campagne_id = ? AND assujetti_id = ? LIMIT 1')
+    .get(campagneId, aSansCompte) as { token: string } | undefined;
+  assert.ok(storedToken);
+  assert.match(storedToken!.token, /^[a-f0-9]{64}$/);
 });
 
 test('sendInvitationsForCampagne permet renvoi cible pour un assujetti', () => {

@@ -156,7 +156,7 @@ export function openCampagne(campagneId: number, userId: number, ip?: string | n
              '$.invitations_skipped', ?
            )
        WHERE campagne_id = ? AND type = 'invitation' AND statut = 'pending'`,
-    ).run(invitations.sent, invitations.failed, invitations.skipped, campagneId);
+    ).run(invitations.prepared, invitations.failed, invitations.skipped, campagneId);
 
     logAudit({
       userId,
@@ -165,14 +165,14 @@ export function openCampagne(campagneId: number, userId: number, ip?: string | n
       entiteId: campagneId,
       details: {
         annee: campagne.annee,
-        invitations_preparees: invitations.sent,
+        invitations_preparees: invitations.prepared,
         invitations_failed: invitations.failed,
         invitations_skipped: invitations.skipped,
       },
       ip: ip ?? null,
     });
 
-    return { annee: campagne.annee, invitations_preparees: invitations.sent };
+    return { annee: campagne.annee, invitations_preparees: invitations.prepared };
   });
 
   return tx();

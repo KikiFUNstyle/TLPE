@@ -95,12 +95,12 @@ export default function AssujettiDetail() {
       if (result.sent > 0) {
         setInvitationStatusType('success');
         setInvitationStatus('Invitation renvoyee avec succes.');
-      } else if (result.skipped > 0) {
-        setInvitationStatusType('info');
-        setInvitationStatus("Aucun envoi immediat: invitation en attente d'envoi (service email non configure).");
       } else if (result.failed > 0) {
         setInvitationStatusType('error');
         setInvitationStatus("L'invitation n'a pas pu etre envoyee.");
+      } else if (result.skipped > 0) {
+        setInvitationStatusType('info');
+        setInvitationStatus("Aucun envoi effectue: assujetti non eligible (actif + email requis).");
       } else {
         setInvitationStatusType('info');
         setInvitationStatus('Aucun envoi effectue.');
