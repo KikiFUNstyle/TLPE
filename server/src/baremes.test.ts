@@ -6,6 +6,7 @@ import { findBareme } from './calculator';
 
 function resetTables() {
   initSchema();
+  db.exec('DELETE FROM pieces_jointes');
   db.exec('DELETE FROM baremes');
   db.exec('DELETE FROM bareme_activation');
   db.exec('DELETE FROM audit_log');

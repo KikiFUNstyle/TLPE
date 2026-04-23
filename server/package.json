@@ -10,14 +10,16 @@
     "start": "node dist/index.js",
     "seed": "tsx src/seed.ts",
     "job:activate-baremes": "node dist/jobs/activateBaremes.js",
-    "test": "tsx --test src/calculator.test.ts src/baremes.test.ts src/zones.test.ts src/assujettisImport.test.ts src/dispositifsImport.test.ts src/apiEntreprise.test.ts src/services/ban.test.ts"
+    "test": "tsx --test src/calculator.test.ts src/baremes.test.ts src/zones.test.ts src/assujettisImport.test.ts src/dispositifsImport.test.ts src/apiEntreprise.test.ts src/services/ban.test.ts src/piecesJointes.test.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.901.0",
     "bcryptjs": "^2.4.3",
     "better-sqlite3": "^11.3.0",
     "cors": "^2.8.5",
     "express": "^4.21.1",
     "jsonwebtoken": "^9.0.2",
+    "multer": "^1.4.5-lts.2",
     "pdfkit": "^0.15.1",
     "xlsx": "^0.18.5",
     "zod": "^3.23.8"
@@ -28,6 +30,7 @@
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/jsonwebtoken": "^9.0.7",
+    "@types/multer": "^1.4.12",
     "@types/node": "^22.7.4",
     "@types/pdfkit": "^0.13.4",
     "tsx": "^4.19.1",
