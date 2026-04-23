@@ -11,7 +11,7 @@ import {
   S3Client,
   type GetObjectCommandOutput,
 } from '@aws-sdk/client-s3';
-import { authMiddleware } from '../auth';
+import { authMiddleware, requireRole } from '../auth';
 import { db, logAudit } from '../db';
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
@@ -42,6 +42,15 @@ if (!useS3 && !fs.existsSync(UPLOADS_DIR)) {
   fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 }
 
+function resolveUploadAbsolutePath(cheminRelatif: string): string {
+  const uploadRoot = path.resolve(UPLOADS_DIR);
+  const absolutePath = path.resolve(uploadRoot, cheminRelatif);
+  if (absolutePath !== uploadRoot && !absolutePath.startsWith(`${uploadRoot}${path.sep}`)) {
+    throw new Error('invalid-path');
+  }
+  return absolutePath;
+}
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
@@ -57,6 +66,7 @@ const createSchema = z.object({
 
 export const piecesJointesRouter = Router();
 piecesJointesRouter.use(authMiddleware);
+piecesJointesRouter.use(requireRole('admin', 'gestionnaire', 'contribuable'));
 
 interface PieceJointeRow {
   id: number;
@@ -154,7 +164,7 @@ function getEntityTotalSize(entite: 'dispositif' | 'declaration' | 'contentieux'
 
 async function saveFile(cheminRelatif: string, buffer: Buffer, mimeType: string): Promise<void> {
   if (!useS3) {
-    const absolutePath = path.join(UPLOADS_DIR, cheminRelatif);
+    const absolutePath = resolveUploadAbsolutePath(cheminRelatif);
     fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
     fs.writeFileSync(absolutePath, buffer);
     return;
@@ -176,7 +186,7 @@ async function saveFile(cheminRelatif: string, buffer: Buffer, mimeType: string)
 
 async function deleteStoredFile(cheminRelatif: string): Promise<void> {
   if (!useS3) {
-    const absolutePath = path.join(UPLOADS_DIR, cheminRelatif);
+    const absolutePath = resolveUploadAbsolutePath(cheminRelatif);
     if (fs.existsSync(absolutePath)) {
       fs.unlinkSync(absolutePath);
     }
@@ -201,7 +211,7 @@ async function readStoredFile(cheminRelatif: string): Promise<{
   contentLength?: number;
 }> {
   if (!useS3) {
-    const absolutePath = path.join(UPLOADS_DIR, cheminRelatif);
+    const absolutePath = resolveUploadAbsolutePath(cheminRelatif);
     if (!fs.existsSync(absolutePath)) {
       throw new Error('missing');
     }
@@ -259,10 +269,39 @@ piecesJointesRouter.post('/', upload.single('fichier'), async (req, res) => {
     return res.status(403).json({ error: 'Droits insuffisants' });
   }
 
-  const currentSize = getEntityTotalSize(entite, entite_id);
-  if (currentSize + file.size > MAX_ENTITY_TOTAL_SIZE) {
-    return res.status(400).json({ error: 'Taille totale depassee (50 Mo maximum par entite)' });
-  }
+  const insertPieceJointe = db.transaction(
+    (params: {
+      entite: 'dispositif' | 'declaration' | 'contentieux';
+      entite_id: number;
+      nom: string;
+      mime_type: string;
+      taille: number;
+      chemin: string;
+      uploaded_by: number | null;
+    }) => {
+      const currentSize = getEntityTotalSize(params.entite, params.entite_id);
+      if (currentSize + params.taille > MAX_ENTITY_TOTAL_SIZE) {
+        throw new Error('quota-exceeded');
+      }
+
+      const info = db
+        .prepare(
+          `INSERT INTO pieces_jointes (entite, entite_id, nom, mime_type, taille, chemin, uploaded_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          params.entite,
+          params.entite_id,
+          params.nom,
+          params.mime_type,
+          params.taille,
+          params.chemin,
+          params.uploaded_by,
+        );
+
+      return Number(info.lastInsertRowid);
+    },
+  );
 
   const nom = sanitizeFileName(file.originalname);
   const chemin = buildStorageRelativePath({
@@ -279,14 +318,15 @@ piecesJointesRouter.post('/', upload.single('fichier'), async (req, res) => {
   }
 
   try {
-    const info = db
-      .prepare(
-        `INSERT INTO pieces_jointes (entite, entite_id, nom, mime_type, taille, chemin, uploaded_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(entite, entite_id, nom, file.mimetype, file.size, chemin, req.user?.id ?? null);
-
-    const id = Number(info.lastInsertRowid);
+    const id = insertPieceJointe({
+      entite,
+      entite_id,
+      nom,
+      mime_type: file.mimetype,
+      taille: file.size,
+      chemin,
+      uploaded_by: req.user?.id ?? null,
+    });
     logAudit({
       userId: req.user?.id ?? null,
       action: 'upload',
@@ -305,7 +345,11 @@ piecesJointesRouter.post('/', upload.single('fichier'), async (req, res) => {
       taille: file.size,
       created_at: new Date().toISOString(),
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.message === 'quota-exceeded') {
+      await deleteStoredFile(chemin).catch(() => undefined);
+      return res.status(400).json({ error: 'Taille totale depassee (50 Mo maximum par entite)' });
+    }
     await deleteStoredFile(chemin).catch(() => undefined);
     return res.status(500).json({ error: 'Echec lors de l’enregistrement en base' });
   }
