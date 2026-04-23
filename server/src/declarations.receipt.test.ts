@@ -23,8 +23,15 @@ async function requestJson(params: {
   body?: unknown;
 }) {
   const app = createApp();
-  const server = app.listen(0);
-  const port = (server.address() as { port: number }).port;
+  const server = await new Promise<import('node:http').Server>((resolve) => {
+    const s = app.listen(0, () => resolve(s));
+  });
+  const address = server.address();
+  if (!address || typeof address === 'string') {
+    server.close();
+    throw new Error('Impossible de determiner le port de test');
+  }
+  const port = address.port;
   try {
     const res = await fetch(`http://127.0.0.1:${port}${params.path}`, {
       method: params.method,

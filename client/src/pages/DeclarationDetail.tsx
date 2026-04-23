@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { api } from '../api';
+import { api, getToken } from '../api';
 import { formatEuro } from '../format';
 import { useAuth } from '../auth';
 
@@ -112,6 +112,41 @@ export default function DeclarationDetail() {
     catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
   };
 
+  const downloadReceipt = async () => {
+    if (!decl?.receipt?.download_url) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const token = getToken();
+      const response = await fetch(decl.receipt.download_url, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+
+      if (!response.ok) {
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          const body = await response.json();
+          throw new Error(typeof body.error === 'string' ? body.error : `HTTP ${response.status}`);
+        }
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const blob = await response.blob();
+      const href = window.URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = href;
+      anchor.download = `accuse-declaration-${decl.numero}.pdf`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(href);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const updateLigne = (idx: number, patch: Partial<Ligne>) => {
     setDecl({
       ...decl,
@@ -142,9 +177,9 @@ export default function DeclarationDetail() {
           {canValidate && <button className="btn danger" disabled={busy} onClick={rejeter}>Rejeter</button>}
           {canEmit && <button className="btn" disabled={busy} onClick={emettre}>Emettre titre</button>}
           {canDownloadReceipt && (
-            <a className="btn secondary" href={decl.receipt!.download_url} target="_blank" rel="noreferrer">
+            <button className="btn secondary" disabled={busy} onClick={downloadReceipt}>
               Télécharger l'accusé PDF
-            </a>
+            </button>
           )}
         </div>
       </div>

@@ -1,4 +1,4 @@
-import { Navigate, NavLink, Route, Routes, useLocation } from 'react-router-dom';
+import { Navigate, NavLink, Route, Routes } from 'react-router-dom';
 import { useAuth } from './auth';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
@@ -16,20 +16,21 @@ import DeclarationReceiptVerify from './pages/DeclarationReceiptVerify';
 
 export default function App() {
   const { user, loading, logout } = useAuth();
-  const location = useLocation();
 
   if (loading) {
     return <div style={{ padding: 40, textAlign: 'center' }}>Chargement...</div>;
   }
 
   if (!user) {
-    if (location.pathname === '/login' || location.pathname.startsWith('/verification/accuse/')) {
-      if (location.pathname.startsWith('/verification/accuse/')) {
-        return <DeclarationReceiptVerify />;
-      }
-      return <Login />;
-    }
-    return <Navigate to="/login" replace />;
+    return (
+      <main className="main" style={{ padding: 24 }}>
+        <Routes>
+          <Route path="/verification/accuse/:token" element={<DeclarationReceiptVerify />} />
+          <Route path="/login" element={<Login />} />
+          <Route path="*" element={<Navigate to="/login" replace />} />
+        </Routes>
+      </main>
+    );
   }
 
   const isContribuable = user.role === 'contribuable';

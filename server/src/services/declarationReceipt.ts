@@ -61,13 +61,30 @@ function buildVerificationUrl(token: string): string {
   return `${CLIENT_BASE_URL}/verification/accuse/${token}`;
 }
 
+function parseSubmittedAtUtc(rawValue: string): Date {
+  const trimmed = rawValue.trim();
+  if (!trimmed) return new Date(NaN);
+
+  // SQLite datetime('now') retourne "YYYY-MM-DD HH:MM:SS" sans suffixe timezone.
+  // Dans notre schéma, on le traite explicitement comme UTC.
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(trimmed)) {
+    return new Date(`${trimmed.replace(' ', 'T')}Z`);
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(trimmed)) {
+    return new Date(`${trimmed}Z`);
+  }
+
+  return new Date(trimmed);
+}
+
 function formatUtcTimestamp(isoUtc: string): string {
-  const date = new Date(isoUtc);
+  const date = parseSubmittedAtUtc(isoUtc);
   return `${date.toISOString().replace('T', ' ').replace('.000Z', ' UTC')}`;
 }
 
 function formatParisTimestamp(isoUtc: string): string {
-  const date = new Date(isoUtc);
+  const date = parseSubmittedAtUtc(isoUtc);
   const formatter = new Intl.DateTimeFormat('fr-FR', {
     timeZone: 'Europe/Paris',
     year: 'numeric',
@@ -85,6 +102,13 @@ function formatParisTimestamp(isoUtc: string): string {
 function createVerificationToken(declarationId: number, payloadHash: string): string {
   const random = crypto.randomBytes(16).toString('hex');
   return `${declarationId}-${payloadHash.slice(0, 12)}-${random}`;
+}
+
+function renderTableHeader(doc: any, startY: number, columns: Array<{ label: string; x: number; w: number }>): number {
+  doc.fontSize(9).fillColor('#111827');
+  columns.forEach((col) => doc.text(col.label, col.x, startY, { width: col.w }));
+  doc.moveTo(42, startY + 13).lineTo(552, startY + 13).stroke();
+  return startY + 18;
 }
 
 async function generateReceiptPdf(params: {
@@ -135,17 +159,13 @@ async function generateReceiptPdf(params: {
       { label: 'Adresse', x: 380, w: 172 },
     ];
 
-    doc.fontSize(9).fillColor('#111827');
-    cols.forEach((col) => doc.text(col.label, col.x, tableHeaderY, { width: col.w }));
-    doc.moveTo(42, tableHeaderY + 13).lineTo(552, tableHeaderY + 13).stroke();
-
-    let y = tableHeaderY + 18;
+    let y = renderTableHeader(doc, tableHeaderY, cols);
     for (const line of payload.lignes) {
       const adresse = [line.adresseRue, [line.adresseCp, line.adresseVille].filter(Boolean).join(' ')].filter(Boolean).join(', ') || '-';
       const lineHeight = 26;
       if (y + lineHeight > 760) {
         doc.addPage();
-        y = 52;
+        y = renderTableHeader(doc, 52, cols);
       }
       doc.fontSize(8.5);
       doc.text(line.dispositifIdentifiant, cols[0].x, y, { width: cols[0].w });
