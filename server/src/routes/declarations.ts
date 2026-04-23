@@ -407,9 +407,10 @@ declarationsRouter.get('/:id/receipt/pdf', (req, res) => {
   const receipt = getDeclarationReceiptRecord(decl.id);
   if (!receipt) return res.status(404).json({ error: 'Accuse PDF introuvable' });
 
-  const dataRoot = path.resolve(__dirname, '..', '..', 'data') + path.sep;
+  const dataRoot = path.resolve(__dirname, '..', '..', 'data');
   const absolutePath = getReceiptDownloadPath(receipt.pdf_path);
-  if (!absolutePath.startsWith(dataRoot)) {
+  const relativePath = path.relative(dataRoot, absolutePath);
+  if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
     return res.status(400).json({ error: 'Chemin accuse invalide' });
   }
   if (!fs.existsSync(absolutePath)) {
