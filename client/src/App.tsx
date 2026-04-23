@@ -11,6 +11,7 @@ import Simulateur from './pages/Simulateur';
 import Titres from './pages/Titres';
 import Referentiels from './pages/Referentiels';
 import Contentieux from './pages/Contentieux';
+import Carte from './pages/Carte';
 
 export default function App() {
   const { user, loading, logout } = useAuth();
@@ -53,6 +54,7 @@ export default function App() {
               <NavLink to="/declarations">Declarations</NavLink>
               <NavLink to="/titres">Titres de recettes</NavLink>
               <NavLink to="/contentieux">Contentieux</NavLink>
+              <NavLink to="/carte">Carte des dispositifs</NavLink>
             </>
           )}
           {isContribuable && (
@@ -61,6 +63,7 @@ export default function App() {
               <NavLink to="/declarations">Mes declarations</NavLink>
               <NavLink to="/titres">Mes titres</NavLink>
               <NavLink to="/contentieux">Mes reclamations</NavLink>
+              <NavLink to="/carte">Carte des dispositifs</NavLink>
             </>
           )}
           <div className="section-title">Outils</div>
@@ -81,6 +84,7 @@ export default function App() {
           <Route path="/declarations/:id" element={<DeclarationDetail />} />
           <Route path="/titres" element={<Titres />} />
           <Route path="/contentieux" element={<Contentieux />} />
+          <Route path="/carte" element={<Carte />} />
           <Route path="/simulateur" element={<Simulateur />} />
           <Route path="/referentiels" element={<Referentiels />} />
           <Route path="/login" element={<Navigate to="/" replace />} />

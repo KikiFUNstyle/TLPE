@@ -29,6 +29,7 @@ basée sur les articles L2333-6 à L2333-16 du CGCT.
 | Simulateur | §6.3 | OK |
 | Audit log (traçabilité) | §12.2 | OK |
 | Portail contribuable (accès restreint à sa fiche) | §11 | OK |
+| Carte des dispositifs (Leaflet + filtres + export GeoJSON) | §4.2 / §9.2 / §10.2 | OK |
 
 ### Hors périmètre du MVP (prévu phases ultérieures)
 
@@ -63,6 +64,7 @@ Ouvrir ensuite http://localhost:5173.
 - `npm run dev` : démarrage backend + frontend sans erreur fatale
 - Smoke test backend : `GET /api/health` → `{"status":"ok"...}`
 - Smoke test pièces jointes : login + création dispositif + upload PDF + download + soft delete + vérif 404 post-delete (script Node)
+- Smoke test cartographie : accès `/carte`, tuiles OSM + points affichés, export GeoJSON téléchargeable
 
 ## API pièces jointes (US2.5)
 
@@ -149,6 +151,21 @@ Le flux d'import en masse de dispositifs enrichit aussi les données :
 
 - si `geocodeWithBan=true` et que `lat/lon` sont absents, la BAN est sollicitée,
 - les champs adresse/CP/ville et coordonnées sont normalisés avant insertion.
+
+## Visualisation cartographique des dispositifs (US2.6)
+
+Nouvelle page **Carte des dispositifs** (`/carte`) accessible aux rôles métiers et contribuable :
+
+- rendu Leaflet + tuiles OpenStreetMap,
+- marqueurs colorés selon le statut (`déclaré`, `contrôlé`, `litigieux`, `déposé`, `exonéré`),
+- filtres dynamiques par zone tarifaire, type de dispositif et année de déclaration,
+- popup détaillée avec lien vers la fiche dispositif,
+- export GeoJSON de la sélection courante.
+
+API associée :
+
+- `GET /api/dispositifs?zone_id=<id>&type_id=<id>&annee=<YYYY>`
+- `GET /api/dispositifs/annees`
 
 ### Comptes de démonstration
 
@@ -249,6 +266,8 @@ TLPE/
 │   │       ├── auth.ts
 │   │       ├── assujettis.ts
 │   │       ├── dispositifs.ts
+│   │       ├── geocoding.ts
+│   │       ├── piecesJointes.ts
 │   │       ├── referentiels.ts
 │   │       ├── declarations.ts
 │   │       ├── titres.ts           # émission + PDF + paiements
@@ -270,6 +289,7 @@ TLPE/
             ├── Assujettis.tsx
             ├── AssujettiDetail.tsx
             ├── Dispositifs.tsx
+            ├── Carte.tsx
             ├── Declarations.tsx
             ├── DeclarationDetail.tsx
             ├── Simulateur.tsx
