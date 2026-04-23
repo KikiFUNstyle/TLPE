@@ -16,6 +16,20 @@ function assertIsoDate(value: string, field: string) {
   if (!ISO_DATE_RE.test(value)) {
     throw new Error(`${field} invalide (format YYYY-MM-DD attendu)`);
   }
+
+  const [year, month, day] = value.split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  const isValid =
+    Number.isInteger(year) &&
+    Number.isInteger(month) &&
+    Number.isInteger(day) &&
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day;
+
+  if (!isValid) {
+    throw new Error(`${field} invalide (date calendrier invalide)`);
+  }
 }
 
 function validateTimeline(input: Omit<CampagneInput, 'created_by'>) {
@@ -99,6 +113,7 @@ export function openCampagne(campagneId: number, userId: number, ip?: string | n
       | { id: number; annee: number; statut: CampagneStatut }
       | undefined;
     if (!campagne) throw new Error('Campagne introuvable');
+    if (campagne.statut === 'ouverte') throw new Error('La campagne est deja ouverte');
     if (campagne.statut === 'cloturee') throw new Error('Une campagne cloturee ne peut pas etre reouverte');
 
     db.prepare("UPDATE campagnes SET statut = 'brouillon', updated_at = datetime('now') WHERE statut = 'ouverte' AND id != ?").run(campagneId);

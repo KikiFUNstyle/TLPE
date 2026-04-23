@@ -53,6 +53,9 @@ test('schema contient les tables campagnes, campagne_jobs et mises_en_demeure', 
   assert.ok(campagneNames.has('statut'));
   assert.ok(campagneNames.has('created_by'));
 
+  const campagnesFks = db.prepare("PRAGMA foreign_key_list('campagnes')").all() as Array<{ from: string; table: string }>;
+  assert.ok(campagnesFks.some((fk) => fk.from === 'created_by' && fk.table === 'users'));
+
   const jobCols = db.prepare("PRAGMA table_info('campagne_jobs')").all() as Array<{ name: string }>;
   const jobNames = new Set(jobCols.map((c) => c.name));
   assert.ok(jobNames.has('campagne_id'));
@@ -116,6 +119,23 @@ test('createCampagne rejette un annee dupliquee', () => {
   );
 });
 
+test('createCampagne rejette une date calendrier invalide', () => {
+  resetTables();
+  const adminId = seedAdmin();
+
+  assert.throws(
+    () =>
+      createCampagne({
+        annee: 2026,
+        date_ouverture: '2026-02-30',
+        date_limite_declaration: '2026-03-01',
+        date_cloture: '2026-03-10',
+        created_by: adminId,
+      }),
+    /date calendrier invalide/,
+  );
+});
+
 test('openCampagne active une campagne et cree/termine un job invitation', () => {
   resetTables();
   const adminId = seedAdmin();
@@ -145,6 +165,31 @@ test('openCampagne active une campagne et cree/termine un job invitation', () =>
   assert.equal(jobs.length, 1);
   assert.equal(jobs[0].type, 'invitation');
   assert.equal(jobs[0].statut, 'done');
+});
+
+test('openCampagne rejette une campagne deja ouverte', () => {
+  resetTables();
+  const adminId = seedAdmin();
+  seedAssujetti('TLPE-CAMP-OPEN-RETRY-1');
+
+  const campagneId = createCampagne({
+    annee: 2027,
+    date_ouverture: '2027-01-01',
+    date_limite_declaration: '2027-03-01',
+    date_cloture: '2027-03-10',
+    created_by: adminId,
+  });
+
+  openCampagne(campagneId, adminId);
+
+  assert.throws(() => openCampagne(campagneId, adminId), /deja ouverte/);
+
+  const invitations = (
+    db
+      .prepare("SELECT COUNT(*) AS c FROM campagne_jobs WHERE campagne_id = ? AND type = 'invitation'")
+      .get(campagneId) as { c: number }
+  ).c;
+  assert.equal(invitations, 1);
 });
 
 test('openCampagne bascule une ancienne ouverte en brouillon', () => {

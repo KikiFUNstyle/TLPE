@@ -165,7 +165,8 @@ CREATE TABLE IF NOT EXISTS campagnes (
   statut                    TEXT NOT NULL DEFAULT 'brouillon' CHECK (statut IN ('brouillon','ouverte','cloturee')),
   created_by                INTEGER NOT NULL,
   created_at                TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at                TEXT NOT NULL DEFAULT (datetime('now'))
+  updated_at                TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (created_by) REFERENCES users(id)
 );
 CREATE INDEX IF NOT EXISTS idx_campagnes_statut ON campagnes(statut);
 

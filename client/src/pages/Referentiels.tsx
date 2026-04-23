@@ -143,7 +143,7 @@ function CampagnesTab() {
     date_cloture: `${new Date().getFullYear()}-03-02`,
   });
 
-  async function refreshCampagnes() {
+  async function refreshCampagnes(preferredCampagneId?: number | null) {
     setLoading(true);
     setError(null);
     try {
@@ -154,9 +154,8 @@ function CampagnesTab() {
       setRows(campagnes);
       setActiveCampagneId(active.campagne?.id ?? null);
 
-      const nextSelected = selectedCampagneId && campagnes.some((c) => c.id === selectedCampagneId)
-        ? selectedCampagneId
-        : campagnes[0]?.id ?? null;
+      const preferred = preferredCampagneId ?? selectedCampagneId;
+      const nextSelected = preferred && campagnes.some((c) => c.id === preferred) ? preferred : campagnes[0]?.id ?? null;
       setSelectedCampagneId(nextSelected);
       if (nextSelected) {
         const s = await api<CampagneSummary>(`/api/campagnes/${nextSelected}/summary`);
@@ -209,8 +208,7 @@ function CampagnesTab() {
         method: 'POST',
       });
       setMessage(`Campagne ${result.annee} ouverte. Invitations preparees: ${result.invitations_preparees}`);
-      await refreshCampagnes();
-      await loadSummary(campagneId);
+      await refreshCampagnes(campagneId);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Erreur inconnue');
     }
@@ -225,8 +223,7 @@ function CampagnesTab() {
         method: 'POST',
       });
       setMessage(`Campagne ${result.annee} cloturee. Brouillons bascules: ${result.brouillons_bascules}`);
-      await refreshCampagnes();
-      await loadSummary(campagneId);
+      await refreshCampagnes(campagneId);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Erreur inconnue');
     }

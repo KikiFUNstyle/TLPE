@@ -36,6 +36,57 @@ export function initSchema() {
       db.exec('ALTER TABLE pieces_jointes ADD COLUMN deleted_at TEXT');
     }
   }
+
+  // migration legacy -> ajoute la FK campagnes.created_by -> users(id)
+  const campagneFks = db.prepare("PRAGMA foreign_key_list('campagnes')").all() as Array<{ from: string; table: string }>;
+  const hasCampagneCreatedByFk = campagneFks.some((fk) => fk.from === 'created_by' && fk.table === 'users');
+  if (!hasCampagneCreatedByFk) {
+    const invalidCreatedByCount = (
+      db
+        .prepare(
+          `SELECT COUNT(*) AS c
+           FROM campagnes c
+           LEFT JOIN users u ON u.id = c.created_by
+           WHERE u.id IS NULL`,
+        )
+        .get() as { c: number }
+    ).c;
+
+    if (invalidCreatedByCount > 0) {
+      throw new Error(
+        `Migration campagnes.created_by impossible: ${invalidCreatedByCount} campagne(s) reference(nt) un utilisateur inexistant`,
+      );
+    }
+
+    db.exec(`
+      PRAGMA foreign_keys = OFF;
+      BEGIN TRANSACTION;
+
+      CREATE TABLE IF NOT EXISTS campagnes_new (
+        id                        INTEGER PRIMARY KEY AUTOINCREMENT,
+        annee                     INTEGER NOT NULL UNIQUE,
+        date_ouverture            TEXT NOT NULL,
+        date_limite_declaration   TEXT NOT NULL,
+        date_cloture              TEXT NOT NULL,
+        statut                    TEXT NOT NULL DEFAULT 'brouillon' CHECK (statut IN ('brouillon','ouverte','cloturee')),
+        created_by                INTEGER NOT NULL,
+        created_at                TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at                TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (created_by) REFERENCES users(id)
+      );
+
+      INSERT INTO campagnes_new (id, annee, date_ouverture, date_limite_declaration, date_cloture, statut, created_by, created_at, updated_at)
+      SELECT id, annee, date_ouverture, date_limite_declaration, date_cloture, statut, created_by, created_at, updated_at
+      FROM campagnes;
+
+      DROP TABLE campagnes;
+      ALTER TABLE campagnes_new RENAME TO campagnes;
+      CREATE INDEX IF NOT EXISTS idx_campagnes_statut ON campagnes(statut);
+
+      COMMIT;
+      PRAGMA foreign_keys = ON;
+    `);
+  }
 }
 
 export function logAudit(params: {
