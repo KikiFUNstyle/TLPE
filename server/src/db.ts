@@ -58,34 +58,40 @@ export function initSchema() {
       );
     }
 
-    db.exec(`
-      PRAGMA foreign_keys = OFF;
-      BEGIN TRANSACTION;
+    db.pragma('foreign_keys = OFF');
+    try {
+      db.exec('BEGIN TRANSACTION');
+      try {
+        db.exec(`
+          CREATE TABLE campagnes_new (
+            id                        INTEGER PRIMARY KEY AUTOINCREMENT,
+            annee                     INTEGER NOT NULL UNIQUE,
+            date_ouverture            TEXT NOT NULL,
+            date_limite_declaration   TEXT NOT NULL,
+            date_cloture              TEXT NOT NULL,
+            statut                    TEXT NOT NULL DEFAULT 'brouillon' CHECK (statut IN ('brouillon','ouverte','cloturee')),
+            created_by                INTEGER NOT NULL,
+            created_at                TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at                TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (created_by) REFERENCES users(id)
+          );
 
-      CREATE TABLE IF NOT EXISTS campagnes_new (
-        id                        INTEGER PRIMARY KEY AUTOINCREMENT,
-        annee                     INTEGER NOT NULL UNIQUE,
-        date_ouverture            TEXT NOT NULL,
-        date_limite_declaration   TEXT NOT NULL,
-        date_cloture              TEXT NOT NULL,
-        statut                    TEXT NOT NULL DEFAULT 'brouillon' CHECK (statut IN ('brouillon','ouverte','cloturee')),
-        created_by                INTEGER NOT NULL,
-        created_at                TEXT NOT NULL DEFAULT (datetime('now')),
-        updated_at                TEXT NOT NULL DEFAULT (datetime('now')),
-        FOREIGN KEY (created_by) REFERENCES users(id)
-      );
+          INSERT INTO campagnes_new (id, annee, date_ouverture, date_limite_declaration, date_cloture, statut, created_by, created_at, updated_at)
+          SELECT id, annee, date_ouverture, date_limite_declaration, date_cloture, statut, created_by, created_at, updated_at
+          FROM campagnes;
 
-      INSERT INTO campagnes_new (id, annee, date_ouverture, date_limite_declaration, date_cloture, statut, created_by, created_at, updated_at)
-      SELECT id, annee, date_ouverture, date_limite_declaration, date_cloture, statut, created_by, created_at, updated_at
-      FROM campagnes;
-
-      DROP TABLE campagnes;
-      ALTER TABLE campagnes_new RENAME TO campagnes;
-      CREATE INDEX IF NOT EXISTS idx_campagnes_statut ON campagnes(statut);
-
-      COMMIT;
-      PRAGMA foreign_keys = ON;
-    `);
+          DROP TABLE campagnes;
+          ALTER TABLE campagnes_new RENAME TO campagnes;
+          CREATE INDEX IF NOT EXISTS idx_campagnes_statut ON campagnes(statut);
+        `);
+        db.exec('COMMIT');
+      } catch (error) {
+        db.exec('ROLLBACK');
+        throw error;
+      }
+    } finally {
+      db.pragma('foreign_keys = ON');
+    }
   }
 }
 

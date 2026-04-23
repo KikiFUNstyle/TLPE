@@ -69,6 +69,72 @@ test('schema contient les tables campagnes, campagne_jobs et mises_en_demeure', 
   assert.ok(miseNames.has('statut'));
 });
 
+test('initSchema restaure foreign_keys=ON meme si migration campagnes echoue', () => {
+  resetTables();
+
+  const hasFkBefore = (
+    db.prepare("PRAGMA foreign_key_list('campagnes')").all() as Array<{ from: string; table: string }>
+  ).some((fk) => fk.from === 'created_by' && fk.table === 'users');
+
+  // Force une table legacy sans FK pour declencher le chemin de migration
+  if (hasFkBefore) {
+    db.pragma('foreign_keys = OFF');
+    db.exec('BEGIN TRANSACTION');
+    try {
+      db.exec(`
+        CREATE TABLE campagnes_legacy (
+          id                        INTEGER PRIMARY KEY AUTOINCREMENT,
+          annee                     INTEGER NOT NULL UNIQUE,
+          date_ouverture            TEXT NOT NULL,
+          date_limite_declaration   TEXT NOT NULL,
+          date_cloture              TEXT NOT NULL,
+          statut                    TEXT NOT NULL DEFAULT 'brouillon' CHECK (statut IN ('brouillon','ouverte','cloturee')),
+          created_by                INTEGER NOT NULL,
+          created_at                TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at                TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        INSERT INTO campagnes_legacy (id, annee, date_ouverture, date_limite_declaration, date_cloture, statut, created_by, created_at, updated_at)
+        SELECT id, annee, date_ouverture, date_limite_declaration, date_cloture, statut, created_by, created_at, updated_at
+        FROM campagnes;
+
+        DROP TABLE campagnes;
+        ALTER TABLE campagnes_legacy RENAME TO campagnes;
+        CREATE INDEX IF NOT EXISTS idx_campagnes_statut ON campagnes(statut);
+      `);
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    } finally {
+      db.pragma('foreign_keys = ON');
+    }
+  }
+
+  // Rend la migration impossible (created_by orphelin)
+  db.pragma('foreign_keys = OFF');
+  const orphanInsert = db
+    .prepare(
+      `INSERT INTO campagnes (annee, date_ouverture, date_limite_declaration, date_cloture, statut, created_by)
+       VALUES (2099, '2099-01-01', '2099-03-01', '2099-03-10', 'brouillon', 999999)`,
+    )
+    .run();
+  assert.ok(Number(orphanInsert.lastInsertRowid) > 0);
+  db.pragma('foreign_keys = ON');
+
+  try {
+    assert.throws(() => initSchema(), /Migration campagnes\.created_by impossible/);
+
+    const fkState = db.pragma('foreign_keys', { simple: true }) as number;
+    assert.equal(fkState, 1);
+  } finally {
+    db.pragma('foreign_keys = OFF');
+    db.prepare('DELETE FROM campagnes WHERE annee = 2099').run();
+    db.pragma('foreign_keys = ON');
+    initSchema();
+  }
+});
+
 test('createCampagne cree une campagne brouillon et journalise', () => {
   resetTables();
   const adminId = seedAdmin();

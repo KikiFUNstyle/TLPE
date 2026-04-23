@@ -164,6 +164,7 @@ function CampagnesTab() {
         setSummary(null);
       }
     } catch (e) {
+      setSummary(null);
       setError(e instanceof Error ? e.message : 'Erreur inconnue');
     } finally {
       setLoading(false);
