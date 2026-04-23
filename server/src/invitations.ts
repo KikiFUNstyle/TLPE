@@ -23,6 +23,32 @@ interface CampagneInfo {
   date_limite_declaration: string;
 }
 
+type DeliveryStatus = 'envoye' | 'pending' | 'echec';
+
+interface DeliveryResult {
+  status: DeliveryStatus;
+  erreur: string | null;
+}
+
+const PORTAL_BASE_URL = (process.env.TLPE_PORTAL_BASE_URL || 'http://localhost:5173').replace(/\/$/, '');
+
+function deliverInvitationEmail(): DeliveryResult {
+  const mode = process.env.TLPE_EMAIL_DELIVERY_MODE ?? 'disabled';
+
+  if (mode === 'mock-success') {
+    return { status: 'envoye', erreur: null };
+  }
+
+  if (mode === 'mock-failure') {
+    return { status: 'echec', erreur: "Echec d'envoi (mode mock-failure)" };
+  }
+
+  return {
+    status: 'pending',
+    erreur: 'Envoi differe: service SMTP non configure',
+  };
+}
+
 interface AssujettiCible {
   id: number;
   identifiant_tlpe: string;
@@ -74,7 +100,7 @@ function createMagicLink(campagneId: number, assujettiId: number, userId?: numbe
      VALUES (?, ?, ?, datetime('now', '+30 days'), ?)`,
   ).run(campagneId, assujettiId, token, userId ?? null);
 
-  return `https://tlpe.local/activation?token=${token}`;
+  return `${PORTAL_BASE_URL}/login?invitation_token=${token}`;
 }
 
 function buildInvitationEmail(input: {
@@ -90,7 +116,7 @@ function buildInvitationEmail(input: {
     `La campagne TLPE ${campagne.annee} est ouverte.`,
     `Votre identifiant TLPE: ${assujetti.identifiant_tlpe}.`,
     `Date limite de declaration: ${campagne.date_limite_declaration}.`,
-    'Lien portail: https://tlpe.local/login',
+    `Lien portail: ${PORTAL_BASE_URL}/login`,
   ];
 
   if (magicLink) {
@@ -113,14 +139,15 @@ export function sendInvitationsForCampagne(args: SendInvitationArgs): SendInvita
   const insertNotif = db.prepare(
     `INSERT INTO notifications_email (
       campagne_id, assujetti_id, email_destinataire, objet, corps,
-      template_code, magic_link, mode, statut, sent_at, created_by
-    ) VALUES (?, ?, ?, ?, ?, 'invitation_campagne', ?, ?, 'envoye', datetime('now'), ?)`,
+      template_code, magic_link, mode, statut, erreur, sent_at, created_by
+    ) VALUES (?, ?, ?, ?, ?, 'invitation_campagne', ?, ?, ?, ?, ?, ?)`,
   );
 
   for (const assujetti of assujettis) {
     try {
       const hasPortal = hasContribuableAccount(assujetti.id);
       const magicLink = hasPortal ? null : createMagicLink(args.campagneId, assujetti.id, args.userId);
+      const delivery = deliverInvitationEmail();
       const content = buildInvitationEmail({ campagne, assujetti, magicLink });
 
       insertNotif.run(
@@ -131,6 +158,9 @@ export function sendInvitationsForCampagne(args: SendInvitationArgs): SendInvita
         content.corps,
         magicLink,
         mode,
+        delivery.status,
+        delivery.erreur,
+        delivery.status === 'envoye' ? new Date().toISOString() : null,
         args.userId ?? null,
       );
 
@@ -139,11 +169,24 @@ export function sendInvitationsForCampagne(args: SendInvitationArgs): SendInvita
         action: mode === 'manual' ? 'resend-invitation' : 'send-invitation',
         entite: 'campagne',
         entiteId: args.campagneId,
-        details: { assujetti_id: assujetti.id, email: assujetti.email, mode, annee: campagne.annee },
+        details: {
+          assujetti_id: assujetti.id,
+          email: assujetti.email,
+          mode,
+          annee: campagne.annee,
+          statut: delivery.status,
+          erreur: delivery.erreur,
+        },
         ip: args.ip ?? null,
       });
 
-      sent += 1;
+      if (delivery.status === 'envoye') {
+        sent += 1;
+      } else if (delivery.status === 'pending') {
+        skipped += 1;
+      } else {
+        failed += 1;
+      }
     } catch {
       failed += 1;
     }

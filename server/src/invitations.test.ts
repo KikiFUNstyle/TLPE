@@ -4,6 +4,8 @@ import { db, initSchema } from './db';
 import { createCampagne, openCampagne } from './campagnes';
 import { sendInvitationsForCampagne } from './invitations';
 
+process.env.TLPE_EMAIL_DELIVERY_MODE = 'mock-success';
+
 function resetTables() {
   initSchema();
   db.exec('DELETE FROM notifications_email');
@@ -95,7 +97,7 @@ test('openCampagne envoie les invitations email et trace notifications_email', (
   assert.equal(avecCompte?.magic_link, null);
 
   assert.ok(sansCompte);
-  assert.ok(sansCompte?.magic_link && sansCompte.magic_link.includes('/activation?token='));
+  assert.ok(sansCompte?.magic_link && sansCompte.magic_link.includes('/login?invitation_token='));
 
   const tokenCount = (
     db

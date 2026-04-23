@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { db, initSchema } from './db';
 import { closeCampagne, createCampagne, getCampagneActive, listCampagnes, openCampagne } from './campagnes';
 
+process.env.TLPE_EMAIL_DELIVERY_MODE = 'mock-success';
+
 function resetTables() {
   initSchema();
   db.exec('DELETE FROM notifications_email');
@@ -286,7 +288,7 @@ test('openCampagne cree un magic link pour les assujettis sans compte portail', 
     .prepare('SELECT magic_link FROM notifications_email WHERE campagne_id = ? AND assujetti_id = ?')
     .get(campagneId, assujettiId) as { magic_link: string | null } | undefined;
   assert.ok(notif);
-  assert.ok(notif?.magic_link && notif.magic_link.includes('/activation?token='));
+  assert.ok(notif?.magic_link && notif.magic_link.includes('/login?invitation_token='));
 
   const links = (
     db

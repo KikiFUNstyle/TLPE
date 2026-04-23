@@ -49,6 +49,7 @@ export default function AssujettiDetail() {
   const [data, setData] = useState<Detail | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [invitationStatus, setInvitationStatus] = useState<string | null>(null);
+  const [invitationStatusType, setInvitationStatusType] = useState<'success' | 'error' | 'info'>('info');
   const [sendingInvitation, setSendingInvitation] = useState(false);
   const { hasRole } = useAuth();
 
@@ -92,16 +93,21 @@ export default function AssujettiDetail() {
       );
 
       if (result.sent > 0) {
+        setInvitationStatusType('success');
         setInvitationStatus('Invitation renvoyee avec succes.');
       } else if (result.skipped > 0) {
-        setInvitationStatus("Aucun envoi: assujetti non eligible (statut/email).");
+        setInvitationStatusType('info');
+        setInvitationStatus("Aucun envoi immediat: invitation en attente d'envoi (service email non configure).");
       } else if (result.failed > 0) {
+        setInvitationStatusType('error');
         setInvitationStatus("L'invitation n'a pas pu etre envoyee.");
       } else {
+        setInvitationStatusType('info');
         setInvitationStatus('Aucun envoi effectue.');
       }
     } catch (e) {
-      setErr((e as Error).message);
+      setInvitationStatusType('error');
+      setInvitationStatus((e as Error).message);
     } finally {
       setSendingInvitation(false);
     }
@@ -126,7 +132,11 @@ export default function AssujettiDetail() {
           </div>
         )}
       </div>
-      {invitationStatus && <div className="alert success" style={{ marginBottom: 16 }}>{invitationStatus}</div>}
+      {invitationStatus && (
+        <div className={`alert ${invitationStatusType}`} style={{ marginBottom: 16 }}>
+          {invitationStatus}
+        </div>
+      )}
 
       <div className="grid cols-2">
         <div className="card">

@@ -187,7 +187,6 @@ CREATE TABLE IF NOT EXISTS invitation_magic_links (
   FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
 );
 CREATE INDEX IF NOT EXISTS idx_magic_links_campaign_assujetti ON invitation_magic_links(campagne_id, assujetti_id);
-CREATE INDEX IF NOT EXISTS idx_magic_links_token ON invitation_magic_links(token);
 
 CREATE TABLE IF NOT EXISTS notifications_email (
   id                 INTEGER PRIMARY KEY AUTOINCREMENT,
