@@ -54,6 +54,12 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
   - filtrage métier exact des données exportées,
   - présence d'un horodatage + hash du contenu restitué,
   - écriture d'une trace `audit_log` dédiée à l'export.
+- Pour tout export XML métier (PESV2, pain.008, flux DGFiP), vérifier en review:
+  - sélection métier exclusive et explicite (campagne **ou** période, jamais les deux),
+  - validation XSD automatisée dans les tests et au runtime avant restitution,
+  - anti-réexport par défaut avec confirmation explicite et journal des titres déjà transmis,
+  - incrément strict du numéro de bordereau / lot d'envoi,
+  - persistance du hash XML + statut de validation dans la base.
 - Commandes minimales à exécuter:
   - `npm test`
   - `npm run build`

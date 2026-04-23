@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" elementFormDefault="qualified">
+  <xs:element name="PESV2Titres">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="Entete">
+          <xs:complexType>
+            <xs:sequence>
+              <xs:element name="Collectivite" type="xs:string" />
+              <xs:element name="Ordonnateur" type="xs:string" />
+              <xs:element name="NumeroBordereau" type="xs:string" />
+              <xs:element name="HorodatageExport" type="xs:dateTime" />
+              <xs:element name="SelectionType">
+                <xs:simpleType>
+                  <xs:restriction base="xs:string">
+                    <xs:enumeration value="campagne" />
+                    <xs:enumeration value="periode" />
+                  </xs:restriction>
+                </xs:simpleType>
+              </xs:element>
+              <xs:choice>
+                <xs:sequence>
+                  <xs:element name="CampagneId" type="xs:integer" />
+                  <xs:element name="AnneeCampagne" type="xs:integer" />
+                </xs:sequence>
+                <xs:element name="Periode">
+                  <xs:complexType>
+                    <xs:sequence>
+                      <xs:element name="DateDebut" type="xs:date" />
+                      <xs:element name="DateFin" type="xs:date" />
+                    </xs:sequence>
+                  </xs:complexType>
+                </xs:element>
+              </xs:choice>
+              <xs:element name="TitresCount" type="xs:integer" />
+              <xs:element name="TotalMontant" type="xs:decimal" />
+            </xs:sequence>
+          </xs:complexType>
+        </xs:element>
+        <xs:element name="Titres">
+          <xs:complexType>
+            <xs:sequence>
+              <xs:element name="Titre" maxOccurs="unbounded">
+                <xs:complexType>
+                  <xs:sequence>
+                    <xs:element name="NumeroTitre" type="xs:string" />
+                    <xs:element name="NumeroDeclaration" type="xs:string" />
+                    <xs:element name="AnneeExercice" type="xs:integer" />
+                    <xs:element name="DateEmission" type="xs:date" />
+                    <xs:element name="DateEcheance" type="xs:date" />
+                    <xs:element name="Montant" type="xs:decimal" />
+                    <xs:element name="Assujetti">
+                      <xs:complexType>
+                        <xs:sequence>
+                          <xs:element name="IdentifiantTLPE" type="xs:string" />
+                          <xs:element name="RaisonSociale" type="xs:string" />
+                          <xs:element name="Siret" type="xs:string" minOccurs="0" />
+                        </xs:sequence>
+                      </xs:complexType>
+                    </xs:element>
+                  </xs:sequence>
+                </xs:complexType>
+              </xs:element>
+            </xs:sequence>
+          </xs:complexType>
+        </xs:element>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+</xs:schema>
