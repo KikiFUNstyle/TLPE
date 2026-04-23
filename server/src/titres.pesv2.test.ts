@@ -328,3 +328,17 @@ test('POST /api/titres/export-pesv2 retourne 404 pour une campagne introuvable',
   assert.equal(res.status, 404);
   assert.match(res.text, /Campagne introuvable/);
 });
+
+test('POST /api/titres/export-pesv2 retourne 400 pour une date ISO malformée qui passe le regex', async () => {
+  const fx = resetFixtures();
+
+  const res = await request({
+    method: 'POST',
+    path: '/api/titres/export-pesv2',
+    headers: makeAuthHeader(fx.financier),
+    body: { date_debut: '2026-04-01', date_fin: '2026-13-01' },
+  });
+
+  assert.equal(res.status, 400);
+  assert.match(res.text, /Date invalide: 2026-13-01/);
+});

@@ -46,7 +46,11 @@ function xmlEscape(value: string | number | null | undefined): string {
 }
 
 function normalizeIsoDate(date: string): string {
-  const normalized = new Date(`${date}T00:00:00.000Z`).toISOString().slice(0, 10);
+  const parsed = new Date(`${date}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Pesv2RouteError(`Date invalide: ${date}`, 400);
+  }
+  const normalized = parsed.toISOString().slice(0, 10);
   if (normalized !== date) {
     throw new Pesv2RouteError(`Date invalide: ${date}`, 400);
   }
