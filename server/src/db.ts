@@ -268,6 +268,34 @@ export function initSchema() {
     }
   }
 
+  const paiementColumns = db.prepare("PRAGMA table_info('paiements')").all() as Array<{ name: string }>;
+  const hasProvider = paiementColumns.some((col) => col.name === 'provider');
+  const hasStatut = paiementColumns.some((col) => col.name === 'statut');
+  const hasTransactionId = paiementColumns.some((col) => col.name === 'transaction_id');
+  const hasCallbackPayload = paiementColumns.some((col) => col.name === 'callback_payload');
+  const hasCreatedAt = paiementColumns.some((col) => col.name === 'created_at');
+  if (!hasProvider) db.exec("ALTER TABLE paiements ADD COLUMN provider TEXT NOT NULL DEFAULT 'manuel'");
+  if (!hasStatut) db.exec("ALTER TABLE paiements ADD COLUMN statut TEXT NOT NULL DEFAULT 'confirme'");
+  if (!hasTransactionId) db.exec('ALTER TABLE paiements ADD COLUMN transaction_id TEXT');
+  if (!hasCallbackPayload) db.exec('ALTER TABLE paiements ADD COLUMN callback_payload TEXT');
+  if (!hasCreatedAt) db.exec("ALTER TABLE paiements ADD COLUMN created_at TEXT NOT NULL DEFAULT (datetime('now'))");
+  const duplicateTransactionIds = db
+    .prepare(
+      `SELECT transaction_id, COUNT(*) AS c
+       FROM paiements
+       WHERE transaction_id IS NOT NULL
+       GROUP BY transaction_id
+       HAVING COUNT(*) > 1`,
+    )
+    .all() as Array<{ transaction_id: string; c: number }>;
+  if (duplicateTransactionIds.length > 0) {
+    throw new Error(
+      `Migration paiements.transaction_id unique impossible: ${duplicateTransactionIds.length} transaction(s) dupliquée(s)`,
+    );
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS idx_paiements_titre_date ON paiements(titre_id, date_paiement DESC)');
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_paiements_transaction ON paiements(transaction_id) WHERE transaction_id IS NOT NULL');
+
   // migration legacy -> ajoute la FK campagnes.created_by -> users(id)
   const campagneFks = db.prepare("PRAGMA foreign_key_list('campagnes')").all() as Array<{ from: string; table: string }>;
   const hasCampagneCreatedByFk = campagneFks.some((fk) => fk.from === 'created_by' && fk.table === 'users');

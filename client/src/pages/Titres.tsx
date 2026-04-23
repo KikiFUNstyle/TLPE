@@ -3,6 +3,8 @@ import { api, apiBlob, apiBlobWithMetadata } from '../api';
 import { formatDate, formatEuro } from '../format';
 import { useAuth } from '../auth';
 import { buildBordereauFilename, buildBordereauPath, canExportBordereau } from './titresBordereau';
+import { parsePayfipConfirmationSearch } from './payfip';
+import { PayfipConfirmationView } from './PayfipConfirmation';
 
 interface Titre {
   id: number;
@@ -37,6 +39,17 @@ export default function Titres() {
   const [info, setInfo] = useState<string | null>(null);
   const [exporting, setExporting] = useState<null | 'pdf' | 'xlsx' | 'pesv2'>(null);
   const [paiementFor, setPaiementFor] = useState<Titre | null>(null);
+  const [payfipConfirmation, setPayfipConfirmation] = useState<ReturnType<typeof parsePayfipConfirmationSearch> | null>(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const parsed = parsePayfipConfirmationSearch(window.location.search);
+    if (window.location.pathname === '/titres' && parsed.statut !== 'unknown') {
+      setPayfipConfirmation(parsed);
+      return;
+    }
+    setPayfipConfirmation(null);
+  }, []);
 
   const load = () => {
     const params = new URLSearchParams();
@@ -151,6 +164,25 @@ export default function Titres() {
     }
   };
 
+  const initiatePayfipPayment = async (titre: Titre) => {
+    setErr(null);
+    setInfo(null);
+    try {
+      const payload = await api<{
+        redirect_url: string;
+        reference: string;
+        montant: number;
+        numero_titre: string;
+      }>(`/api/titres/${titre.id}/payfip/initiate`, {
+        method: 'POST',
+      });
+      setInfo(`Redirection PayFip préparée pour le titre ${payload.numero_titre} (${formatEuro(payload.montant)}).`);
+      window.location.href = payload.redirect_url;
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  };
+
   return (
     <>
       <div className="page-header">
@@ -161,6 +193,7 @@ export default function Titres() {
       </div>
 
       {err && <div className="alert error">{err}</div>}
+      {payfipConfirmation && <PayfipConfirmationView confirmation={payfipConfirmation} />}
       {info && <div className="alert info">{info}</div>}
 
       <div className="toolbar">
@@ -269,6 +302,17 @@ export default function Titres() {
                 <td><span className={`badge ${t.statut === 'paye' ? 'success' : t.statut === 'emis' ? 'info' : 'warn'}`}>{t.statut}</span></td>
                 <td>
                   <a className="btn small secondary" href={`/api/titres/${t.id}/pdf`} target="_blank" rel="noreferrer">PDF</a>
+                  {hasRole('contribuable') && t.statut !== 'paye' && (
+                    <button
+                      className="btn small secondary"
+                      style={{ marginLeft: 4 }}
+                      onClick={() => {
+                        void initiatePayfipPayment(t);
+                      }}
+                    >
+                      Payer en ligne
+                    </button>
+                  )}
                   {hasRole('admin', 'financier') && t.statut !== 'paye' && (
                     <button className="btn small" style={{ marginLeft: 4 }} onClick={() => setPaiementFor(t)}>Paiement</button>
                   )}
