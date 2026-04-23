@@ -212,7 +212,7 @@ export function sendInvitationsForCampagne(args: SendInvitationArgs): SendInvita
     nonEligible = 1;
   }
 
-  const skipped = pending + nonEligible;
+  const skipped = nonEligible;
   const prepared = assujettis.length;
 
   return { sent, failed, skipped, pending, nonEligible, prepared };

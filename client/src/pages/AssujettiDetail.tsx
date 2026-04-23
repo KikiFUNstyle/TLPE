@@ -103,7 +103,7 @@ export default function AssujettiDetail() {
         setInvitationStatus("Aucun envoi effectue: assujetti non eligible (actif + email requis).");
       } else {
         setInvitationStatusType('info');
-        setInvitationStatus('Aucun envoi effectue.');
+        setInvitationStatus("Aucun envoi immediat: invitation en attente d'envoi (service email non configure).");
       }
     } catch (e) {
       setInvitationStatusType('error');
