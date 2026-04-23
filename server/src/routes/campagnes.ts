@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { authMiddleware, requireRole } from '../auth';
 import { closeCampagne, createCampagne, getCampagneActive, listCampagnes, openCampagne } from '../campagnes';
 import { db } from '../db';
+import { sendInvitationsForCampagne } from '../invitations';
 
 export const campagnesRouter = Router();
 
@@ -87,8 +88,12 @@ campagnesRouter.post('/', (req, res) => {
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
   try {
+    const data = parsed.data;
     const id = createCampagne({
-      ...parsed.data,
+      annee: data.annee,
+      date_ouverture: data.date_ouverture,
+      date_limite_declaration: data.date_limite_declaration,
+      date_cloture: data.date_cloture,
       created_by: req.user!.id,
     });
     return res.status(201).json({ id });
@@ -119,6 +124,35 @@ campagnesRouter.post('/:id/open', (req, res) => {
     }
     return res.status(500).json({ error: 'Erreur interne' });
   }
+});
+
+campagnesRouter.post('/:id/envoyer-invitations', (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: 'Identifiant de campagne invalide' });
+  }
+
+  const bodySchema = z.object({ assujetti_id: z.number().int().positive().optional() });
+  const parsed = bodySchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const campagne = db.prepare('SELECT id, statut FROM campagnes WHERE id = ?').get(id) as
+    | { id: number; statut: string }
+    | undefined;
+  if (!campagne) return res.status(404).json({ error: 'Campagne introuvable' });
+  if (campagne.statut !== 'ouverte') {
+    return res.status(409).json({ error: 'La campagne doit etre ouverte pour envoyer des invitations' });
+  }
+
+  const result = sendInvitationsForCampagne({
+    campagneId: id,
+    userId: req.user!.id,
+    assujettiId: parsed.data.assujetti_id,
+    mode: 'manual',
+    ip: req.ip ?? null,
+  });
+
+  return res.json({ ok: true, ...result });
 });
 
 campagnesRouter.post('/:id/close', (req, res) => {

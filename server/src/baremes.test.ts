@@ -6,6 +6,11 @@ import { findBareme } from './calculator';
 
 function resetTables() {
   initSchema();
+  db.exec('DELETE FROM notifications_email');
+  db.exec('DELETE FROM invitation_magic_links');
+  db.exec('DELETE FROM campagne_jobs');
+  db.exec('DELETE FROM mises_en_demeure');
+  db.exec('DELETE FROM campagnes');
   db.exec('DELETE FROM pieces_jointes');
   db.exec('DELETE FROM baremes');
   db.exec('DELETE FROM bareme_activation');

@@ -48,6 +48,8 @@ export default function AssujettiDetail() {
   const { id } = useParams();
   const [data, setData] = useState<Detail | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [invitationStatus, setInvitationStatus] = useState<string | null>(null);
+  const [sendingInvitation, setSendingInvitation] = useState(false);
   const { hasRole } = useAuth();
 
   const load = () => {
@@ -69,6 +71,42 @@ export default function AssujettiDetail() {
     }
   };
 
+  const renvoyerInvitation = async () => {
+    if (!data) return;
+    setSendingInvitation(true);
+    setInvitationStatus(null);
+    setErr(null);
+
+    try {
+      const campagne = await api<{ campagne: { id: number; statut: string } | null }>('/api/campagnes/active');
+      if (!campagne.campagne || campagne.campagne.statut !== 'ouverte') {
+        throw new Error('Aucune campagne ouverte pour renvoyer une invitation');
+      }
+
+      const result = await api<{ ok: boolean; sent: number; failed: number; skipped: number }>(
+        `/api/campagnes/${campagne.campagne.id}/envoyer-invitations`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ assujetti_id: data.id }),
+        },
+      );
+
+      if (result.sent > 0) {
+        setInvitationStatus('Invitation renvoyee avec succes.');
+      } else if (result.skipped > 0) {
+        setInvitationStatus("Aucun envoi: assujetti non eligible (statut/email).");
+      } else if (result.failed > 0) {
+        setInvitationStatus("L'invitation n'a pas pu etre envoyee.");
+      } else {
+        setInvitationStatus('Aucun envoi effectue.');
+      }
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setSendingInvitation(false);
+    }
+  };
+
   if (err) return <div className="alert error">{err}</div>;
   if (!data) return <div>Chargement...</div>;
 
@@ -80,9 +118,15 @@ export default function AssujettiDetail() {
           <p>{data.identifiant_tlpe} &middot; SIRET {data.siret ?? 'non renseigne'} &middot; <span className="badge">{data.statut}</span></p>
         </div>
         {hasRole('admin', 'gestionnaire') && (
-          <button className="btn" onClick={ouvrirDeclaration}>Ouvrir declaration {new Date().getFullYear()}</button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn" onClick={ouvrirDeclaration}>Ouvrir declaration {new Date().getFullYear()}</button>
+            <button className="btn secondary" onClick={renvoyerInvitation} disabled={sendingInvitation}>
+              {sendingInvitation ? 'Envoi...' : "Renvoyer l'invitation"}
+            </button>
+          </div>
         )}
       </div>
+      {invitationStatus && <div className="alert success" style={{ marginBottom: 16 }}>{invitationStatus}</div>}
 
       <div className="grid cols-2">
         <div className="card">
