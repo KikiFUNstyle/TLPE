@@ -369,15 +369,20 @@ declarationsRouter.post('/:id/soumettre', requireRole('admin', 'gestionnaire', '
     });
   } catch (error) {
     // Revenir en brouillon si la generation d'accuse echoue pour permettre une resoumission
-    db.prepare(
-      `UPDATE declarations
-       SET statut = 'brouillon',
-           date_soumission = NULL,
-           hash_soumission = NULL,
-           alerte_gestionnaire = 0
-       WHERE id = ?
-         AND statut = 'soumise'`,
-    ).run(decl.id);
+    try {
+      db.prepare(
+        `UPDATE declarations
+         SET statut = 'brouillon',
+             date_soumission = NULL,
+             hash_soumission = NULL,
+             alerte_gestionnaire = 0
+         WHERE id = ?
+           AND statut = 'soumise'`,
+      ).run(decl.id);
+    } catch (rollbackError) {
+      // eslint-disable-next-line no-console
+      console.error('[TLPE] Echec rollback soumission declaration', rollbackError);
+    }
 
     // eslint-disable-next-line no-console
     console.error('[TLPE] Erreur generation accuse declaration', error);

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { api, getToken } from '../api';
+import { api, clearToken, getToken } from '../api';
 import { formatEuro } from '../format';
 import { useAuth } from '../auth';
 
@@ -123,6 +123,11 @@ export default function DeclarationDetail() {
       });
 
       if (!response.ok) {
+        if (response.status === 401) {
+          clearToken();
+          window.location.href = '/login';
+          return;
+        }
         const contentType = response.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
           const body = await response.json();
