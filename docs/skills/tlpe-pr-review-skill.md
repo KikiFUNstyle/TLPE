@@ -58,6 +58,13 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
 - Maintenir `.gitignore` aligné avec les nouveaux répertoires de sorties runtime avant push.
 - En review, confirmer qu'aucun fichier binaire/généré n'est commité par inadvertance.
 
+### 9) KPI Dashboard déclaratif (appris sur US3.7)
+- Vérifier que `declarations_recues` ne compte que `soumise|validee|rejetee` (jamais `brouillon`).
+- Vérifier que la décomposition (`soumises`, `validées`, `rejetées`) est cohérente avec le total et le taux.
+- Vérifier que le drilldown est testé (au moins un cas par zone + un cas par type d'assujetti).
+- Vérifier que l'évolution journalière est bornée par la campagne active (`date_ouverture` → `date_limite_declaration`) et non une fenêtre implicite.
+- Vérifier un test backend dédié pour les KPI dashboard (pas seulement un test UI).
+
 ## Format de sortie review
 
 1. **Résumé**

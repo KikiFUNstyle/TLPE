@@ -26,7 +26,7 @@ basée sur les articles L2333-6 à L2333-16 du CGCT.
 | Titres de recettes + PDF (ordonnancement) | §7.1 | OK |
 | Paiements (5 modalités) + recouvrement | §7.2 | OK |
 | Contentieux / réclamations | §8 | OK |
-| Tableau de bord exécutif | §10.1 | OK |
+| Tableau de bord exécutif + KPI déclaratifs temps réel (US3.7: attendus/soumises/validées/rejetées, drilldown zone/type, évolution journalière, auto-refresh 5 min) | §10.1 / §5.4 | OK |
 | Authentification + RBAC (5 rôles) | §2 | OK |
 | Simulateur | §6.3 | OK |
 | Audit log (traçabilité) | §12.2 | OK |
@@ -76,6 +76,9 @@ Ouvrir ensuite http://localhost:5173.
   - `GET /api/declarations/receipt/verify/:token` retourne `verified=true` sans authentification
   - `GET /api/declarations/:id/receipt/pdf` télécharge l'accusé PDF avec QR code
   - `DeclarationDetail.tsx` affiche le statut email d'envoi de l'accusé + bouton de téléchargement
+- Smoke test US3.7 :
+  - `GET /api/dashboard` expose `operationnel.declarations_soumises|validees|rejetees`, `drilldown.by_zone`, `drilldown.by_type_assujetti`, `evolution_journaliere`
+  - le dashboard affiche le taux de déclaration, l'évolution vs N-1, le drilldown par zone/type et le graphe d'évolution journalière
 
 ## API pièces jointes (US2.5)
 
