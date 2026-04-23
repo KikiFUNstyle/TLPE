@@ -15,6 +15,7 @@ interface Ligne {
   adresse_ville: string | null;
   surface_declaree: number;
   nombre_faces: number;
+  quote_part: number;
   date_pose: string | null;
   date_depose: string | null;
   tarif_applique: number | null;
@@ -80,6 +81,7 @@ export default function DeclarationDetail() {
             dispositif_id: l.dispositif_id,
             surface_declaree: Number(l.surface_declaree),
             nombre_faces: Number(l.nombre_faces),
+            quote_part: Number(l.quote_part ?? 1),
             date_pose: l.date_pose || null,
             date_depose: l.date_depose || null,
           })),
@@ -191,14 +193,14 @@ export default function DeclarationDetail() {
         <table className="table">
           <thead>
             <tr>
-              <th>Dispositif</th><th>Type</th><th>Surface (m²)</th><th>Faces</th>
+              <th>Dispositif</th><th>Type</th><th>Surface (m²)</th><th>Faces</th><th>Quote-part</th>
               <th>Pose</th><th>Depose</th>
               {!canEdit && <><th>Tarif</th><th>Coef</th><th>Prorata</th><th>Montant</th></>}
             </tr>
           </thead>
           <tbody>
             {decl.lignes.length === 0 ? (
-              <tr><td colSpan={canEdit ? 6 : 10} className="empty">Aucun dispositif.</td></tr>
+              <tr><td colSpan={canEdit ? 7 : 11} className="empty">Aucun dispositif.</td></tr>
             ) : decl.lignes.map((l, idx) => (
               <tr key={l.id}>
                 <td>
@@ -222,6 +224,19 @@ export default function DeclarationDetail() {
                     </select>
                   ) : l.nombre_faces}
                 </td>
+                <td>
+                  {canEdit ? (
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      max="1"
+                      value={l.quote_part ?? 1}
+                      onChange={(e) => updateLigne(idx, { quote_part: Number(e.target.value) })}
+                      style={{ width: 90 }}
+                    />
+                  ) : `${Math.round((l.quote_part ?? 1) * 100)} %`}
+                </td>
                 <td>{canEdit ? <input type="date" value={l.date_pose || ''} onChange={(e) => updateLigne(idx, { date_pose: e.target.value })} /> : l.date_pose || '-'}</td>
                 <td>{canEdit ? <input type="date" value={l.date_depose || ''} onChange={(e) => updateLigne(idx, { date_depose: e.target.value })} /> : l.date_depose || '-'}</td>
                 {!canEdit && <>
@@ -236,7 +251,7 @@ export default function DeclarationDetail() {
           {!canEdit && decl.montant_total !== null && (
             <tfoot>
               <tr>
-                <td colSpan={9} style={{ textAlign: 'right', fontWeight: 600 }}>Total (arrondi euro inferieur) :</td>
+                <td colSpan={10} style={{ textAlign: 'right', fontWeight: 600 }}>Total (arrondi euro inferieur) :</td>
                 <td style={{ fontWeight: 700, color: 'var(--c-primary)' }}>{formatEuro(decl.montant_total)}</td>
               </tr>
             </tfoot>

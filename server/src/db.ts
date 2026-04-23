@@ -11,9 +11,20 @@ export const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
+export function resolveSchemaPath(currentDir = __dirname) {
+  const candidates = [
+    path.join(currentDir, 'schema.sql'),
+    path.resolve(currentDir, '..', 'src', 'schema.sql'),
+  ];
+  const schemaPath = candidates.find((candidate) => fs.existsSync(candidate));
+  if (!schemaPath) {
+    throw new Error(`Schema SQL introuvable. Chemins testes: ${candidates.join(', ')}`);
+  }
+  return schemaPath;
+}
+
 export function initSchema() {
-  const schemaPath = path.join(__dirname, 'schema.sql');
-  const sql = fs.readFileSync(schemaPath, 'utf-8');
+  const sql = fs.readFileSync(resolveSchemaPath(), 'utf-8');
   db.exec(sql);
 
   // migration legacy -> ajoute geometry sur zones si la table existe deja
@@ -76,10 +87,105 @@ export function initSchema() {
       | undefined
   )?.name === 'declarations';
   if (hasDeclarations) {
-    const declarationColumns = db.prepare("PRAGMA table_info('declarations')").all() as Array<{ name: string }>;
-    const hasAlerteGestionnaire = declarationColumns.some((col) => col.name === 'alerte_gestionnaire');
-    if (!hasAlerteGestionnaire) {
-      db.exec("ALTER TABLE declarations ADD COLUMN alerte_gestionnaire INTEGER NOT NULL DEFAULT 0");
+  const declarationColumns = db.prepare("PRAGMA table_info('declarations')").all() as Array<{ name: string }>;
+  const hasAlerteGestionnaire = declarationColumns.some((col) => col.name === 'alerte_gestionnaire');
+  if (!hasAlerteGestionnaire) {
+    db.exec("ALTER TABLE declarations ADD COLUMN alerte_gestionnaire INTEGER NOT NULL DEFAULT 0");
+  }
+  const hasHashSoumission = declarationColumns.some((col) => col.name === 'hash_soumission');
+  if (!hasHashSoumission) {
+    db.exec("ALTER TABLE declarations ADD COLUMN hash_soumission TEXT");
+  }
+}
+
+  // migration legacy -> ajoute quote_part sur lignes_declaration avec contrainte CHECK [0,1]
+  const lignesDeclarationSql = (
+    db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'lignes_declaration'").get() as
+      | { sql: string }
+      | undefined
+  )?.sql;
+  const hasLignesDeclaration = Boolean(lignesDeclarationSql);
+  if (hasLignesDeclaration) {
+    const lignesColumns = db.prepare("PRAGMA table_info('lignes_declaration')").all() as Array<{ name: string }>;
+    const hasQuotePart = lignesColumns.some((col) => col.name === 'quote_part');
+    const hasQuotePartCheck = /quote_part\s+REAL\s+NOT\s+NULL\s+DEFAULT\s+1(?:\.0)?\s+CHECK\s*\(\s*quote_part\s*>=\s*0\s+AND\s+quote_part\s*<=\s*1\s*\)/i.test(
+      lignesDeclarationSql ?? '',
+    );
+
+    if (!hasQuotePart || !hasQuotePartCheck) {
+      if (hasQuotePart) {
+        const invalidQuotePartCount = (
+          db
+            .prepare(
+              `SELECT COUNT(*) AS c
+               FROM lignes_declaration
+               WHERE quote_part IS NULL OR quote_part < 0 OR quote_part > 1`,
+            )
+            .get() as { c: number }
+        ).c;
+
+        if (invalidQuotePartCount > 0) {
+          throw new Error(
+            `Migration lignes_declaration.quote_part impossible: ${invalidQuotePartCount} ligne(s) ont une quote-part invalide`,
+          );
+        }
+      }
+
+      db.pragma('foreign_keys = OFF');
+      try {
+        db.exec('BEGIN TRANSACTION');
+        try {
+          db.exec(`
+            CREATE TABLE lignes_declaration_new (
+              id                INTEGER PRIMARY KEY AUTOINCREMENT,
+              declaration_id    INTEGER NOT NULL,
+              dispositif_id     INTEGER NOT NULL,
+              surface_declaree  REAL NOT NULL,
+              nombre_faces      INTEGER NOT NULL DEFAULT 1,
+              quote_part        REAL NOT NULL DEFAULT 1.0 CHECK (quote_part >= 0 AND quote_part <= 1),
+              date_pose         TEXT,
+              date_depose       TEXT,
+              bareme_id         INTEGER,
+              tarif_applique    REAL,
+              coefficient_zone  REAL,
+              prorata           REAL,
+              montant_ligne     REAL,
+              FOREIGN KEY (declaration_id) REFERENCES declarations(id) ON DELETE CASCADE,
+              FOREIGN KEY (dispositif_id) REFERENCES dispositifs(id),
+              FOREIGN KEY (bareme_id) REFERENCES baremes(id)
+            );
+
+            INSERT INTO lignes_declaration_new (
+              id, declaration_id, dispositif_id, surface_declaree, nombre_faces, quote_part, date_pose, date_depose,
+              bareme_id, tarif_applique, coefficient_zone, prorata, montant_ligne
+            )
+            SELECT
+              id,
+              declaration_id,
+              dispositif_id,
+              surface_declaree,
+              nombre_faces,
+              ${hasQuotePart ? 'quote_part' : '1.0'},
+              date_pose,
+              date_depose,
+              bareme_id,
+              tarif_applique,
+              coefficient_zone,
+              prorata,
+              montant_ligne
+            FROM lignes_declaration;
+
+            DROP TABLE lignes_declaration;
+            ALTER TABLE lignes_declaration_new RENAME TO lignes_declaration;
+          `);
+          db.exec('COMMIT');
+        } catch (error) {
+          db.exec('ROLLBACK');
+          throw error;
+        }
+      } finally {
+        db.pragma('foreign_keys = ON');
+      }
     }
   }
 

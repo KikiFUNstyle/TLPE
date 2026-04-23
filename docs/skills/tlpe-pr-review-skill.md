@@ -65,6 +65,18 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
 - Vérifier que l'évolution journalière est bornée par la campagne active (`date_ouverture` → `date_limite_declaration`) et non une fenêtre implicite.
 - Vérifier un test backend dédié pour les KPI dashboard (pas seulement un test UI).
 
+### 10) Démarrage prod & assets runtime (appris sur US4.1)
+- Vérifier le démarrage **après build** avec `npm start`, pas seulement en mode dev/test.
+- Si le backend charge des assets runtime (ex: `schema.sql`, templates PDF, fichiers statiques), vérifier qu'ils sont disponibles depuis `dist/` ou qu'un fallback explicite vers `src/` existe.
+- Ajouter un test de non-régression quand un chemin runtime dépend de `__dirname` pour éviter les démarrages cassés en production.
+
+### 11) Quote-part dispositifs numériques partagés (appris sur US4.1)
+- Vérifier la présence d'un `CHECK (quote_part >= 0 AND quote_part <= 1)` au schéma + migration runtime idempotente (`ALTER TABLE` si colonne absente).
+- Vérifier que la validation API bloque les payloads hors plage `[0,1]` et rejette toute somme de quote-parts `> 1.0` pour un même dispositif dans une même déclaration.
+- Vérifier que le moteur de calcul applique la quote-part **après** barème/prorata/coefficient/exonération, puis arrondi métier inchangé (euro inférieur).
+- Vérifier au moins 2 tests unitaires dédiés: cas multi-annonceurs (2/3 quote-parts) et cas d'entrée invalide (`quote_part > 1`).
+- Vérifier la restitution UI/PDF: saisie avec défaut `1.0` et affichage explicite du pourcentage (ex. `33 %`) sur le titre de recettes.
+
 ## Format de sortie review
 
 1. **Résumé**

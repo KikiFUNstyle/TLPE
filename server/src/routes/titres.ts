@@ -134,6 +134,7 @@ titresRouter.get('/:id/pdf', (req, res) => {
     adresse_ville: string | null;
     surface_declaree: number;
     nombre_faces: number;
+    quote_part: number;
     tarif_applique: number | null;
     coefficient_zone: number | null;
     prorata: number | null;
@@ -177,14 +178,15 @@ titresRouter.get('/:id/pdf', (req, res) => {
   doc.fontSize(9);
   const tableTop = doc.y;
   const cols = [
-    { label: 'Dispositif', x: 48, w: 90 },
-    { label: 'Type', x: 138, w: 110 },
-    { label: 'Surf.', x: 248, w: 40 },
-    { label: 'Faces', x: 288, w: 35 },
-    { label: 'Tarif', x: 323, w: 50 },
-    { label: 'Coef.', x: 373, w: 40 },
-    { label: 'Prorata', x: 413, w: 50 },
-    { label: 'Montant', x: 463, w: 80 },
+    { label: 'Dispositif', x: 48, w: 80 },
+    { label: 'Type', x: 128, w: 100 },
+    { label: 'Surf.', x: 228, w: 36 },
+    { label: 'Faces', x: 264, w: 34 },
+    { label: 'Quote-part', x: 298, w: 58 },
+    { label: 'Tarif', x: 356, w: 44 },
+    { label: 'Coef.', x: 400, w: 34 },
+    { label: 'Prorata', x: 434, w: 44 },
+    { label: 'Montant', x: 478, w: 69 },
   ];
   cols.forEach((c) => doc.text(c.label, c.x, tableTop, { width: c.w }));
   doc.moveTo(48, tableTop + 14).lineTo(547, tableTop + 14).stroke();
@@ -194,10 +196,12 @@ titresRouter.get('/:id/pdf', (req, res) => {
     doc.text(l.type_libelle, cols[1].x, y, { width: cols[1].w });
     doc.text(String(l.surface_declaree), cols[2].x, y, { width: cols[2].w });
     doc.text(String(l.nombre_faces), cols[3].x, y, { width: cols[3].w });
-    doc.text(l.tarif_applique !== null ? `${l.tarif_applique}` : '-', cols[4].x, y, { width: cols[4].w });
-    doc.text(l.coefficient_zone !== null ? `${l.coefficient_zone}` : '-', cols[5].x, y, { width: cols[5].w });
-    doc.text(l.prorata !== null ? l.prorata.toFixed(2) : '-', cols[6].x, y, { width: cols[6].w });
-    doc.text(`${(l.montant_ligne ?? 0).toFixed(2)} EUR`, cols[7].x, y, { width: cols[7].w });
+    doc.text(`${Math.round((l.quote_part ?? 1) * 100)} %`, cols[4].x, y, { width: cols[4].w });
+    doc.text(l.tarif_applique !== null ? `${l.tarif_applique}` : '-', cols[5].x, y, { width: cols[5].w });
+    doc.text(l.coefficient_zone !== null ? `${l.coefficient_zone}` : '-', cols[6].x, y, { width: cols[6].w });
+    doc.text(l.prorata !== null ? l.prorata.toFixed(2) : '-', cols[7].x, y, { width: cols[7].w });
+    // 102.30 -> 102 €
+    doc.text(`${(l.montant_ligne ?? 0).toFixed(2)} EUR`, cols[8].x, y, { width: cols[8].w });
     y += 16;
   }
   doc.moveTo(48, y + 2).lineTo(547, y + 2).stroke();
