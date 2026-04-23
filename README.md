@@ -17,6 +17,7 @@ basée sur les articles L2333-6 à L2333-16 du CGCT.
 | Assujettis (CRUD, contrôle SIRET Luhn) | §4.1 | OK |
 | Import en masse assujettis (CSV/XLSX + pré-contrôle + enrichissement SIRENE) | §4.3 / §13.1 | OK |
 | Dispositifs (CRUD, géolocalisation) | §4.2 | OK |
+| Pièces jointes (upload/download, soft delete, ACL contribuable, limites taille) | §4.2 / §5.2 / §8.2 | OK |
 | Moteur de calcul TLPE (tranches, prorata, coef. zone, double face, forfait, exonération) | §6 | OK + tests |
 | Déclarations (brouillon → soumission → validation → rejet) | §5 | OK |
 | Hash SHA-256 de soumission (accusé) | §5.2 | OK |
@@ -56,6 +57,35 @@ npm test
 ```
 
 Ouvrir ensuite http://localhost:5173.
+
+## Vérification de lancement appli (obligatoire TLPE loop)
+
+- `npm run dev` : démarrage backend + frontend sans erreur fatale
+- Smoke test backend : `GET /api/health` → `{"status":"ok"...}`
+- Smoke test pièces jointes : login + création dispositif + upload PDF + download + soft delete + vérif 404 post-delete (script Node)
+
+## API pièces jointes (US2.5)
+
+Routes backend (`/api/pieces-jointes`), authentifiées:
+
+- `POST /api/pieces-jointes` (multipart/form-data)
+  - champs requis: `entite` (`dispositif|declaration|contentieux`), `entite_id`, `fichier`
+  - MIME autorisés: `image/jpeg`, `image/png`, `application/pdf`
+  - limites: 10 Mo par fichier, 50 Mo cumulés par entité (hors pièces soft-delete)
+- `GET /api/pieces-jointes/:id`
+  - télécharge le fichier (`Content-Disposition: attachment`)
+  - contrôle d'accès: un `contribuable` ne peut accéder qu'à ses entités
+- `DELETE /api/pieces-jointes/:id`
+  - suppression logique (`deleted_at`)
+
+Stockage:
+
+- par défaut disque local: `server/data/uploads/`
+- mode S3-compatible via `TLPE_UPLOAD_STORAGE=s3` + variables `TLPE_S3_*`
+
+Audit:
+
+- `logAudit()` à chaque upload / download / soft delete (entité `piece_jointe`)
 
 ## Import en masse des assujettis (US2.1)
 

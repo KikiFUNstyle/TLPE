@@ -245,6 +245,25 @@ CREATE TABLE IF NOT EXISTS contentieux (
 );
 
 -- =====================================================================
+-- Pieces jointes
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS pieces_jointes (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  entite        TEXT NOT NULL CHECK (entite IN ('dispositif','declaration','contentieux')),
+  entite_id     INTEGER NOT NULL,
+  nom           TEXT NOT NULL,
+  mime_type     TEXT NOT NULL,
+  taille        INTEGER NOT NULL CHECK (taille > 0),
+  chemin        TEXT NOT NULL,
+  uploaded_by   INTEGER,
+  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  deleted_at    TEXT,
+  FOREIGN KEY (uploaded_by) REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_pieces_jointes_entite ON pieces_jointes(entite, entite_id, deleted_at);
+CREATE INDEX IF NOT EXISTS idx_pieces_jointes_uploaded_by ON pieces_jointes(uploaded_by);
+
+-- =====================================================================
 -- Audit log (traçabilite cf. section 12.2)
 -- =====================================================================
 CREATE TABLE IF NOT EXISTS audit_log (

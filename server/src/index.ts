@@ -13,6 +13,7 @@ import { dashboardRouter } from './routes/dashboard';
 import { simulateurRouter } from './routes/simulateur';
 import { contentieuxRouter } from './routes/contentieux';
 import { geocodingRouter } from './routes/geocoding';
+import { piecesJointesRouter } from './routes/piecesJointes';
 
 const PORT = Number(process.env.PORT || 4000);
 
@@ -45,6 +46,7 @@ app.use('/api/dashboard', dashboardRouter);
 app.use('/api/simulateur', simulateurRouter);
 app.use('/api/contentieux', contentieuxRouter);
 app.use('/api/geocoding', geocodingRouter);
+app.use('/api/pieces-jointes', piecesJointesRouter);
 
 // Fichiers statiques du front en prod
 const clientDist = path.resolve(__dirname, '..', '..', 'client', 'dist');

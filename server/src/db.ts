@@ -22,6 +22,20 @@ export function initSchema() {
   if (!hasGeometry) {
     db.exec('ALTER TABLE zones ADD COLUMN geometry TEXT');
   }
+
+  // migration legacy -> ajoute deleted_at sur pieces_jointes si table deja presente
+  const hasPiecesJointes = (
+    db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'pieces_jointes'").get() as
+      | { name: string }
+      | undefined
+  )?.name === 'pieces_jointes';
+  if (hasPiecesJointes) {
+    const pieceColumns = db.prepare("PRAGMA table_info('pieces_jointes')").all() as Array<{ name: string }>;
+    const hasDeletedAt = pieceColumns.some((col) => col.name === 'deleted_at');
+    if (!hasDeletedAt) {
+      db.exec('ALTER TABLE pieces_jointes ADD COLUMN deleted_at TEXT');
+    }
+  }
 }
 
 export function logAudit(params: {
