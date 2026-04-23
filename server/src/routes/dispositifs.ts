@@ -21,10 +21,13 @@ function genIdentifiantDispositif(): string {
 }
 
 dispositifsRouter.get('/', (req, res) => {
-  const { assujetti_id, statut, q } = req.query as {
+  const { assujetti_id, statut, q, zone_id, type_id, annee } = req.query as {
     assujetti_id?: string;
     statut?: string;
     q?: string;
+    zone_id?: string;
+    type_id?: string;
+    annee?: string;
   };
 
   const conditions: string[] = [];
@@ -41,6 +44,24 @@ dispositifsRouter.get('/', (req, res) => {
   if (statut) {
     conditions.push('d.statut = ?');
     params.push(statut);
+  }
+  if (zone_id) {
+    conditions.push('d.zone_id = ?');
+    params.push(Number(zone_id));
+  }
+  if (type_id) {
+    conditions.push('d.type_id = ?');
+    params.push(Number(type_id));
+  }
+  if (annee) {
+    conditions.push(`EXISTS (
+      SELECT 1
+      FROM lignes_declaration ld
+      JOIN declarations dec ON dec.id = ld.declaration_id
+      WHERE ld.dispositif_id = d.id
+        AND dec.annee = ?
+    )`);
+    params.push(Number(annee));
   }
   if (q) {
     conditions.push('(d.identifiant LIKE ? OR d.adresse_ville LIKE ? OR d.adresse_rue LIKE ?)');
@@ -60,6 +81,17 @@ dispositifsRouter.get('/', (req, res) => {
     )
     .all(...params);
   res.json(rows);
+});
+
+dispositifsRouter.get('/annees', (_req, res) => {
+  const rows = db
+    .prepare(
+      `SELECT DISTINCT dec.annee
+       FROM declarations dec
+       ORDER BY dec.annee DESC`,
+    )
+    .all() as Array<{ annee: number }>;
+  res.json(rows.map((r) => r.annee));
 });
 
 const dispositifSchema = z.object({
@@ -239,6 +271,26 @@ dispositifsRouter.put('/:id', requireRole('admin', 'gestionnaire', 'controleur')
   if (info.changes === 0) return res.status(404).json({ error: 'Introuvable' });
   logAudit({ userId: req.user!.id, action: 'update', entite: 'dispositif', entiteId: Number(req.params.id) });
   res.json({ ok: true });
+});
+
+dispositifsRouter.get('/:id', (req, res) => {
+  const row = db
+    .prepare(
+      `SELECT d.*, t.libelle AS type_libelle, t.categorie, z.libelle AS zone_libelle, z.coefficient AS zone_coefficient,
+              a.raison_sociale AS assujetti_raison_sociale, a.identifiant_tlpe
+       FROM dispositifs d
+       LEFT JOIN types_dispositifs t ON t.id = d.type_id
+       LEFT JOIN zones z ON z.id = d.zone_id
+       LEFT JOIN assujettis a ON a.id = d.assujetti_id
+       WHERE d.id = ?`,
+    )
+    .get(req.params.id) as Record<string, unknown> | undefined;
+
+  if (!row) return res.status(404).json({ error: 'Introuvable' });
+  if (req.user!.role === 'contribuable' && row.assujetti_id !== req.user!.assujetti_id) {
+    return res.status(403).json({ error: 'Droits insuffisants' });
+  }
+  res.json(row);
 });
 
 dispositifsRouter.delete('/:id', requireRole('admin', 'gestionnaire'), (req, res) => {
