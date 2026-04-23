@@ -3,16 +3,25 @@
 const TOKEN_KEY = 'tlpe_token';
 
 export function getToken(): string | null {
+  if (typeof localStorage === 'undefined') return null;
   return localStorage.getItem(TOKEN_KEY);
 }
 export function setToken(token: string) {
+  if (typeof localStorage === 'undefined') return;
   localStorage.setItem(TOKEN_KEY, token);
 }
 export function clearToken() {
+  if (typeof localStorage === 'undefined') return;
   localStorage.removeItem(TOKEN_KEY);
 }
 
-function buildHeaders(options: RequestInit = {}, contentType = true): Record<string, string> {
+export function shouldSendJsonContentType(options: RequestInit = {}): boolean {
+  const body = options.body;
+  if (body === undefined || body === null) return false;
+  return !(body instanceof FormData || body instanceof URLSearchParams || body instanceof Blob || body instanceof ArrayBuffer);
+}
+
+export function buildHeaders(options: RequestInit = {}, contentType = true): Record<string, string> {
   const token = getToken();
   const headers: Record<string, string> = {
     ...((options.headers as Record<string, string>) || {}),
@@ -55,10 +64,34 @@ export async function api<T = unknown>(
   return (await res.text()) as unknown as T;
 }
 
+export function extractFilenameFromDisposition(contentDisposition: string | null): string | null {
+  if (!contentDisposition) return null;
+  const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match) {
+    return decodeURIComponent(utf8Match[1]);
+  }
+  const asciiMatch = contentDisposition.match(/filename="?([^";]+)"?/i);
+  return asciiMatch ? asciiMatch[1] : null;
+}
+
 export async function apiBlob(path: string, options: RequestInit = {}): Promise<Blob> {
-  const res = await fetch(path, { ...options, headers: buildHeaders(options, false) });
+  const res = await fetch(path, { ...options, headers: buildHeaders(options, shouldSendJsonContentType(options)) });
   if (!res.ok) {
     await throwApiError(res);
   }
   return res.blob();
+}
+
+export async function apiBlobWithMetadata(
+  path: string,
+  options: RequestInit = {},
+): Promise<{ blob: Blob; filename: string | null }> {
+  const res = await fetch(path, { ...options, headers: buildHeaders(options, shouldSendJsonContentType(options)) });
+  if (!res.ok) {
+    await throwApiError(res);
+  }
+  return {
+    blob: await res.blob(),
+    filename: extractFilenameFromDisposition(res.headers.get('content-disposition')),
+  };
 }

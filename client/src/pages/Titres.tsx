@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from 'react';
-import { api, apiBlob } from '../api';
+import { api, apiBlob, apiBlobWithMetadata } from '../api';
 import { formatDate, formatEuro } from '../format';
 import { useAuth } from '../auth';
 import { buildBordereauFilename, buildBordereauPath, canExportBordereau } from './titresBordereau';
@@ -107,7 +107,7 @@ export default function Titres() {
           ? { campagne_id: Number(selectedCampagneId), confirm_reexport: confirmReexport }
           : { date_debut: pesv2DateDebut, date_fin: pesv2DateFin, confirm_reexport: confirmReexport };
 
-      const blob = await apiBlob('/api/titres/export-pesv2', {
+      const { blob, filename } = await apiBlobWithMetadata('/api/titres/export-pesv2', {
         method: 'POST',
         body: JSON.stringify(payload),
       });
@@ -115,9 +115,10 @@ export default function Titres() {
       const anchor = document.createElement('a');
       anchor.href = href;
       anchor.download =
-        pesv2SelectionMode === 'campagne'
+        filename ||
+        (pesv2SelectionMode === 'campagne'
           ? `pesv2-campagne-${selectedCampagneId}.xml`
-          : `pesv2-${pesv2DateDebut}-${pesv2DateFin}.xml`;
+          : `pesv2-${pesv2DateDebut}-${pesv2DateFin}.xml`);
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();

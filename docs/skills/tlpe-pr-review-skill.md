@@ -60,6 +60,13 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
   - anti-réexport par défaut avec confirmation explicite et journal des titres déjà transmis,
   - incrément strict du numéro de bordereau / lot d'envoi,
   - persistance du hash XML + statut de validation dans la base.
+- Pour tout téléchargement binaire déclenché par un POST JSON, vérifier en review:
+  - `Content-Type: application/json` bien envoyé côté client,
+  - conservation du nom de fichier renvoyé par le backend (`Content-Disposition`) quand il porte un identifiant métier incrémental.
+- Pour toute nouvelle table métier SQLite, vérifier en review:
+  - migration runtime idempotente pour les bases legacy,
+  - nettoyage explicite des nouvelles tables dans les fixtures de tests qui purgent `campagnes`/tables parentes,
+  - non-régression sur une base locale préexistante (pas seulement sur une base de test vierge).
 - Commandes minimales à exécuter:
   - `npm test`
   - `npm run build`

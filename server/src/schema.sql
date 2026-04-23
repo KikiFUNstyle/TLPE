@@ -337,7 +337,12 @@ CREATE TABLE IF NOT EXISTS pesv2_exports (
   titres_count          INTEGER NOT NULL DEFAULT 0,
   total_montant         REAL NOT NULL DEFAULT 0,
   confirmation_reexport INTEGER NOT NULL DEFAULT 0 CHECK (confirmation_reexport IN (0,1)),
-  FOREIGN KEY (campagne_id) REFERENCES campagnes(id) ON DELETE SET NULL,
+  CHECK (
+    (selection_type = 'campagne' AND campagne_id IS NOT NULL AND date_debut IS NULL AND date_fin IS NULL)
+    OR
+    (selection_type = 'periode' AND campagne_id IS NULL AND date_debut IS NOT NULL AND date_fin IS NOT NULL AND date_debut <= date_fin)
+  ),
+  FOREIGN KEY (campagne_id) REFERENCES campagnes(id) ON DELETE RESTRICT,
   FOREIGN KEY (exported_by) REFERENCES users(id) ON DELETE SET NULL
 );
 CREATE INDEX IF NOT EXISTS idx_pesv2_exports_selection ON pesv2_exports(selection_type, campagne_id, date_debut, date_fin);

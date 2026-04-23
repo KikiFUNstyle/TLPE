@@ -189,6 +189,85 @@ export function initSchema() {
     }
   }
 
+  // migration legacy -> ajoute CHECK de sélection exclusive sur pesv2_exports
+  const pesv2ExportsSql = (
+    db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'pesv2_exports'").get() as
+      | { sql: string }
+      | undefined
+  )?.sql;
+  if (pesv2ExportsSql) {
+    const hasPesv2SelectionCheck = /CHECK\s*\([\s\S]*selection_type = 'campagne'[\s\S]*selection_type = 'periode'[\s\S]*date_debut <= date_fin[\s\S]*\)/i.test(
+      pesv2ExportsSql,
+    );
+    if (!hasPesv2SelectionCheck) {
+      db.pragma('foreign_keys = OFF');
+      try {
+        db.exec('BEGIN TRANSACTION');
+        try {
+          db.exec(`
+            CREATE TABLE pesv2_exports_new (
+              id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+              numero_bordereau      INTEGER NOT NULL UNIQUE,
+              selection_type        TEXT NOT NULL CHECK (selection_type IN ('campagne','periode')),
+              campagne_id           INTEGER,
+              date_debut            TEXT,
+              date_fin              TEXT,
+              exported_at           TEXT NOT NULL DEFAULT (datetime('now')),
+              exported_by           INTEGER,
+              filename              TEXT NOT NULL,
+              xml_hash              TEXT NOT NULL,
+              xsd_validation_ok     INTEGER NOT NULL DEFAULT 0 CHECK (xsd_validation_ok IN (0,1)),
+              xsd_validation_report TEXT,
+              titres_count          INTEGER NOT NULL DEFAULT 0,
+              total_montant         REAL NOT NULL DEFAULT 0,
+              confirmation_reexport INTEGER NOT NULL DEFAULT 0 CHECK (confirmation_reexport IN (0,1)),
+              CHECK (
+                (selection_type = 'campagne' AND campagne_id IS NOT NULL AND date_debut IS NULL AND date_fin IS NULL)
+                OR
+                (selection_type = 'periode' AND campagne_id IS NULL AND date_debut IS NOT NULL AND date_fin IS NOT NULL AND date_debut <= date_fin)
+              ),
+              FOREIGN KEY (campagne_id) REFERENCES campagnes(id) ON DELETE RESTRICT,
+              FOREIGN KEY (exported_by) REFERENCES users(id) ON DELETE SET NULL
+            );
+
+            INSERT INTO pesv2_exports_new (
+              id, numero_bordereau, selection_type, campagne_id, date_debut, date_fin, exported_at,
+              exported_by, filename, xml_hash, xsd_validation_ok, xsd_validation_report,
+              titres_count, total_montant, confirmation_reexport
+            )
+            SELECT
+              id,
+              numero_bordereau,
+              selection_type,
+              campagne_id,
+              date_debut,
+              date_fin,
+              exported_at,
+              exported_by,
+              filename,
+              xml_hash,
+              xsd_validation_ok,
+              xsd_validation_report,
+              titres_count,
+              total_montant,
+              confirmation_reexport
+            FROM pesv2_exports;
+
+            DROP TABLE pesv2_exports;
+            ALTER TABLE pesv2_exports_new RENAME TO pesv2_exports;
+            CREATE INDEX IF NOT EXISTS idx_pesv2_exports_selection ON pesv2_exports(selection_type, campagne_id, date_debut, date_fin);
+          `);
+          db.exec('COMMIT');
+        } catch (error) {
+          db.exec('ROLLBACK');
+          throw error;
+        }
+      } finally {
+        db.pragma('foreign_keys = ON');
+      }
+    }
+  }
+
   // migration legacy -> ajoute la FK campagnes.created_by -> users(id)
   const campagneFks = db.prepare("PRAGMA foreign_key_list('campagnes')").all() as Array<{ from: string; table: string }>;
   const hasCampagneCreatedByFk = campagneFks.some((fk) => fk.from === 'created_by' && fk.table === 'users');

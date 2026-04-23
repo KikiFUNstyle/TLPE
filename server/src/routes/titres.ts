@@ -106,11 +106,14 @@ function buildPesv2RowsWhere(whereClause: string, params: unknown[]): Pesv2Row[]
 
 function loadPesv2Selection(input: { campagne_id?: number; date_debut?: string; date_fin?: string }): Pesv2Selection {
   if (input.campagne_id !== undefined) {
-    const campagne = db.prepare('SELECT id, annee FROM campagnes WHERE id = ?').get(input.campagne_id) as
-      | { id: number; annee: number }
+    const campagne = db.prepare('SELECT id, annee, statut FROM campagnes WHERE id = ?').get(input.campagne_id) as
+      | { id: number; annee: number; statut: string }
       | undefined;
     if (!campagne) {
       throw new Error('Campagne introuvable');
+    }
+    if (campagne.statut !== 'cloturee') {
+      throw new Error('Seules les campagnes clôturées peuvent être exportées en PESV2');
     }
 
     return {
