@@ -49,6 +49,11 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
 - Ajouter des tests d'idempotence pour tout envoi batch/notification.
 - Vérifier qu'un test échoue avant fix (TDD) quand c'est possible.
 - Pour toute US avec document généré (PDF, accusé, courrier), ajouter un test API qui valide la présence des métadonnées de restitution (`token/hash/download_url`) et un test service qui vérifie la persistance + réutilisation idempotente.
+- Pour tout export binaire métier (PDF/XLSX bordereau, titre, rapport), vérifier en review:
+  - contrôle d'accès explicite par rôle,
+  - filtrage métier exact des données exportées,
+  - présence d'un horodatage + hash du contenu restitué,
+  - écriture d'une trace `audit_log` dédiée à l'export.
 - Commandes minimales à exécuter:
   - `npm test`
   - `npm run build`
