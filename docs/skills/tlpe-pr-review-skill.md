@@ -17,6 +17,8 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
 - Pas de secrets hardcodés.
 - Validation d'entrée systématique (Zod côté routes).
 - Échec de validation = erreur 4xx (pas 500).
+- Pour tout téléchargement de fichier, interdire les contrôles de type `startsWith(...)` seuls: vérifier l'enracinement avec `path.relative(root, absolutePath)` et rejeter si `..` ou chemin absolu.
+- Pour tout stream de fichier (`createReadStream`), imposer un handler d'erreur explicite qui journalise et termine proprement la réponse.
 
 ### 3) DB & audit
 - Toute mutation métier sensible appelle `logAudit()`.
