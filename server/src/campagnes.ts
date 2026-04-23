@@ -158,7 +158,7 @@ function runMiseEnDemeureJPlus1(campagneId: number, userId: number, ip?: string 
            FROM declarations d
            WHERE d.assujetti_id = a.id
              AND d.annee = ?
-             AND d.statut IN ('soumise', 'validee')
+             AND d.statut IN ('soumise', 'validee', 'rejetee')
          )
        ORDER BY a.id`,
     )
