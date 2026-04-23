@@ -28,14 +28,21 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
 - Les erreurs API sont affichées de façon exploitable pour l'utilisateur.
 - Le flux UX principal est testé manuellement (liste, import, activation, rafraîchissement).
 
-### 5) Campagnes, jobs & notifications (appris sur US3.4)
-- Si une feature ajoute un job planifié (scheduler/cron), vérifier **idempotence** et absence de doublon d'envoi (même campagne + assujetti + niveau).
-- Vérifier l'éligibilité métier exacte avant envoi (assujetti actif, email présent, exclusion `soumise/validee`).
-- Vérifier la cohérence **schéma + migrations runtime + API** quand de nouvelles colonnes sont introduites (ex: `relance_j7_courrier`, `relance_niveau`, `piece_jointe_path`).
-- Vérifier qu'une action de clôture n'introduit pas d'effet de bord silencieux (exécution automatique de relance, payload de job, audit associé).
+### 5) Campagnes, jobs & notifications (appris sur US3.4/US3.5)
+- Si une feature ajoute un job planifié (scheduler/cron), vérifier **idempotence** et absence de doublon d'envoi (même campagne + assujetti + niveau/template).
+- Vérifier l'éligibilité métier exacte avant envoi (assujetti actif, exclusions de statuts correctes, année ciblée explicite).
+- Vérifier la cohérence **schéma + migrations runtime + API** quand de nouvelles colonnes sont introduites.
+- Vérifier qu'une action de clôture n'introduit pas d'effet de bord silencieux (payload de job, audit associé, date d'exécution attendue).
 - Vérifier la traçabilité complète: `notifications_email`, `campagne_jobs`, `audit_log`.
 
-### 6) Tests
+### 6) Règles spécifiques mises en demeure J+1 (US3.5)
+- Le déclenchement doit être basé sur `date_cloture + 1` (et non `date_limite_declaration`).
+- Les non-déclarants sont les assujettis actifs **sans déclaration soumise/validée** sur l'année de campagne.
+- La déclaration d'office doit être créée/normalisée au statut `en_instruction` avec marque explicite (commentaire/flag).
+- Le PDF de mise en demeure doit réutiliser l'historique N-1 (lignes de déclaration) et seulement fallback sur les dispositifs courants si l'historique est absent.
+- Si email manquant, tracer un échec explicite (`notifications_email.statut='echec'`) et conserver la mise en demeure en `a_traiter`.
+
+### 7) Tests
 - Couvrir happy path + edge cases + erreurs validation.
 - Ajouter des tests d'idempotence pour tout envoi batch/notification.
 - Vérifier qu'un test échoue avant fix (TDD) quand c'est possible.
