@@ -11,9 +11,20 @@ export const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
+export function resolveSchemaPath(currentDir = __dirname) {
+  const candidates = [
+    path.join(currentDir, 'schema.sql'),
+    path.resolve(currentDir, '..', 'src', 'schema.sql'),
+  ];
+  const schemaPath = candidates.find((candidate) => fs.existsSync(candidate));
+  if (!schemaPath) {
+    throw new Error(`Schema SQL introuvable. Chemins testes: ${candidates.join(', ')}`);
+  }
+  return schemaPath;
+}
+
 export function initSchema() {
-  const schemaPath = path.join(__dirname, 'schema.sql');
-  const sql = fs.readFileSync(schemaPath, 'utf-8');
+  const sql = fs.readFileSync(resolveSchemaPath(), 'utf-8');
   db.exec(sql);
 
   // migration legacy -> ajoute geometry sur zones si la table existe deja

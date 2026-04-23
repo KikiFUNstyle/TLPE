@@ -2,10 +2,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { db, initSchema } from './db';
+import { db, initSchema, resolveSchemaPath } from './db';
 import { closeCampagne, createCampagne, getCampagneActive, listCampagnes, openCampagne } from './campagnes';
 
 process.env.TLPE_EMAIL_DELIVERY_MODE = 'mock-success';
+
+test('resolveSchemaPath retombe sur le schema source si dist/schema.sql est absent', () => {
+  const fakeDistDir = path.join(__dirname, '..', 'dist');
+  const resolved = resolveSchemaPath(fakeDistDir);
+  assert.equal(resolved, path.join(__dirname, 'schema.sql'));
+  assert.equal(fs.existsSync(resolved), true);
+});
 
 function resetTables() {
   initSchema();
