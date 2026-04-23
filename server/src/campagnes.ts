@@ -99,7 +99,12 @@ function generateMiseEnDemeurePdf(input: {
   }
 
   const escapedLines = lines.map(escapePdf);
-  const textOps = escapedLines.map((line, i) => `${72} ${780 - i * 18} Td (${line}) Tj`).join(' ');
+  const textOps = escapedLines
+    .map((line, i) => {
+      if (i === 0) return `72 780 Td (${line}) Tj`;
+      return `0 -18 Td (${line}) Tj`;
+    })
+    .join(' ');
   const contentStream = `BT /F1 11 Tf ${textOps} ET`;
   const contentLength = Buffer.byteLength(contentStream, 'utf8');
 
