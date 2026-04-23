@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import express from 'express';
 import { db, initSchema } from './db';
 import { hashPassword, signToken, type AuthUser } from './auth';
@@ -274,4 +276,55 @@ test('POST /api/titres/export-pesv2 rejette une date de période invalide au for
 
   assert.equal(res.status, 400);
   assert.match(res.text, /Date invalide: 2026-02-31/);
+});
+
+test('POST /api/titres/export-pesv2 retourne 500 générique si le schéma XSD est indisponible', async () => {
+  const fx = resetFixtures();
+  const xsdPath = path.join(__dirname, 'xsd', 'pesv2-titres.xsd');
+  const backupPath = path.join(__dirname, 'xsd', 'pesv2-titres.xsd.bak');
+
+  fs.renameSync(xsdPath, backupPath);
+  try {
+    const res = await request({
+      method: 'POST',
+      path: '/api/titres/export-pesv2',
+      headers: makeAuthHeader(fx.financier),
+      body: { campagne_id: fx.campagneId },
+    });
+
+    assert.equal(res.status, 500);
+    assert.match(res.text, /Erreur interne export PESV2/);
+    assert.doesNotMatch(res.text, /Schéma XSD PESV2 introuvable/);
+  } finally {
+    fs.renameSync(backupPath, xsdPath);
+  }
+});
+
+test('POST /api/titres/export-pesv2 retourne 400 pour une campagne non clôturée', async () => {
+  const fx = resetFixtures();
+  db.prepare("UPDATE campagnes SET statut = 'ouverte' WHERE id = ?").run(fx.campagneId);
+
+  const res = await request({
+    method: 'POST',
+    path: '/api/titres/export-pesv2',
+    headers: makeAuthHeader(fx.financier),
+    body: { campagne_id: fx.campagneId },
+  });
+
+  assert.equal(res.status, 400);
+  assert.match(res.text, /campagnes clôturées/i);
+});
+
+test('POST /api/titres/export-pesv2 retourne 404 pour une campagne introuvable', async () => {
+  const fx = resetFixtures();
+
+  const res = await request({
+    method: 'POST',
+    path: '/api/titres/export-pesv2',
+    headers: makeAuthHeader(fx.financier),
+    body: { campagne_id: fx.campagneId + 999 },
+  });
+
+  assert.equal(res.status, 404);
+  assert.match(res.text, /Campagne introuvable/);
 });

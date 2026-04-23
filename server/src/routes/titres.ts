@@ -17,6 +17,16 @@ titresRouter.use(authMiddleware);
 const BORDEREAU_COLLECTIVITE = process.env.TLPE_COLLECTIVITE || 'Collectivite territoriale';
 const BORDEREAU_ORDONNATEUR = process.env.TLPE_ORDONNATEUR || 'Ordonnateur TLPE';
 
+class Pesv2RouteError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = 'Pesv2RouteError';
+  }
+}
+
 function genNumeroTitre(annee: number): string {
   const c = (db.prepare('SELECT COUNT(*) AS c FROM titres WHERE annee = ?').get(annee) as { c: number }).c;
   return `TIT-${annee}-${String(c + 1).padStart(6, '0')}`;
@@ -38,7 +48,7 @@ function xmlEscape(value: string | number | null | undefined): string {
 function normalizeIsoDate(date: string): string {
   const normalized = new Date(`${date}T00:00:00.000Z`).toISOString().slice(0, 10);
   if (normalized !== date) {
-    throw new Error(`Date invalide: ${date}`);
+    throw new Pesv2RouteError(`Date invalide: ${date}`, 400);
   }
   return normalized;
 }
@@ -50,7 +60,7 @@ function resolvePesv2XsdPath(currentDir = __dirname): string {
   ];
   const resolved = candidates.find((candidate) => fs.existsSync(candidate));
   if (!resolved) {
-    throw new Error(`Schéma XSD PESV2 introuvable. Chemins testes: ${candidates.join(', ')}`);
+    throw new Pesv2RouteError('Schéma XSD PESV2 introuvable', 500);
   }
   return resolved;
 }
@@ -110,10 +120,10 @@ function loadPesv2Selection(input: { campagne_id?: number; date_debut?: string; 
       | { id: number; annee: number; statut: string }
       | undefined;
     if (!campagne) {
-      throw new Error('Campagne introuvable');
+      throw new Pesv2RouteError('Campagne introuvable', 404);
     }
     if (campagne.statut !== 'cloturee') {
-      throw new Error('Seules les campagnes clôturées peuvent être exportées en PESV2');
+      throw new Pesv2RouteError('Seules les campagnes clôturées peuvent être exportées en PESV2', 400);
     }
 
     return {
@@ -534,7 +544,8 @@ titresRouter.post('/export-pesv2', requireRole('admin', 'financier'), (req, res)
     const built = buildPesv2Xml(selection, numeroBordereau, horodatageExport);
     const validation = validatePesv2Xml(built.xml);
     if (!validation.ok) {
-      return res.status(500).json({ error: `Validation XSD PESV2 en échec: ${validation.report}` });
+      console.error('[TLPE] Validation XSD PESV2 en échec', validation.report);
+      return res.status(500).json({ error: 'Erreur interne export PESV2' });
     }
 
     const exportInfo = db
@@ -593,9 +604,12 @@ titresRouter.post('/export-pesv2', requireRole('admin', 'financier'), (req, res)
     res.setHeader('Content-Disposition', `attachment; filename="${built.filename}"`);
     res.send(built.xml);
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Export PESV2 impossible';
-    const status = /introuvable/i.test(message) ? 404 : 400;
-    res.status(status).json({ error: message });
+    if (error instanceof Pesv2RouteError) {
+      return res.status(error.status).json({ error: error.status >= 500 ? 'Erreur interne export PESV2' : error.message });
+    }
+
+    console.error('[TLPE] Erreur export PESV2 inattendue', error);
+    return res.status(500).json({ error: 'Erreur interne export PESV2' });
   }
 });
 

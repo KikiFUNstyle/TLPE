@@ -59,7 +59,8 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
   - validation XSD automatisée dans les tests et au runtime avant restitution,
   - anti-réexport par défaut avec confirmation explicite et journal des titres déjà transmis,
   - incrément strict du numéro de bordereau / lot d'envoi,
-  - persistance du hash XML + statut de validation dans la base.
+  - persistance du hash XML + statut de validation dans la base,
+  - classification d'erreur explicite: erreurs de saisie / sélection métier en 4xx, erreurs internes runtime/XSD/xmllint en 5xx générique sans fuite de détails serveur au client.
 - Pour tout téléchargement binaire déclenché par un POST JSON, vérifier en review:
   - `Content-Type: application/json` bien envoyé côté client,
   - conservation du nom de fichier renvoyé par le backend (`Content-Disposition`) quand il porte un identifiant métier incrémental.
