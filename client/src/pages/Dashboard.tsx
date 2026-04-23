@@ -1,9 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import { formatEuro, formatPct } from '../format';
+import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
 interface DashboardData {
   annee: number;
+  campagne: {
+    id: number;
+    date_ouverture: string;
+    date_limite_declaration: string;
+  } | null;
   financier: {
     montant_emis_n: number;
     montant_emis_nm1: number;
@@ -18,9 +24,32 @@ interface DashboardData {
     dispositifs_total: number;
     declarations_recues: number;
     declarations_attendues: number;
+    declarations_soumises: number;
+    declarations_validees: number;
+    declarations_rejetees: number;
     taux_declaration: number;
+    evolution_taux_vs_nm1: number | null;
     contentieux_ouverts: number;
   };
+  drilldown: {
+    by_zone: Array<{
+      label: string;
+      assujettis_attendus: number;
+      declarations_soumises: number;
+      declarations_validees: number;
+      declarations_rejetees: number;
+      taux_declaration: number;
+    }>;
+    by_type_assujetti: Array<{
+      label: string;
+      assujettis_attendus: number;
+      declarations_soumises: number;
+      declarations_validees: number;
+      declarations_rejetees: number;
+      taux_declaration: number;
+    }>;
+  };
+  evolution_journaliere: Array<{ date: string; soumissions_jour: number; cumul_soumissions: number }>;
   repartition_categories: Array<{ categorie: string; nb: number }>;
   derniers_titres: Array<{
     id: number;
@@ -35,9 +64,30 @@ interface DashboardData {
 export default function Dashboard() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [drilldownMode, setDrilldownMode] = useState<'zone' | 'type'>('zone');
 
   useEffect(() => {
-    api<DashboardData>('/api/dashboard').then(setData).catch((e) => setErr((e as Error).message));
+    let cancelled = false;
+
+    const load = async () => {
+      try {
+        const payload = await api<DashboardData>('/api/dashboard');
+        if (!cancelled) {
+          setData(payload);
+          setErr(null);
+        }
+      } catch (e) {
+        if (!cancelled) setErr((e as Error).message);
+      }
+    };
+
+    load();
+    const timer = window.setInterval(load, 5 * 60 * 1000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
   }, []);
 
   if (err) return <div className="alert error">{err}</div>;
@@ -45,6 +95,23 @@ export default function Dashboard() {
 
   const { financier, operationnel } = data;
   const totalCategories = data.repartition_categories.reduce((s, r) => s + r.nb, 0);
+  const evolutionTauxLabel =
+    operationnel.evolution_taux_vs_nm1 === null
+      ? 'Evolution N-1 indisponible'
+      : `Evolution: ${(operationnel.evolution_taux_vs_nm1 * 100).toFixed(1)} pts vs N-1`;
+
+  const drilldownRows = drilldownMode === 'zone' ? data.drilldown.by_zone : data.drilldown.by_type_assujetti;
+
+  const chartData = useMemo(
+    () =>
+      data.evolution_journaliere.map((row) => ({
+        ...row,
+        label: row.date.slice(5),
+      })),
+    [data.evolution_journaliere],
+  );
+
+  const chartEmpty = chartData.every((row) => row.cumul_soumissions === 0);
 
   return (
     <>
@@ -52,6 +119,11 @@ export default function Dashboard() {
         <div>
           <h1>Tableau de bord {data.annee}</h1>
           <p>Synthese financiere et operationnelle du cycle TLPE en cours.</p>
+          {data.campagne && (
+            <p style={{ marginTop: 6, color: '#475569' }}>
+              Campagne #{data.campagne.id} du {data.campagne.date_ouverture} au {data.campagne.date_limite_declaration}
+            </p>
+          )}
         </div>
       </div>
 
@@ -95,10 +167,11 @@ export default function Dashboard() {
         </div>
         <div className="card kpi">
           <div className="label">Declarations recues</div>
-          <div className="value">
-            {operationnel.declarations_recues} / {operationnel.declarations_attendues}
-          </div>
-          <div className="meta">Taux : {formatPct(operationnel.taux_declaration)}</div>
+          <div className="value">{operationnel.declarations_recues} / {operationnel.declarations_attendues}</div>
+          <div className="meta">Soumises: {operationnel.declarations_soumises}</div>
+          <div className="meta">Validees: {operationnel.declarations_validees}</div>
+          <div className="meta">Rejetees: {operationnel.declarations_rejetees}</div>
+          <div className="meta">Taux: {formatPct(operationnel.taux_declaration)} — {evolutionTauxLabel}</div>
         </div>
         <div className="card kpi">
           <div className="label">Contentieux ouverts</div>
@@ -108,6 +181,94 @@ export default function Dashboard() {
       </div>
 
       <div className="grid cols-2">
+        <div className="card">
+          <h3 style={{ marginTop: 0 }}>Evolution journaliere des declarations</h3>
+          {chartEmpty ? (
+            <div className="empty">Aucune soumission sur la campagne.</div>
+          ) : (
+            <div style={{ width: '100%', height: 260 }}>
+              <ResponsiveContainer>
+                <AreaChart data={chartData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="tlpeCumul" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#4f46e5" stopOpacity={0.4} />
+                      <stop offset="95%" stopColor="#4f46e5" stopOpacity={0.05} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="label" minTickGap={24} />
+                  <YAxis allowDecimals={false} />
+                  <Tooltip
+                    formatter={(value: number, key: string) => {
+                      if (key === 'cumul_soumissions') return [`${value}`, 'Cumul soumissions'];
+                      return [`${value}`, 'Soumissions jour'];
+                    }}
+                    labelFormatter={(label: string) => `Date: ${label}`}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="cumul_soumissions"
+                    stroke="#4f46e5"
+                    strokeWidth={2}
+                    fill="url(#tlpeCumul)"
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </div>
+
+        <div className="card">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+            <h3 style={{ margin: 0 }}>Drilldown declarations</h3>
+            <div style={{ display: 'inline-flex', gap: 8 }}>
+              <button
+                className="btn"
+                onClick={() => setDrilldownMode('zone')}
+                style={drilldownMode === 'zone' ? { background: 'var(--c-primary)', color: '#fff', borderColor: 'var(--c-primary)' } : {}}
+              >
+                Par zone
+              </button>
+              <button
+                className="btn"
+                onClick={() => setDrilldownMode('type')}
+                style={drilldownMode === 'type' ? { background: 'var(--c-primary)', color: '#fff', borderColor: 'var(--c-primary)' } : {}}
+              >
+                Par type d'assujetti
+              </button>
+            </div>
+          </div>
+
+          {drilldownRows.length === 0 ? (
+            <div className="empty" style={{ marginTop: 12 }}>Aucune donnee disponible.</div>
+          ) : (
+            <table className="table" style={{ marginTop: 12 }}>
+              <thead>
+                <tr>
+                  <th>{drilldownMode === 'zone' ? 'Zone' : "Type d'assujetti"}</th>
+                  <th>Attendus</th>
+                  <th>Soumises</th>
+                  <th>Validees</th>
+                  <th>Rejetees</th>
+                  <th>Taux</th>
+                </tr>
+              </thead>
+              <tbody>
+                {drilldownRows.map((row) => (
+                  <tr key={row.label}>
+                    <td>{row.label}</td>
+                    <td>{row.assujettis_attendus}</td>
+                    <td>{row.declarations_soumises}</td>
+                    <td>{row.declarations_validees}</td>
+                    <td>{row.declarations_rejetees}</td>
+                    <td>{formatPct(row.taux_declaration)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
         <div className="card">
           <h3 style={{ marginTop: 0 }}>Repartition par categorie</h3>
           {totalCategories === 0 ? (
