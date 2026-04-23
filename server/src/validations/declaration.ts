@@ -85,12 +85,13 @@ export function validateDeclarationSubmission(
       blockingErrors.push(`Ligne #${l.id}: la date de pose doit être antérieure ou égale à la date de dépose.`);
     }
 
-    const adresseKey = [normalizeText(l.adresse_rue), normalizeText(l.adresse_cp), normalizeText(l.adresse_ville)]
-      .filter(Boolean)
-      .join('|');
+    const adresseRue = normalizeText(l.adresse_rue);
+    const adresseCp = normalizeText(l.adresse_cp);
+    const adresseVille = normalizeText(l.adresse_ville);
+    const hasCompleteAddress = Boolean(adresseRue && adresseCp && adresseVille);
 
-    if (adresseKey && l.type_id) {
-      const duplicateKey = `${l.type_id}|${adresseKey}`;
+    if (hasCompleteAddress && l.type_id) {
+      const duplicateKey = `${l.type_id}|${adresseRue}|${adresseCp}|${adresseVille}`;
       const firstLineId = duplicateKeyToLineId.get(duplicateKey);
       if (firstLineId !== undefined) {
         blockingErrors.push(

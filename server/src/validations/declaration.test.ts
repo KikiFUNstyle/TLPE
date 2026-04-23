@@ -44,7 +44,7 @@ test('bloque sur complétude et cohérence des dates', () => {
   assert.ok(result.blockingErrors.some((e) => e.includes('antérieure ou égale')));
 });
 
-test('bloque sur doublon adresse + type', () => {
+test('bloque sur doublon adresse + type quand adresse complète', () => {
   const first = makeLine({ id: 11, type_id: 4, adresse_rue: '1 place de la mairie', adresse_cp: '33000', adresse_ville: 'Bordeaux' });
   const second = makeLine({ id: 12, type_id: 4, adresse_rue: ' 1 PLACE   DE LA MAIRIE ', adresse_cp: '33000', adresse_ville: 'bordeaux' });
 
@@ -54,6 +54,18 @@ test('bloque sur doublon adresse + type', () => {
   });
 
   assert.ok(result.blockingErrors.some((e) => e.includes('Doublon détecté')));
+});
+
+test('n\'interprète pas une adresse partielle comme doublon bloquant', () => {
+  const first = makeLine({ id: 21, type_id: 5, adresse_rue: '10 avenue de la République', adresse_cp: null, adresse_ville: 'Lyon' });
+  const second = makeLine({ id: 22, type_id: 5, adresse_rue: '10 avenue de la république', adresse_cp: null, adresse_ville: 'Lyon' });
+
+  const result = validateDeclarationSubmission({
+    lignes: [first, second],
+    previousYearSurfaceTotal: 0,
+  });
+
+  assert.equal(result.blockingErrors.some((e) => e.includes('Doublon détecté')), false);
 });
 
 test('déclenche une alerte non bloquante si variation N/N-1 > 30%', () => {
