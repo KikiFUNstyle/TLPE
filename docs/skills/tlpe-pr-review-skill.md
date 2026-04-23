@@ -54,6 +54,20 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
   - filtrage métier exact des données exportées,
   - présence d'un horodatage + hash du contenu restitué,
   - écriture d'une trace `audit_log` dédiée à l'export.
+- Pour tout export XML métier (PESV2, pain.008, flux DGFiP), vérifier en review:
+  - sélection métier exclusive et explicite (campagne **ou** période, jamais les deux),
+  - validation XSD automatisée dans les tests et au runtime avant restitution,
+  - anti-réexport par défaut avec confirmation explicite et journal des titres déjà transmis,
+  - incrément strict du numéro de bordereau / lot d'envoi,
+  - persistance du hash XML + statut de validation dans la base,
+  - classification d'erreur explicite: erreurs de saisie / sélection métier en 4xx, erreurs internes runtime/XSD/xmllint en 5xx générique sans fuite de détails serveur au client.
+- Pour tout téléchargement binaire déclenché par un POST JSON, vérifier en review:
+  - `Content-Type: application/json` bien envoyé côté client,
+  - conservation du nom de fichier renvoyé par le backend (`Content-Disposition`) quand il porte un identifiant métier incrémental.
+- Pour toute nouvelle table métier SQLite, vérifier en review:
+  - migration runtime idempotente pour les bases legacy,
+  - nettoyage explicite des nouvelles tables dans les fixtures de tests qui purgent `campagnes`/tables parentes,
+  - non-régression sur une base locale préexistante (pas seulement sur une base de test vierge).
 - Commandes minimales à exécuter:
   - `npm test`
   - `npm run build`

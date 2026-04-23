@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from 'react';
-import { api, apiBlob } from '../api';
+import { api, apiBlob, apiBlobWithMetadata } from '../api';
 import { formatDate, formatEuro } from '../format';
 import { useAuth } from '../auth';
 import { buildBordereauFilename, buildBordereauPath, canExportBordereau } from './titresBordereau';
@@ -17,14 +17,25 @@ interface Titre {
   statut: string;
 }
 
+interface CampagneOption {
+  id: number;
+  annee: number;
+  statut: string;
+}
+
 export default function Titres() {
   const { hasRole } = useAuth();
   const [rows, setRows] = useState<Titre[]>([]);
+  const [campagnes, setCampagnes] = useState<CampagneOption[]>([]);
+  const [pesv2SelectionMode, setPesv2SelectionMode] = useState<'campagne' | 'periode'>('campagne');
+  const [selectedCampagneId, setSelectedCampagneId] = useState<string>('');
+  const [pesv2DateDebut, setPesv2DateDebut] = useState<string>('');
+  const [pesv2DateFin, setPesv2DateFin] = useState<string>('');
   const [annee, setAnnee] = useState<string>('');
   const [statut, setStatut] = useState('');
   const [err, setErr] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
-  const [exporting, setExporting] = useState<null | 'pdf' | 'xlsx'>(null);
+  const [exporting, setExporting] = useState<null | 'pdf' | 'xlsx' | 'pesv2'>(null);
   const [paiementFor, setPaiementFor] = useState<Titre | null>(null);
 
   const load = () => {
@@ -40,8 +51,26 @@ export default function Titres() {
   };
   useEffect(load, [annee, statut]);
 
+  useEffect(() => {
+    if (!canManageTitres) return;
+    api<CampagneOption[]>('/api/campagnes')
+      .then((data) => {
+        setCampagnes(data);
+        const cloturee = data.find((campagne) => campagne.statut === 'cloturee');
+        if (cloturee) {
+          setSelectedCampagneId(String(cloturee.id));
+        }
+      })
+      .catch(() => undefined);
+  }, []);
+
   const canManageTitres = hasRole('admin', 'financier');
   const canExport = canExportBordereau({ annee, canManage: canManageTitres });
+  const canExportPesv2 =
+    canManageTitres &&
+    exporting === null &&
+    ((pesv2SelectionMode === 'campagne' && selectedCampagneId.length > 0) ||
+      (pesv2SelectionMode === 'periode' && pesv2DateDebut.length > 0 && pesv2DateFin.length > 0));
 
   const downloadBordereau = async (format: 'pdf' | 'xlsx') => {
     if (!canExport) return;
@@ -61,6 +90,62 @@ export default function Titres() {
       setInfo(`Bordereau ${format.toUpperCase()} téléchargé.`);
     } catch (e) {
       setErr((e as Error).message);
+    } finally {
+      setExporting(null);
+    }
+  };
+
+  const downloadPesv2 = async () => {
+    if (!canExportPesv2) return;
+    setExporting('pesv2');
+    setErr(null);
+    setInfo(null);
+
+    const executePesv2Export = async (confirmReexport: boolean) => {
+      const payload =
+        pesv2SelectionMode === 'campagne'
+          ? { campagne_id: Number(selectedCampagneId), confirm_reexport: confirmReexport }
+          : { date_debut: pesv2DateDebut, date_fin: pesv2DateFin, confirm_reexport: confirmReexport };
+
+      const { blob, filename } = await apiBlobWithMetadata('/api/titres/export-pesv2', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+      const href = window.URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = href;
+      anchor.download =
+        filename ||
+        (pesv2SelectionMode === 'campagne'
+          ? `pesv2-campagne-${selectedCampagneId}.xml`
+          : `pesv2-${pesv2DateDebut}-${pesv2DateFin}.xml`);
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(href);
+    };
+
+    try {
+      await executePesv2Export(false);
+      setInfo('Export PESV2 téléchargé.');
+    } catch (e) {
+      const message = (e as Error).message;
+      if (message.includes('Confirmation requise')) {
+        const confirmed = window.confirm(
+          'Certains titres ont déjà été exportés. Voulez-vous confirmer le réexport PESV2 ?',
+        );
+        if (confirmed) {
+          try {
+            await executePesv2Export(true);
+            setInfo('Réexport PESV2 téléchargé.');
+            return;
+          } catch (retryError) {
+            setErr((retryError as Error).message);
+            return;
+          }
+        }
+      }
+      setErr(message);
     } finally {
       setExporting(null);
     }
@@ -114,6 +199,45 @@ export default function Titres() {
               title={canExport ? 'Exporter le bordereau Excel' : 'Sélectionner une année pour exporter le bordereau'}
             >
               {exporting === 'xlsx' ? 'Export Excel...' : 'Bordereau Excel'}
+            </button>
+            <select value={pesv2SelectionMode} onChange={(e) => setPesv2SelectionMode(e.target.value as 'campagne' | 'periode')} title="Mode de sélection PESV2">
+              <option value="campagne">PESV2 par campagne</option>
+              <option value="periode">PESV2 par période</option>
+            </select>
+            {pesv2SelectionMode === 'campagne' ? (
+              <select value={selectedCampagneId} onChange={(e) => setSelectedCampagneId(e.target.value)} title="Campagne clôturée à exporter en PESV2">
+                <option value="">Campagne PESV2</option>
+                {campagnes
+                  .filter((campagne) => campagne.statut === 'cloturee')
+                  .map((campagne) => (
+                    <option key={campagne.id} value={campagne.id}>
+                      {campagne.annee} · {campagne.statut}
+                    </option>
+                  ))}
+              </select>
+            ) : (
+              <>
+                <input type="date" value={pesv2DateDebut} onChange={(e) => setPesv2DateDebut(e.target.value)} title="Date début émission PESV2" />
+                <input type="date" value={pesv2DateFin} onChange={(e) => setPesv2DateFin(e.target.value)} title="Date fin émission PESV2" />
+              </>
+            )}
+            <button
+              className="btn secondary"
+              disabled={!canExportPesv2}
+              onClick={() => {
+                void downloadPesv2();
+              }}
+              title={
+                pesv2SelectionMode === 'campagne'
+                  ? selectedCampagneId
+                    ? 'Exporter le flux XML PESV2'
+                    : 'Sélectionner une campagne clôturée'
+                  : pesv2DateDebut && pesv2DateFin
+                    ? 'Exporter le flux XML PESV2'
+                    : 'Renseigner une période d\'émission'
+              }
+            >
+              {exporting === 'pesv2' ? 'Export PESV2...' : 'Export PESV2 XML'}
             </button>
           </>
         )}

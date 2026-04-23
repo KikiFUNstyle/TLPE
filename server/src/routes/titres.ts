@@ -3,6 +3,10 @@ import { z } from 'zod';
 import PDFDocument from 'pdfkit';
 import XLSX from 'xlsx';
 import * as crypto from 'node:crypto';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { db, logAudit } from '../db';
 import { authMiddleware, requireRole } from '../auth';
 
@@ -13,6 +17,16 @@ titresRouter.use(authMiddleware);
 const BORDEREAU_COLLECTIVITE = process.env.TLPE_COLLECTIVITE || 'Collectivite territoriale';
 const BORDEREAU_ORDONNATEUR = process.env.TLPE_ORDONNATEUR || 'Ordonnateur TLPE';
 
+class Pesv2RouteError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = 'Pesv2RouteError';
+  }
+}
+
 function genNumeroTitre(annee: number): string {
   const c = (db.prepare('SELECT COUNT(*) AS c FROM titres WHERE annee = ?').get(annee) as { c: number }).c;
   return `TIT-${annee}-${String(c + 1).padStart(6, '0')}`;
@@ -20,6 +34,224 @@ function genNumeroTitre(annee: number): string {
 
 function formatDateTime(date: Date): string {
   return date.toISOString().replace('T', ' ').slice(0, 19);
+}
+
+function xmlEscape(value: string | number | null | undefined): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function normalizeIsoDate(date: string): string {
+  const parsed = new Date(`${date}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Pesv2RouteError(`Date invalide: ${date}`, 400);
+  }
+  const normalized = parsed.toISOString().slice(0, 10);
+  if (normalized !== date) {
+    throw new Pesv2RouteError(`Date invalide: ${date}`, 400);
+  }
+  return normalized;
+}
+
+function resolvePesv2XsdPath(currentDir = __dirname): string {
+  const candidates = [
+    path.resolve(currentDir, '..', 'xsd', 'pesv2-titres.xsd'),
+    path.resolve(currentDir, '..', '..', 'src', 'xsd', 'pesv2-titres.xsd'),
+  ];
+  const resolved = candidates.find((candidate) => fs.existsSync(candidate));
+  if (!resolved) {
+    throw new Pesv2RouteError('Schéma XSD PESV2 introuvable', 500);
+  }
+  return resolved;
+}
+
+type Pesv2Row = {
+  id: number;
+  numero: string;
+  declaration_numero: string;
+  assujetti_id: number;
+  annee: number;
+  montant: number;
+  date_emission: string;
+  date_echeance: string;
+  raison_sociale: string;
+  identifiant_tlpe: string;
+  siret: string | null;
+};
+
+type Pesv2Selection =
+  | {
+      selectionType: 'campagne';
+      campagneId: number;
+      campagneAnnee: number;
+      titres: Pesv2Row[];
+      selectionLabel: string;
+    }
+  | {
+      selectionType: 'periode';
+      dateDebut: string;
+      dateFin: string;
+      titres: Pesv2Row[];
+      selectionLabel: string;
+    };
+
+type Pesv2ValidationResult = {
+  ok: boolean;
+  report: string;
+};
+
+function buildPesv2RowsWhere(whereClause: string, params: unknown[]): Pesv2Row[] {
+  return db
+    .prepare(
+      `SELECT t.id, t.numero, d.numero AS declaration_numero, t.assujetti_id, t.annee, t.montant,
+              t.date_emission, t.date_echeance, a.raison_sociale, a.identifiant_tlpe, a.siret
+       FROM titres t
+       JOIN declarations d ON d.id = t.declaration_id
+       JOIN assujettis a ON a.id = t.assujetti_id
+       ${whereClause}
+       ORDER BY t.numero`,
+    )
+    .all(...params) as Pesv2Row[];
+}
+
+function loadPesv2Selection(input: { campagne_id?: number; date_debut?: string; date_fin?: string }): Pesv2Selection {
+  if (input.campagne_id !== undefined) {
+    const campagne = db.prepare('SELECT id, annee, statut FROM campagnes WHERE id = ?').get(input.campagne_id) as
+      | { id: number; annee: number; statut: string }
+      | undefined;
+    if (!campagne) {
+      throw new Pesv2RouteError('Campagne introuvable', 404);
+    }
+    if (campagne.statut !== 'cloturee') {
+      throw new Pesv2RouteError('Seules les campagnes clôturées peuvent être exportées en PESV2', 400);
+    }
+
+    return {
+      selectionType: 'campagne',
+      campagneId: campagne.id,
+      campagneAnnee: campagne.annee,
+      titres: buildPesv2RowsWhere('WHERE t.annee = ?', [campagne.annee]),
+      selectionLabel: `campagne ${campagne.annee}`,
+    };
+  }
+
+  const dateDebut = normalizeIsoDate(input.date_debut!);
+  const dateFin = normalizeIsoDate(input.date_fin!);
+  return {
+    selectionType: 'periode',
+    dateDebut,
+    dateFin,
+    titres: buildPesv2RowsWhere('WHERE t.date_emission >= ? AND t.date_emission <= ?', [dateDebut, dateFin]),
+    selectionLabel: `periode ${dateDebut} -> ${dateFin}`,
+  };
+}
+
+function buildPesv2Xml(selection: Pesv2Selection, numeroBordereau: number, horodatageExport: string) {
+  const totalMontant = Number(selection.titres.reduce((sum, titre) => sum + titre.montant, 0).toFixed(2));
+  const selectionFragment =
+    selection.selectionType === 'campagne'
+      ? `<CampagneId>${selection.campagneId}</CampagneId><AnneeCampagne>${selection.campagneAnnee}</AnneeCampagne>`
+      : `<Periode><DateDebut>${selection.dateDebut}</DateDebut><DateFin>${selection.dateFin}</DateFin></Periode>`;
+
+  const titresXml = selection.titres
+    .map(
+      (titre) => `
+    <Titre>
+      <NumeroTitre>${xmlEscape(titre.numero)}</NumeroTitre>
+      <NumeroDeclaration>${xmlEscape(titre.declaration_numero)}</NumeroDeclaration>
+      <AnneeExercice>${titre.annee}</AnneeExercice>
+      <DateEmission>${xmlEscape(titre.date_emission)}</DateEmission>
+      <DateEcheance>${xmlEscape(titre.date_echeance)}</DateEcheance>
+      <Montant>${titre.montant.toFixed(2)}</Montant>
+      <Assujetti>
+        <IdentifiantTLPE>${xmlEscape(titre.identifiant_tlpe)}</IdentifiantTLPE>
+        <RaisonSociale>${xmlEscape(titre.raison_sociale)}</RaisonSociale>
+        <Siret>${xmlEscape(titre.siret)}</Siret>
+      </Assujetti>
+    </Titre>`,
+    )
+    .join('');
+
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<PESV2Titres>
+  <Entete>
+    <Collectivite>${xmlEscape(BORDEREAU_COLLECTIVITE)}</Collectivite>
+    <Ordonnateur>${xmlEscape(BORDEREAU_ORDONNATEUR)}</Ordonnateur>
+    <NumeroBordereau>${String(numeroBordereau).padStart(6, '0')}</NumeroBordereau>
+    <HorodatageExport>${horodatageExport}</HorodatageExport>
+    <SelectionType>${selection.selectionType}</SelectionType>
+    ${selectionFragment}
+    <TitresCount>${selection.titres.length}</TitresCount>
+    <TotalMontant>${totalMontant.toFixed(2)}</TotalMontant>
+  </Entete>
+  <Titres>${titresXml}
+  </Titres>
+</PESV2Titres>
+`;
+
+  return {
+    xml,
+    totalMontant,
+    filename: `pesv2-${String(numeroBordereau).padStart(6, '0')}.xml`,
+    xmlHash: crypto.createHash('sha256').update(xml).digest('hex'),
+  };
+}
+
+function validatePesv2Xml(xml: string): Pesv2ValidationResult {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tlpe-pesv2-'));
+  const xmlPath = path.join(tempDir, 'export.xml');
+  const xsdPath = resolvePesv2XsdPath();
+  fs.writeFileSync(xmlPath, xml, 'utf8');
+  try {
+    const stdout = execFileSync('xmllint', ['--noout', '--schema', xsdPath, xmlPath], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return {
+      ok: true,
+      report: (stdout || 'xmllint validation ok').trim(),
+    };
+  } catch (error) {
+    const stderr =
+      typeof error === 'object' && error !== null && 'stderr' in error
+        ? String((error as { stderr?: string | Buffer }).stderr ?? '').trim()
+        : String(error);
+    return {
+      ok: false,
+      report: stderr || 'Validation XSD PESV2 en echec',
+    };
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+function listAlreadyExportedTitres(titres: Pesv2Row[]): string[] {
+  if (titres.length === 0) {
+    return [];
+  }
+  const placeholders = titres.map(() => '?').join(', ');
+  const rows = db
+    .prepare(
+      `SELECT DISTINCT t.numero
+       FROM pesv2_export_titres pet
+       JOIN titres t ON t.id = pet.titre_id
+       WHERE pet.titre_id IN (${placeholders})
+       ORDER BY t.numero`,
+    )
+    .all(...titres.map((titre) => titre.id)) as Array<{ numero: string }>;
+  return rows.map((row) => row.numero);
+}
+
+function nextPesv2NumeroBordereau(): number {
+  return (
+    db.prepare('SELECT COALESCE(MAX(numero_bordereau), 0) + 1 AS next_numero FROM pesv2_exports').get() as {
+      next_numero: number;
+    }
+  ).next_numero;
 }
 
 type BordereauRow = {
@@ -229,6 +461,39 @@ const bordereauQuerySchema = z.object({
   format: z.enum(['pdf', 'xlsx']),
 });
 
+const pesv2ExportSchema = z
+  .object({
+    campagne_id: z.number().int().positive().optional(),
+    date_debut: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    date_fin: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    confirm_reexport: z.boolean().optional().default(false),
+  })
+  .superRefine((data, ctx) => {
+    const hasCampagne = data.campagne_id !== undefined;
+    const hasPeriod = data.date_debut !== undefined || data.date_fin !== undefined;
+
+    if (hasCampagne === hasPeriod) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Fournir soit campagne_id, soit date_debut + date_fin',
+      });
+    }
+
+    if (hasPeriod && (!data.date_debut || !data.date_fin)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'date_debut et date_fin sont requis pour une sélection par période',
+      });
+    }
+
+    if (data.date_debut && data.date_fin && data.date_debut > data.date_fin) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'date_debut doit être antérieure ou égale à date_fin',
+      });
+    }
+  });
+
 titresRouter.get('/bordereau', requireRole('admin', 'financier'), (req, res) => {
   const parsed = bordereauQuerySchema.safeParse(req.query);
   if (!parsed.success) {
@@ -257,6 +522,99 @@ titresRouter.get('/bordereau', requireRole('admin', 'financier'), (req, res) => 
   }
 
   exportBordereauXlsx(res, payload);
+});
+
+titresRouter.post('/export-pesv2', requireRole('admin', 'financier'), (req, res) => {
+  const parsed = pesv2ExportSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  try {
+    const selection = loadPesv2Selection(parsed.data);
+    if (selection.titres.length === 0) {
+      return res.status(404).json({ error: 'Aucun titre à exporter pour cette sélection' });
+    }
+
+    const alreadyExported = listAlreadyExportedTitres(selection.titres);
+    if (alreadyExported.length > 0 && !parsed.data.confirm_reexport) {
+      return res.status(409).json({
+        error: `Au moins un titre est déjà exporté (${alreadyExported.join(', ')}). Confirmation requise pour réexporter.`,
+      });
+    }
+
+    const numeroBordereau = nextPesv2NumeroBordereau();
+    const horodatageExport = new Date().toISOString();
+    const built = buildPesv2Xml(selection, numeroBordereau, horodatageExport);
+    const validation = validatePesv2Xml(built.xml);
+    if (!validation.ok) {
+      console.error('[TLPE] Validation XSD PESV2 en échec', validation.report);
+      return res.status(500).json({ error: 'Erreur interne export PESV2' });
+    }
+
+    const exportInfo = db
+      .prepare(
+        `INSERT INTO pesv2_exports (
+          numero_bordereau, selection_type, campagne_id, date_debut, date_fin, exported_by, filename,
+          xml_hash, xsd_validation_ok, xsd_validation_report, titres_count, total_montant, confirmation_reexport
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        numeroBordereau,
+        selection.selectionType,
+        selection.selectionType === 'campagne' ? selection.campagneId : null,
+        selection.selectionType === 'periode' ? selection.dateDebut : null,
+        selection.selectionType === 'periode' ? selection.dateFin : null,
+        req.user!.id,
+        built.filename,
+        built.xmlHash,
+        1,
+        validation.report,
+        selection.titres.length,
+        built.totalMontant,
+        parsed.data.confirm_reexport ? 1 : 0,
+      );
+
+    const exportId = Number(exportInfo.lastInsertRowid);
+    const insertTitreExport = db.prepare(
+      'INSERT INTO pesv2_export_titres (export_id, titre_id) VALUES (?, ?)',
+    );
+    const persistTitreLinks = db.transaction((titreIds: number[]) => {
+      for (const titreId of titreIds) {
+        insertTitreExport.run(exportId, titreId);
+      }
+    });
+    persistTitreLinks(selection.titres.map((titre) => titre.id));
+
+    logAudit({
+      userId: req.user!.id,
+      action: 'export-pesv2',
+      entite: 'titre',
+      details: {
+        export_id: exportId,
+        numero_bordereau: numeroBordereau,
+        selection_type: selection.selectionType,
+        selection: selection.selectionLabel,
+        titres_count: selection.titres.length,
+        total_montant: built.totalMontant,
+        xml_hash: built.xmlHash,
+        xsd_validation_ok: validation.ok,
+        confirmation_reexport: parsed.data.confirm_reexport,
+      },
+      ip: req.ip ?? null,
+    });
+
+    res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${built.filename}"`);
+    res.send(built.xml);
+  } catch (error) {
+    if (error instanceof Pesv2RouteError) {
+      return res.status(error.status).json({ error: error.status >= 500 ? 'Erreur interne export PESV2' : error.message });
+    }
+
+    console.error('[TLPE] Erreur export PESV2 inattendue', error);
+    return res.status(500).json({ error: 'Erreur interne export PESV2' });
+  }
 });
 
 // Emission d'un titre pour une declaration validee

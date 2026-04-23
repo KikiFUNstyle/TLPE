@@ -320,6 +320,43 @@ CREATE TABLE IF NOT EXISTS titres (
   FOREIGN KEY (assujetti_id) REFERENCES assujettis(id)
 );
 
+-- Exports comptables PESV2 Hélios (US5.2)
+CREATE TABLE IF NOT EXISTS pesv2_exports (
+  id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+  numero_bordereau      INTEGER NOT NULL UNIQUE,
+  selection_type        TEXT NOT NULL CHECK (selection_type IN ('campagne','periode')),
+  campagne_id           INTEGER,
+  date_debut            TEXT,
+  date_fin              TEXT,
+  exported_at           TEXT NOT NULL DEFAULT (datetime('now')),
+  exported_by           INTEGER,
+  filename              TEXT NOT NULL,
+  xml_hash              TEXT NOT NULL,
+  xsd_validation_ok     INTEGER NOT NULL DEFAULT 0 CHECK (xsd_validation_ok IN (0,1)),
+  xsd_validation_report TEXT,
+  titres_count          INTEGER NOT NULL DEFAULT 0,
+  total_montant         REAL NOT NULL DEFAULT 0,
+  confirmation_reexport INTEGER NOT NULL DEFAULT 0 CHECK (confirmation_reexport IN (0,1)),
+  CHECK (
+    (selection_type = 'campagne' AND campagne_id IS NOT NULL AND date_debut IS NULL AND date_fin IS NULL)
+    OR
+    (selection_type = 'periode' AND campagne_id IS NULL AND date_debut IS NOT NULL AND date_fin IS NOT NULL AND date_debut <= date_fin)
+  ),
+  FOREIGN KEY (campagne_id) REFERENCES campagnes(id) ON DELETE RESTRICT,
+  FOREIGN KEY (exported_by) REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pesv2_exports_selection ON pesv2_exports(selection_type, campagne_id, date_debut, date_fin);
+
+CREATE TABLE IF NOT EXISTS pesv2_export_titres (
+  export_id    INTEGER NOT NULL,
+  titre_id     INTEGER NOT NULL,
+  exported_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (export_id, titre_id),
+  FOREIGN KEY (export_id) REFERENCES pesv2_exports(id) ON DELETE CASCADE,
+  FOREIGN KEY (titre_id) REFERENCES titres(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_pesv2_export_titres_titre ON pesv2_export_titres(titre_id);
+
 -- =====================================================================
 -- Paiements
 -- =====================================================================
