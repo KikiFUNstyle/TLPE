@@ -83,14 +83,29 @@ dispositifsRouter.get('/', (req, res) => {
   res.json(rows);
 });
 
-dispositifsRouter.get('/annees', (_req, res) => {
+dispositifsRouter.get('/annees', (req, res) => {
+  const { assujetti_id } = req.query as { assujetti_id?: string };
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+
+  if (req.user!.role === 'contribuable') {
+    if (!req.user!.assujetti_id) return res.json([]);
+    conditions.push('dec.assujetti_id = ?');
+    params.push(req.user!.assujetti_id);
+  } else if (assujetti_id) {
+    conditions.push('dec.assujetti_id = ?');
+    params.push(Number(assujetti_id));
+  }
+
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
   const rows = db
     .prepare(
       `SELECT DISTINCT dec.annee
        FROM declarations dec
+       ${where}
        ORDER BY dec.annee DESC`,
     )
-    .all() as Array<{ annee: number }>;
+    .all(...params) as Array<{ annee: number }>;
   res.json(rows.map((r) => r.annee));
 });
 
