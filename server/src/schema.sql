@@ -476,6 +476,24 @@ CREATE INDEX IF NOT EXISTS idx_lignes_releve_releve ON lignes_releve(releve_id);
 CREATE INDEX IF NOT EXISTS idx_lignes_releve_rapproche ON lignes_releve(rapproche, date DESC);
 CREATE INDEX IF NOT EXISTS idx_lignes_releve_paiement ON lignes_releve(paiement_id);
 
+CREATE TABLE IF NOT EXISTS rapprochements_log (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  ligne_releve_id  INTEGER NOT NULL,
+  titre_id         INTEGER,
+  paiement_id      INTEGER,
+  mode             TEXT NOT NULL CHECK (mode IN ('auto','manuel')),
+  resultat         TEXT NOT NULL CHECK (resultat IN ('rapproche','partiel','excedentaire','erreur_reference','errone')),
+  commentaire      TEXT,
+  user_id          INTEGER,
+  created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (ligne_releve_id) REFERENCES lignes_releve(id) ON DELETE CASCADE,
+  FOREIGN KEY (titre_id) REFERENCES titres(id) ON DELETE SET NULL,
+  FOREIGN KEY (paiement_id) REFERENCES paiements(id) ON DELETE SET NULL,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rapprochements_log_ligne ON rapprochements_log(ligne_releve_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_rapprochements_log_created_at ON rapprochements_log(created_at DESC, id DESC);
+
 -- =====================================================================
 -- Contentieux
 -- =====================================================================

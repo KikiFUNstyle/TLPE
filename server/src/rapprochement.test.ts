@@ -60,6 +60,7 @@ function resetFixtures() {
   initSchema();
   db.exec('DELETE FROM lignes_releve');
   db.exec('DELETE FROM releves_bancaires');
+  db.exec('DELETE FROM rapprochements_log');
   db.exec('DELETE FROM paiements');
   db.exec('DELETE FROM sepa_export_items');
   db.exec('DELETE FROM sepa_prelevements');
@@ -140,6 +141,33 @@ function resetFixtures() {
 
 function toBase64(value: string) {
   return Buffer.from(value, 'utf-8').toString('base64');
+}
+
+function createTitreFixture(
+  numero: string,
+  montant: number,
+  annee = 2026,
+) {
+  const assujettiId = Number(
+    db.prepare(
+      `INSERT INTO assujettis (identifiant_tlpe, raison_sociale, email, portail_actif, statut)
+       VALUES (?, ?, ?, 1, 'actif')`,
+    ).run(`TLPE-${numero}`, `Societe ${numero}`, `${numero.toLowerCase()}@example.test`).lastInsertRowid,
+  );
+
+  const declarationId = Number(
+    db.prepare(
+      `INSERT INTO declarations (numero, assujetti_id, annee, statut, montant_total)
+       VALUES (?, ?, ?, 'validee', ?)`,
+    ).run(`DEC-${numero}`, assujettiId, annee, montant).lastInsertRowid,
+  );
+
+  return Number(
+    db.prepare(
+      `INSERT INTO titres (numero, declaration_id, assujetti_id, annee, montant, date_emission, date_echeance, statut, montant_paye)
+       VALUES (?, ?, ?, ?, ?, '2026-04-01', '2026-08-31', 'emis', 0)`,
+    ).run(numero, declarationId, assujettiId, annee, montant).lastInsertRowid,
+  );
 }
 
 test('parseStatementFile supporte CSV paramétrable, OFX et MT940', () => {
@@ -335,6 +363,168 @@ test('GET /api/rapprochement expose les lignes non rapprochées et protège la r
   assert.equal(Array.isArray(res.json?.releves), true);
   assert.equal(Array.isArray(res.json?.lignes_non_rapprochees), true);
   assert.equal(res.json?.lignes_non_rapprochees[0].transaction_id, 'ofx:OFX-200');
+});
+
+test('POST /api/rapprochement/auto rapproche automatiquement les titres référencés et classe les cas partiels/excédentaires/erronés', async () => {
+  const fx = resetFixtures();
+  createTitreFixture('TIT-2026-000101', 100);
+  createTitreFixture('TIT-2026-000102', 200);
+  createTitreFixture('TIT-2026-000103', 75);
+
+  const imported = await request({
+    method: 'POST',
+    path: '/api/rapprochement/import',
+    headers: makeAuthHeader(fx.financier),
+    body: {
+      fileName: 'releve-auto.csv',
+      contentBase64: toBase64(
+        'date;libelle;montant;reference;transaction_id\n'
+        + '2026-04-01;VIR CLIENT TIT-2026-000101;100,00;;BANK-A1\n'
+        + '2026-04-02;VIR CLIENT PARTIEL;50,00;TIT-2026-000102;BANK-A2\n'
+        + '2026-04-03;VIR CLIENT TROP PERCU;250,00;TIT-2026-000102;BANK-A3\n'
+        + '2026-04-04;VIR CLIENT INCONNU;40,00;TIT-2026-999999;BANK-A4\n'
+        + '2026-04-05;REJET DE PRLV; -15,00;TIT-2026-000103;BANK-A5\n',
+      ),
+      format: 'csv',
+    },
+  });
+  assert.equal(imported.status, 201);
+
+  const auto = await request({
+    method: 'POST',
+    path: '/api/rapprochement/auto',
+    headers: makeAuthHeader(fx.financier),
+    body: {},
+  });
+
+  assert.equal(auto.status, 200);
+  assert.equal(auto.json?.matched_count, 2);
+  assert.equal(auto.json?.pending_count, 3);
+  assert.equal(auto.json?.payment_count, 2);
+
+  const titre1 = db.prepare("SELECT montant_paye, statut FROM titres WHERE numero = 'TIT-2026-000101'").get() as { montant_paye: number; statut: string };
+  const titre2 = db.prepare("SELECT montant_paye, statut FROM titres WHERE numero = 'TIT-2026-000102'").get() as { montant_paye: number; statut: string };
+  assert.equal(titre1.montant_paye, 100);
+  assert.equal(titre1.statut, 'paye');
+  assert.equal(titre2.montant_paye, 50);
+  assert.equal(titre2.statut, 'paye_partiel');
+
+  const paiements = db.prepare("SELECT reference, modalite, provider, statut, transaction_id FROM paiements WHERE transaction_id LIKE 'rapprochement:%' ORDER BY transaction_id").all() as Array<{
+    reference: string | null;
+    modalite: string;
+    provider: string;
+    statut: string;
+    transaction_id: string;
+  }>;
+  assert.equal(paiements.length, 2);
+  assert.deepEqual(
+    paiements.map((row) => row.transaction_id),
+    ['rapprochement:csv:BANK-A1', 'rapprochement:csv:BANK-A2'],
+  );
+  assert.equal(paiements[0].modalite, 'virement');
+  assert.equal(paiements[0].provider, 'manuel');
+  assert.equal(paiements[0].statut, 'confirme');
+
+  const lignes = await request({
+    method: 'GET',
+    path: '/api/rapprochement',
+    headers: makeAuthHeader(fx.financier),
+  });
+  assert.equal(lignes.status, 200);
+  assert.equal(Array.isArray(lignes.json?.lignes_non_rapprochees), true);
+  assert.equal(lignes.json?.lignes_non_rapprochees.length, 3);
+  assert.deepEqual(
+    lignes.json?.lignes_non_rapprochees.map((row: { transaction_id: string; workflow: string }) => [row.transaction_id, row.workflow]),
+    [
+      ['csv:BANK-A5', 'errone'],
+      ['csv:BANK-A4', 'erreur_reference'],
+      ['csv:BANK-A3', 'excedentaire'],
+    ],
+  );
+
+  const journal = lignes.json?.journal_rapprochements as Array<{ mode: string; resultat: string; transaction_id: string }>;
+  assert.equal(journal.length, 5);
+  assert.deepEqual(
+    journal.map((row) => [row.transaction_id, row.mode, row.resultat]),
+    [
+      ['csv:BANK-A5', 'auto', 'errone'],
+      ['csv:BANK-A4', 'auto', 'erreur_reference'],
+      ['csv:BANK-A3', 'auto', 'excedentaire'],
+      ['csv:BANK-A2', 'auto', 'partiel'],
+      ['csv:BANK-A1', 'auto', 'rapproche'],
+    ],
+  );
+});
+
+test('POST /api/rapprochement/manual rapproche une ligne en attente et alimente le journal manuel', async () => {
+  const fx = resetFixtures();
+  createTitreFixture('TIT-2026-000103', 75);
+
+  const imported = await request({
+    method: 'POST',
+    path: '/api/rapprochement/import',
+    headers: makeAuthHeader(fx.admin),
+    body: {
+      fileName: 'releve-manuel.csv',
+      contentBase64: toBase64(
+        'date;libelle;montant;reference;transaction_id\n'
+        + '2026-04-05;VIR A VENTILER;75,00;SANS-REFERENCE;BANK-M1\n',
+      ),
+      format: 'csv',
+    },
+  });
+  assert.equal(imported.status, 201);
+
+  const auto = await request({
+    method: 'POST',
+    path: '/api/rapprochement/auto',
+    headers: makeAuthHeader(fx.admin),
+    body: {},
+  });
+  assert.equal(auto.status, 200);
+  assert.equal(auto.json?.matched_count, 0);
+
+  const pendingLineId = Number(
+    (db.prepare("SELECT id FROM lignes_releve WHERE transaction_id = 'csv:BANK-M1'").get() as { id: number }).id,
+  );
+
+  const manual = await request({
+    method: 'POST',
+    path: '/api/rapprochement/manual',
+    headers: makeAuthHeader(fx.admin),
+    body: {
+      ligne_id: pendingLineId,
+      numero_titre: 'TIT-2026-000103',
+      commentaire: 'Vérification humaine',
+    },
+  });
+
+  assert.equal(manual.status, 201);
+  assert.equal(manual.json?.statut, 'paye');
+  assert.equal(manual.json?.mode, 'manuel');
+
+  const ligne = db.prepare("SELECT rapproche, paiement_id FROM lignes_releve WHERE transaction_id = 'csv:BANK-M1'").get() as {
+    rapproche: number;
+    paiement_id: number | null;
+  };
+  assert.equal(ligne.rapproche, 1);
+  assert.ok(ligne.paiement_id);
+
+  const titre = db.prepare("SELECT montant_paye, statut FROM titres WHERE numero = 'TIT-2026-000103'").get() as {
+    montant_paye: number;
+    statut: string;
+  };
+  assert.equal(titre.montant_paye, 75);
+  assert.equal(titre.statut, 'paye');
+
+  const journal = db.prepare("SELECT mode, resultat, commentaire FROM rapprochements_log WHERE ligne_releve_id = ? ORDER BY id DESC LIMIT 1").get(pendingLineId) as {
+    mode: string;
+    resultat: string;
+    commentaire: string | null;
+  };
+  assert.equal(journal.mode, 'manuel');
+  assert.equal(journal.resultat, 'rapproche');
+  assert.match(journal.commentaire ?? '', /Vérification humaine/);
 });
 
 test('POST /api/rapprochement/import retourne 400 sur erreur de validation et 500 sur erreur interne', async () => {
