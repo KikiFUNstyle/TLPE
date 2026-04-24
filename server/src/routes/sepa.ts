@@ -337,6 +337,9 @@ function buildSepaXml(orders: SepaOrder[], numeroLot: number, datePrelevement: s
           <PrvtId>
             <Othr>
               <Id>${xmlEscape(creditor.ics)}</Id>
+              <SchmeNm>
+                <Prtry>SEPA</Prtry>
+              </SchmeNm>
             </Othr>
           </PrvtId>
         </Id>

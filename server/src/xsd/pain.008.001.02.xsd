@@ -123,6 +123,13 @@
                                         <xs:complexType>
                                           <xs:sequence>
                                             <xs:element name="Id" type="xs:string" />
+                                            <xs:element name="SchmeNm" minOccurs="0">
+                                              <xs:complexType>
+                                                <xs:sequence>
+                                                  <xs:element name="Prtry" type="xs:string" />
+                                                </xs:sequence>
+                                              </xs:complexType>
+                                            </xs:element>
                                           </xs:sequence>
                                         </xs:complexType>
                                       </xs:element>

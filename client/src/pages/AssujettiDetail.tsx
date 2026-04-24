@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, apiBlobWithMetadata } from '../api';
-import { formatDate, formatEuro } from '../format';
+import { formatDate, formatEuro, toLocalDateInputValue } from '../format';
 import { useAuth } from '../auth';
 
 interface MandatSepa {
@@ -81,15 +81,16 @@ export default function AssujettiDetail() {
   const [savingMandat, setSavingMandat] = useState(false);
   const [revokingMandatId, setRevokingMandatId] = useState<number | null>(null);
   const [exportingSepa, setExportingSepa] = useState(false);
+  const today = toLocalDateInputValue();
   const [mandatForm, setMandatForm] = useState({
     rum: '',
     iban: '',
     bic: '',
-    date_signature: new Date().toISOString().slice(0, 10),
+    date_signature: today,
   });
   const [exportForm, setExportForm] = useState({
-    date_reference: new Date().toISOString().slice(0, 10),
-    date_prelevement: new Date().toISOString().slice(0, 10),
+    date_reference: today,
+    date_prelevement: today,
   });
   const { hasRole } = useAuth();
 

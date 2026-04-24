@@ -6,7 +6,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "test": "tsx --test src/pages/Carte.test.ts src/pages/titresBordereau.test.ts src/pages/payfipUi.test.ts"
+    "test": "tsx --test src/pages/Carte.test.ts src/pages/titresBordereau.test.ts src/pages/payfipUi.test.ts src/pages/assujettiDetailDate.test.ts"
   },
   "dependencies": {
     "leaflet": "^1.9.4",
