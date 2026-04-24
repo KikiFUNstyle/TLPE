@@ -592,6 +592,36 @@ export function initSchema() {
     db.exec('CREATE INDEX IF NOT EXISTS idx_rapprochements_log_ligne ON rapprochements_log(ligne_releve_id, created_at DESC)');
     db.exec('CREATE INDEX IF NOT EXISTS idx_rapprochements_log_created_at ON rapprochements_log(created_at DESC, id DESC)');
   }
+
+  const hasRecouvrementActions = (
+    db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'recouvrement_actions'").get() as
+      | { name: string }
+      | undefined
+  )?.name === 'recouvrement_actions';
+  if (!hasRecouvrementActions) {
+    db.exec(`
+      CREATE TABLE recouvrement_actions (
+        id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+        titre_id           INTEGER NOT NULL,
+        niveau             TEXT NOT NULL CHECK (niveau IN ('J+10','J+30','J+60')),
+        action_type        TEXT NOT NULL CHECK (action_type IN ('rappel_email','mise_en_demeure','transmission_comptable')),
+        statut             TEXT NOT NULL CHECK (statut IN ('pending','envoye','echec','transmis')),
+        email_destinataire TEXT,
+        piece_jointe_path  TEXT,
+        details            TEXT,
+        created_by         INTEGER,
+        created_at         TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (titre_id) REFERENCES titres(id) ON DELETE CASCADE,
+        FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+        UNIQUE (titre_id, niveau)
+      );
+      CREATE INDEX IF NOT EXISTS idx_recouvrement_actions_titre ON recouvrement_actions(titre_id, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_recouvrement_actions_niveau ON recouvrement_actions(niveau, statut, created_at DESC);
+    `);
+  } else {
+    db.exec('CREATE INDEX IF NOT EXISTS idx_recouvrement_actions_titre ON recouvrement_actions(titre_id, created_at DESC, id DESC)');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_recouvrement_actions_niveau ON recouvrement_actions(niveau, statut, created_at DESC)');
+  }
 }
 
 export function logAudit(params: {

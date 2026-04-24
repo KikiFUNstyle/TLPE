@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useState } from 'react';
 import { api, apiBlob, apiBlobWithMetadata } from '../api';
 import { formatDate, formatEuro } from '../format';
 import { useAuth } from '../auth';
+import { TitreRecouvrementHistory, type RecouvrementAction } from './TitreRecouvrementHistory';
 import { buildBordereauFilename, buildBordereauPath, canExportBordereau } from './titresBordereau';
 import { parsePayfipConfirmationSearch } from './payfip';
 import { PayfipConfirmationView } from './PayfipConfirmation';
@@ -25,6 +26,11 @@ interface CampagneOption {
   statut: string;
 }
 
+interface TitreHistoriqueResponse {
+  titre: Titre;
+  actions: RecouvrementAction[];
+}
+
 export default function Titres() {
   const { hasRole } = useAuth();
   const [rows, setRows] = useState<Titre[]>([]);
@@ -39,6 +45,9 @@ export default function Titres() {
   const [info, setInfo] = useState<string | null>(null);
   const [exporting, setExporting] = useState<null | 'pdf' | 'xlsx' | 'pesv2'>(null);
   const [paiementFor, setPaiementFor] = useState<Titre | null>(null);
+  const [historyFor, setHistoryFor] = useState<Titre | null>(null);
+  const [historyData, setHistoryData] = useState<TitreHistoriqueResponse | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [payfipConfirmation, setPayfipConfirmation] = useState<ReturnType<typeof parsePayfipConfirmationSearch> | null>(null);
 
   useEffect(() => {
@@ -183,6 +192,21 @@ export default function Titres() {
     }
   };
 
+  const openHistory = async (titre: Titre) => {
+    setHistoryFor(titre);
+    setHistoryData(null);
+    setHistoryLoading(true);
+    setErr(null);
+    try {
+      const payload = await api<TitreHistoriqueResponse>(`/api/titres/${titre.id}/historique`);
+      setHistoryData(payload);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
   return (
     <>
       <div className="page-header">
@@ -302,6 +326,17 @@ export default function Titres() {
                 <td><span className={`badge ${t.statut === 'paye' ? 'success' : t.statut === 'emis' ? 'info' : 'warn'}`}>{t.statut}</span></td>
                 <td>
                   <a className="btn small secondary" href={`/api/titres/${t.id}/pdf`} target="_blank" rel="noreferrer">PDF</a>
+                  {(t.statut === 'impaye' || t.statut === 'mise_en_demeure' || canManageTitres) && (
+                    <button
+                      className="btn small secondary"
+                      style={{ marginLeft: 4 }}
+                      onClick={() => {
+                        void openHistory(t);
+                      }}
+                    >
+                      Historique
+                    </button>
+                  )}
                   {hasRole('contribuable') && t.statut !== 'paye' && (
                     <button
                       className="btn small secondary"
@@ -324,7 +359,46 @@ export default function Titres() {
       </div>
 
       {paiementFor && <PaiementModal titre={paiementFor} onClose={() => setPaiementFor(null)} onDone={() => { setPaiementFor(null); load(); }} />}
+      {historyFor && (
+        <TitreHistoryModal
+          titre={historyFor}
+          loading={historyLoading}
+          data={historyData}
+          onClose={() => {
+            setHistoryFor(null);
+            setHistoryData(null);
+            setHistoryLoading(false);
+          }}
+        />
+      )}
     </>
+  );
+}
+
+function TitreHistoryModal({
+  titre,
+  loading,
+  data,
+  onClose,
+}: {
+  titre: Titre;
+  loading: boolean;
+  data: TitreHistoriqueResponse | null;
+  onClose: () => void;
+}) {
+  return (
+    <div className="dialog-backdrop" onClick={onClose}>
+      <div className="dialog" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 760 }}>
+        <h2>Historique de recouvrement</h2>
+        <p style={{ color: 'var(--c-muted)', fontSize: 13 }}>
+          Titre {titre.numero} · Statut {titre.statut} · Solde dû {formatEuro(titre.montant - titre.montant_paye)}
+        </p>
+        {loading ? <div>Chargement...</div> : <TitreRecouvrementHistory actions={data?.actions ?? []} />}
+        <div className="actions">
+          <button type="button" className="btn secondary" onClick={onClose}>Fermer</button>
+        </div>
+      </div>
+    </div>
   );
 }
 
