@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { db, initSchema } from './db';
 import {
   authMiddleware,
@@ -11,23 +12,7 @@ import {
   type AuthUser,
 } from './auth';
 
-function resetUsers() {
-  initSchema();
-  db.pragma('foreign_keys = OFF');
-  try {
-    db.exec('DELETE FROM notifications_email');
-    db.exec('DELETE FROM invitation_magic_links');
-    db.exec('DELETE FROM campagne_jobs');
-    db.exec('DELETE FROM mises_en_demeure');
-    db.exec('DELETE FROM declarations');
-    db.exec('DELETE FROM campagnes');
-    db.exec('DELETE FROM audit_log');
-    db.exec('DELETE FROM users');
-    db.exec('DELETE FROM assujettis');
-  } finally {
-    db.pragma('foreign_keys = ON');
-  }
-}
+initSchema();
 
 function seedUser(email: string, password: string, role: string, actif = 1) {
   const hash = hashPassword(password);
@@ -35,6 +20,10 @@ function seedUser(email: string, password: string, role: string, actif = 1) {
     `INSERT INTO users (email, password_hash, nom, prenom, role, actif)
      VALUES (?, ?, 'Test', 'User', ?, ?)`,
   ).run(email, hash, role, actif);
+}
+
+function uniqueEmail(prefix: string) {
+  return `${prefix}-${randomUUID()}@tlpe.local`;
 }
 
 // Minimal Express mock objects
@@ -190,16 +179,16 @@ test('requireRole renvoie 401 si user absent de la requete', () => {
 // ─── loadUserByEmail ──────────────────────────────────────────────────────────
 
 test('loadUserByEmail retrouve un utilisateur (case-insensitive)', () => {
-  resetUsers();
-  seedUser('Admin@TLPE.local', 'secret', 'admin');
+  const email = uniqueEmail('admin');
+  seedUser(email, 'secret', 'admin');
 
-  const found = loadUserByEmail('admin@tlpe.local');
+  const found = loadUserByEmail(email.toLowerCase());
   assert.ok(found, 'Doit trouver l\'utilisateur');
   assert.equal(found!.role, 'admin');
 
-  const upperFound = loadUserByEmail('ADMIN@TLPE.LOCAL');
+  const upperFound = loadUserByEmail(email.toUpperCase());
   assert.ok(upperFound, 'Doit trouver par email en majuscules');
-  assert.equal(upperFound!.email, 'Admin@TLPE.local');
+  assert.equal(upperFound!.email, email);
 });
 
 test('loadUserByEmail retourne undefined si email inconnu', () => {
@@ -208,10 +197,10 @@ test('loadUserByEmail retourne undefined si email inconnu', () => {
 });
 
 test('loadUserByEmail expose le champ actif pour filtrage applicatif', () => {
-  resetUsers();
-  seedUser('inactif@tlpe.local', 'pwd', 'contribuable', 0);
+  const email = uniqueEmail('inactif');
+  seedUser(email, 'pwd', 'contribuable', 0);
 
-  const user = loadUserByEmail('inactif@tlpe.local');
+  const user = loadUserByEmail(email);
   assert.ok(user, 'Doit retourner l\'enregistrement meme si inactif');
   assert.equal(user!.actif, 0);
 });

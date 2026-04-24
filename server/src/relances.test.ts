@@ -308,7 +308,13 @@ test('runRelancesDeclarations en mode mock-failure comptabilise les echecs', () 
     assert.equal(result.failed, 1);
 
     const notif = db
-      .prepare('SELECT statut, erreur FROM notifications_email WHERE campagne_id = ? LIMIT 1')
+      .prepare(
+        `SELECT statut, erreur
+         FROM notifications_email
+         WHERE campagne_id = ? AND relance_niveau = 'J-30'
+         ORDER BY id DESC
+         LIMIT 1`,
+      )
       .get(campagneId) as { statut: string; erreur: string } | undefined;
     assert.ok(notif);
     assert.equal(notif!.statut, 'echec');
