@@ -25,6 +25,7 @@ basée sur les articles L2333-6 à L2333-16 du CGCT.
 | Accusé de réception PDF horodaté avec hash SHA-256 + QR de vérification + téléchargement sur détail déclaration | §5.2 / US3.6 | OK + tests |
 | Hash SHA-256 de soumission (accusé) | §5.2 | OK |
 | Titres de recettes + PDF (ordonnancement) + bordereau récapitulatif PDF/Excel horodaté avec hash SHA-256 | §7.1 / US5.1 | OK + tests |
+| Escalade automatique des impayés (J+10 / J+30 / J+60) + historique par titre | §7.4 / US5.7 | OK + tests |
 | Mandats SEPA + export pain.008.001.02 avec validation IBAN/BIC, séquencement FRST/RCUR et validation XSD locale | §7.2 / US5.4 | OK + tests |
 | Import de relevés bancaires (CSV paramétrable / OFX / MT940), dédoublonnage par transaction, page Rapprochement réservée admin/financier | §7.3 / US5.5 | OK + tests |
 | Paiements (5 modalités) + recouvrement | §7.2 | OK |
@@ -105,6 +106,12 @@ Ouvrir ensuite http://localhost:5173.
   - `POST /api/rapprochement/auto` matche un numéro de titre détecté dans la référence ou le libellé, crée un paiement `modalite=virement`, met à jour le statut du titre (`paye|paye_partiel`) et journalise le résultat (`rapproche|partiel|excedentaire|erreur_reference`)
   - les lignes excédentaires ou en erreur de référence restent en attente avec un workflow distinct et une correspondance manuelle possible via `POST /api/rapprochement/manual`
   - `GET /api/rapprochement` liste les relevés importés, les lignes non rapprochées enrichies par workflow et le journal des rapprochements (`auto|manuel`, qui/quand)
+- Smoke test US5.7:
+  - le scheduler quotidien exécute les relances de campagne **et** l'escalade des impayés
+  - `runEscaladeImpayes()` ne traite que les titres non soldés exactement à J+10, J+30 ou J+60 après échéance
+  - aucun déclenchement sur les titres avec `contentieux` ouvert ou `moratoire` accordé / en instruction
+  - J+30 génère un PDF de mise en demeure dans `server/data/mises_en_demeure/impayes/` et passe le titre au statut `mise_en_demeure`
+  - J+60 journalise une transmission au comptable public et l'historique est visible depuis la page `Titres`
 
 ## Mandats SEPA / export pain.008 (US5.4)
 

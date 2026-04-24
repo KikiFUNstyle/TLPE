@@ -128,6 +128,15 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
 - Vérifier que le journal des rapprochements expose bien `mode` (`auto|manuel`), `resultat`, `numero_titre`, `user_display` et `created_at`, avec au moins un test backend couvrant auto + manuel.
 - Vérifier qu'un rapprochement manuel crée un paiement `modalite=virement`, met à jour `montant_paye/statut` du titre, trace `audit_log`, et rejette proprement les lignes déjà rapprochées ou non encaissables.
 
+### 14) Recouvrement des impayés & escalade post-échéance (appris sur US5.7)
+- Vérifier que l'escalade post-échéance déclenche **exactement** à J+10 / J+30 / J+60 sur `date_echeance`, sans relance répétée hors jalon.
+- Vérifier une idempotence technique et métier (contrainte DB ou garde explicite) empêchant les doublons pour un même `titre` + `niveau`.
+- Vérifier les exclusions métier bloquantes : aucun déclenchement sur les titres soldés, en `contentieux`, ou sous `moratoire` accordé / en instruction.
+- Vérifier qu'une action J+30 génère une mise en demeure traçable (PDF ou pièce jointe persistée), met à jour le statut du titre de façon cohérente et journalise l'action dans `audit_log`.
+- Vérifier qu'une action J+60 expose une preuve exploitable de transmission / préparation comptable (`download_url`, canal, horodatage) et qu'elle reste consultable dans l'historique du titre.
+- Vérifier qu'un endpoint/API d'historique de recouvrement respecte les droits d'accès du contribuable (pas d'accès inter-assujetti) et qu'un test couvre cette restitution.
+- Vérifier que le scheduler quotidien exécute aussi ce workflow et qu'un smoke test de démarrage confirme que l'application démarre toujours après intégration du job.
+
 ## Format de sortie review
 
 1. **Résumé**

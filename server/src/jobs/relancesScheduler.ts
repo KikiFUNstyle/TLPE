@@ -1,3 +1,4 @@
+import { runEscaladeImpayes } from '../impayes';
 import { runRelancesDeclarations } from '../relances';
 
 let timer: NodeJS.Timeout | null = null;
@@ -16,12 +17,16 @@ function scheduleNextDailyTick() {
   const delay = msUntilNextDailyRun();
   timer = setTimeout(() => {
     try {
-      const result = runRelancesDeclarations();
+      const relancesResult = runRelancesDeclarations();
+      const impayesResult = runEscaladeImpayes();
       // eslint-disable-next-line no-console
-      console.log('[TLPE] Relances quotidiennes executees', result);
+      console.log('[TLPE] Jobs quotidiens executes', {
+        relances: relancesResult,
+        impayes: impayesResult,
+      });
     } catch (error) {
       // eslint-disable-next-line no-console
-      console.error('[TLPE] Erreur job relances quotidiennes', error);
+      console.error('[TLPE] Erreur jobs quotidiens', error);
     } finally {
       scheduleNextDailyTick();
     }

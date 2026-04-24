@@ -9,6 +9,7 @@ import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { db, logAudit } from '../db';
 import { authMiddleware, requireRole } from '../auth';
+import { listRecouvrementActionsByTitre } from '../impayes';
 import { registerPayfipTitresRoutes } from './paiements';
 
 export const titresRouter = Router();
@@ -457,6 +458,40 @@ titresRouter.get('/', (req, res) => {
     )
     .all(...params);
   res.json(rows);
+});
+
+titresRouter.get('/:id/historique', (req, res) => {
+  const titre = db
+    .prepare(
+      `SELECT t.id, t.numero, t.assujetti_id, t.statut, t.montant, t.montant_paye, t.date_echeance,
+              a.raison_sociale, a.identifiant_tlpe
+       FROM titres t
+       LEFT JOIN assujettis a ON a.id = t.assujetti_id
+       WHERE t.id = ?`,
+    )
+    .get(req.params.id) as
+    | {
+        id: number;
+        numero: string;
+        assujetti_id: number;
+        statut: string;
+        montant: number;
+        montant_paye: number;
+        date_echeance: string;
+        raison_sociale: string | null;
+        identifiant_tlpe: string | null;
+      }
+    | undefined;
+
+  if (!titre) return res.status(404).json({ error: 'Introuvable' });
+  if (req.user!.role === 'contribuable' && req.user!.assujetti_id !== titre.assujetti_id) {
+    return res.status(403).json({ error: 'Droits insuffisants' });
+  }
+
+  res.json({
+    titre,
+    actions: listRecouvrementActionsByTitre(titre.id),
+  });
 });
 
 const bordereauQuerySchema = z.object({
