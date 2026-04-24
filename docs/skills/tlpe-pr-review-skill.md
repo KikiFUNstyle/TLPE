@@ -57,9 +57,16 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
 - Pour tout export XML métier (PESV2, pain.008, flux DGFiP), vérifier en review:
   - sélection métier exclusive et explicite (campagne **ou** période, jamais les deux),
   - validation XSD automatisée dans les tests et au runtime avant restitution,
-  - anti-réexport par défaut avec confirmation explicite et journal des titres déjà transmis,
-  - incrément strict du numéro de bordereau / lot d'envoi,
-  - persistance du hash XML + statut de validation dans la base,
+  - réponse client sûre: détails techniques complets en logs serveur seulement, message générique côté API si l'échec est interne,
+  - entêtes de téléchargement cohérents (`Content-Type`, `Content-Disposition`) et nommage déterministe du fichier.
+- Pour toute US de prélèvement/mandat SEPA, vérifier explicitement:
+  - présence d'une table métier dédiée (`mandats_sepa`, `sepa_exports`, `sepa_prelevements`, table de liaison si lot),
+  - contrôle IBAN/BIC avant persistance, avec restitution masquée de l'IBAN côté UI/API,
+  - impossibilité d'avoir plusieurs mandats `actif` pour un même assujetti sans révocation explicite du précédent,
+  - séquencement `FRST` / `RCUR` basé sur l'historique réel des prélèvements déjà exportés,
+  - exclusion des mandats révoqués ou sans solde exigible,
+  - traçabilité `audit_log` pour création de mandat et export du lot.
+
   - classification d'erreur explicite: erreurs de saisie / sélection métier en 4xx, erreurs internes runtime/XSD/xmllint en 5xx générique sans fuite de détails serveur au client.
 - Pour tout téléchargement binaire déclenché par un POST JSON, vérifier en review:
   - `Content-Type: application/json` bien envoyé côté client,

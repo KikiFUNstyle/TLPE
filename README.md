@@ -25,6 +25,7 @@ basée sur les articles L2333-6 à L2333-16 du CGCT.
 | Accusé de réception PDF horodaté avec hash SHA-256 + QR de vérification + téléchargement sur détail déclaration | §5.2 / US3.6 | OK + tests |
 | Hash SHA-256 de soumission (accusé) | §5.2 | OK |
 | Titres de recettes + PDF (ordonnancement) + bordereau récapitulatif PDF/Excel horodaté avec hash SHA-256 | §7.1 / US5.1 | OK + tests |
+| Mandats SEPA + export pain.008.001.02 avec validation IBAN/BIC, séquencement FRST/RCUR et validation XSD locale | §7.2 / US5.4 | OK + tests |
 | Paiements (5 modalités) + recouvrement | §7.2 | OK |
 | Contentieux / réclamations | §8 | OK |
 | Tableau de bord exécutif + KPI déclaratifs temps réel (US3.7: attendus/soumises/validées/rejetées, drilldown zone/type, évolution journalière, auto-refresh 5 min) | §10.1 / §5.4 | OK |
@@ -89,6 +90,41 @@ Ouvrir ensuite http://localhost:5173.
   - la page `Titres` affiche les boutons `Bordereau PDF` / `Bordereau Excel` uniquement pour `admin|financier` quand une année est sélectionnée
   - `GET /api/titres/bordereau?annee=YYYY&format=pdf|xlsx` retourne les titres filtrés de l'exercice, le total, l'horodatage et un hash SHA-256
   - un export du bordereau écrit une trace `audit_log` (`action=export-bordereau`)
+- Smoke test US5.4:
+  - la fiche assujetti affiche les mandats SEPA existants et un formulaire de création (RUM, IBAN, BIC, date de signature)
+  - `POST /api/assujettis/:id/mandats-sepa` refuse les IBAN/BIC invalides, masque l'IBAN restitué et trace `create-mandat-sepa` dans `audit_log`
+  - un assujetti ne peut avoir qu'un seul mandat actif à la fois; la révocation du mandat courant permet ensuite d'en enregistrer un nouveau
+  - `POST /api/assujettis/:id/mandats-sepa/:mandatId/revoke` révoque explicitement le mandat actif et trace `revoke-mandat-sepa`
+  - `POST /api/sepa/export-batch` génère un XML `pain.008.001.02` téléchargeable, avec séquencement `FRST` puis `RCUR` selon l'historique
+  - les mandats révoqués sont ignorés à l'export et une erreur de validation XSD retourne un message client générique (`Erreur interne export SEPA`)
+
+## Mandats SEPA / export pain.008 (US5.4)
+
+La fiche **Assujetti** embarque désormais un bloc dédié aux prélèvements automatiques :
+
+- visualisation des mandats SEPA existants (`RUM`, IBAN masqué, `BIC`, date de signature, statut),
+- création d'un mandat via `POST /api/assujettis/:id/mandats-sepa`,
+- révocation explicite d'un mandat actif avant remplacement (`POST /api/assujettis/:id/mandats-sepa/:mandatId/revoke`),
+- contrôles `IBAN` (MOD-97 via `ibantools`) et `BIC`,
+- journalisation `audit_log` (`action=create-mandat-sepa`).
+
+Le backend expose aussi `POST /api/sepa/export-batch` pour générer un lot XML `pain.008.001.02` :
+
+- sélection automatique des titres échus avec solde restant et mandat actif,
+- calcul de la séquence `FRST` au premier prélèvement puis `RCUR` ensuite,
+- validation XSD locale avant restitution,
+- persistance des lots (`sepa_exports`) et ordres (`sepa_prelevements`, `sepa_export_items`),
+- journalisation `audit_log` (`action=export-sepa`).
+
+Exemple d'appel :
+
+```bash
+curl -X POST http://localhost:4000/api/sepa/export-batch \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer <jwt>' \
+  -d '{"date_reference":"2026-08-31","date_prelevement":"2026-09-05"}' \
+  -o pain.008-000001.xml
+```
 
 ## API pièces jointes (US2.5)
 

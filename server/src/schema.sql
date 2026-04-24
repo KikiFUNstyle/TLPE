@@ -358,6 +358,68 @@ CREATE TABLE IF NOT EXISTS pesv2_export_titres (
 CREATE INDEX IF NOT EXISTS idx_pesv2_export_titres_titre ON pesv2_export_titres(titre_id);
 
 -- =====================================================================
+-- Mandats SEPA et exports pain.008 (US5.4)
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS mandats_sepa (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  assujetti_id     INTEGER NOT NULL,
+  rum              TEXT NOT NULL UNIQUE,
+  iban             TEXT NOT NULL,
+  bic              TEXT NOT NULL,
+  date_signature   TEXT NOT NULL,
+  statut           TEXT NOT NULL DEFAULT 'actif' CHECK (statut IN ('actif','revoque')),
+  date_revocation  TEXT,
+  created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at       TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (assujetti_id) REFERENCES assujettis(id) ON DELETE CASCADE,
+  CHECK ((statut = 'actif' AND date_revocation IS NULL) OR (statut = 'revoque' AND date_revocation IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_mandats_sepa_assujetti ON mandats_sepa(assujetti_id, statut);
+
+CREATE TABLE IF NOT EXISTS sepa_exports (
+  id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+  numero_lot            INTEGER NOT NULL UNIQUE,
+  date_reference        TEXT NOT NULL,
+  date_prelevement      TEXT NOT NULL,
+  exported_at           TEXT NOT NULL DEFAULT (datetime('now')),
+  exported_by           INTEGER,
+  filename              TEXT NOT NULL,
+  xml_hash              TEXT NOT NULL,
+  xsd_validation_ok     INTEGER NOT NULL DEFAULT 0 CHECK (xsd_validation_ok IN (0,1)),
+  xsd_validation_report TEXT,
+  ordres_count          INTEGER NOT NULL DEFAULT 0,
+  total_montant         REAL NOT NULL DEFAULT 0,
+  FOREIGN KEY (exported_by) REFERENCES users(id) ON DELETE SET NULL,
+  CHECK (date_reference <= date_prelevement)
+);
+CREATE INDEX IF NOT EXISTS idx_sepa_exports_dates ON sepa_exports(date_reference, date_prelevement);
+
+CREATE TABLE IF NOT EXISTS sepa_prelevements (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  mandat_id         INTEGER NOT NULL,
+  titre_id          INTEGER NOT NULL UNIQUE,
+  montant           REAL NOT NULL CHECK (montant > 0),
+  sequence_type     TEXT NOT NULL CHECK (sequence_type IN ('FRST','RCUR')),
+  date_prelevement  TEXT NOT NULL,
+  statut            TEXT NOT NULL DEFAULT 'genere' CHECK (statut IN ('genere','exporte','annule')),
+  created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (mandat_id) REFERENCES mandats_sepa(id) ON DELETE CASCADE,
+  FOREIGN KEY (titre_id) REFERENCES titres(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_sepa_prelevements_mandat ON sepa_prelevements(mandat_id, statut, date_prelevement);
+CREATE INDEX IF NOT EXISTS idx_sepa_prelevements_date ON sepa_prelevements(date_prelevement, statut);
+
+CREATE TABLE IF NOT EXISTS sepa_export_items (
+  export_id       INTEGER NOT NULL,
+  prelevement_id  INTEGER NOT NULL,
+  exported_at     TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (export_id, prelevement_id),
+  FOREIGN KEY (export_id) REFERENCES sepa_exports(id) ON DELETE CASCADE,
+  FOREIGN KEY (prelevement_id) REFERENCES sepa_prelevements(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_sepa_export_items_prelevement ON sepa_export_items(prelevement_id);
+
+-- =====================================================================
 -- Paiements
 -- =====================================================================
 CREATE TABLE IF NOT EXISTS paiements (

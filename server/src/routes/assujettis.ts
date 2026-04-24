@@ -2,6 +2,7 @@ import { Router, type RequestHandler } from 'express';
 import { z } from 'zod';
 import { db, logAudit } from '../db';
 import { authMiddleware, requireRole } from '../auth';
+import { createMandatSepa, revokeMandatSepa, SepaRouteError } from './sepa';
 import {
   assujettisImportTemplateCsv,
   decodeAssujettisImportFile,
@@ -72,7 +73,16 @@ assujettisRouter.get('/:id', (req, res) => {
   const titres = db
     .prepare('SELECT * FROM titres WHERE assujetti_id = ? ORDER BY annee DESC')
     .all(row.id);
-  res.json({ ...row, dispositifs, declarations, titres });
+  const mandats_sepa = db
+    .prepare(
+      `SELECT id, rum, bic, date_signature, statut, date_revocation, created_at, updated_at,
+              '****' || substr(iban, length(iban) - 3, 4) AS iban_masked
+       FROM mandats_sepa
+       WHERE assujetti_id = ?
+       ORDER BY created_at DESC, id DESC`,
+    )
+    .all(row.id);
+  res.json({ ...row, dispositifs, declarations, titres, mandats_sepa });
 });
 
 const assujettiSchema = z.object({
@@ -299,6 +309,60 @@ assujettisRouter.put('/:id', requireRole('admin', 'gestionnaire'), asyncRoute(as
 
   logAudit({ userId: req.user!.id, action: 'update', entite: 'assujetti', entiteId: Number(req.params.id) });
   return res.json({ ok: true, sirene_status: sireneStatus, sirene_message: sireneMessage });
+}));
+
+const mandatSepaSchema = z.object({
+  rum: z.string().trim().min(3).max(64),
+  iban: z.string().trim().min(5).max(64),
+  bic: z.string().trim().min(8).max(11),
+  date_signature: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+});
+
+const revokeMandatSchema = z.object({
+  date_revocation: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+});
+
+assujettisRouter.post('/:id/mandats-sepa', requireRole('admin', 'gestionnaire', 'financier'), asyncRoute(async (req, res) => {
+  const parsed = mandatSepaSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  try {
+    const mandat = createMandatSepa({
+      assujettiId: Number(req.params.id),
+      userId: req.user!.id,
+      ip: req.ip ?? null,
+      input: parsed.data,
+    });
+
+    return res.status(201).json(mandat);
+  } catch (error) {
+    if (error instanceof SepaRouteError) {
+      return res.status(error.status).json({ error: error.message });
+    }
+    throw error;
+  }
+}));
+
+assujettisRouter.post('/:id/mandats-sepa/:mandatId/revoke', requireRole('admin', 'gestionnaire', 'financier'), asyncRoute(async (req, res) => {
+  const parsed = revokeMandatSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  try {
+    const mandat = revokeMandatSepa({
+      assujettiId: Number(req.params.id),
+      mandatId: Number(req.params.mandatId),
+      userId: req.user!.id,
+      ip: req.ip ?? null,
+      dateRevocation: parsed.data.date_revocation,
+    });
+
+    return res.json(mandat);
+  } catch (error) {
+    if (error instanceof SepaRouteError) {
+      return res.status(error.status).json({ error: error.message });
+    }
+    throw error;
+  }
 }));
 
 assujettisRouter.get('/import/template', requireRole('admin', 'gestionnaire'), (_req, res) => {
