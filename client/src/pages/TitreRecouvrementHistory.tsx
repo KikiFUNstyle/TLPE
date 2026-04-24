@@ -3,9 +3,9 @@ import { formatDate } from '../format';
 
 export type RecouvrementAction = {
   id: number;
-  niveau: 'J+10' | 'J+30' | 'J+60';
-  action_type: 'rappel_email' | 'mise_en_demeure' | 'transmission_comptable';
-  statut: 'pending' | 'envoye' | 'echec' | 'transmis';
+  niveau: 'J+10' | 'J+30' | 'J+60' | 'retour_comptable';
+  action_type: 'rappel_email' | 'mise_en_demeure' | 'transmission_comptable' | 'admission_non_valeur';
+  statut: 'pending' | 'envoye' | 'echec' | 'transmis' | 'classe';
   created_at: string;
   email_destinataire: string | null;
   piece_jointe_path: string | null;
@@ -29,6 +29,8 @@ function actionLabel(actionType: RecouvrementAction['action_type']): string {
       return 'Mise en demeure';
     case 'transmission_comptable':
       return 'Comptable public';
+    case 'admission_non_valeur':
+      return 'Admission en non-valeur';
     default:
       return actionType;
   }
@@ -36,6 +38,7 @@ function actionLabel(actionType: RecouvrementAction['action_type']): string {
 
 function statusClass(statut: RecouvrementAction['statut']): string {
   if (statut === 'envoye' || statut === 'transmis') return 'success';
+  if (statut === 'classe') return 'info';
   if (statut === 'echec') return 'danger';
   return 'info';
 }
@@ -50,6 +53,7 @@ export function TitreRecouvrementHistory({ actions }: { actions: RecouvrementAct
       {actions.map((action) => {
         const details = parseDetails(action.details);
         const downloadUrl = typeof details?.download_url === 'string' ? details.download_url : null;
+        const commentaire = typeof details?.commentaire === 'string' ? details.commentaire : null;
         return (
           <div key={action.id} className="card" style={{ padding: 12 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
@@ -72,6 +76,11 @@ export function TitreRecouvrementHistory({ actions }: { actions: RecouvrementAct
             {downloadUrl && (
               <div style={{ marginTop: 8, fontSize: 13 }}>
                 Titre exécutoire : <code>{downloadUrl}</code>
+              </div>
+            )}
+            {commentaire && (
+              <div style={{ marginTop: 8, fontSize: 13 }}>
+                Commentaire : {commentaire}
               </div>
             )}
           </div>

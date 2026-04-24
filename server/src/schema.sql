@@ -314,11 +314,28 @@ CREATE TABLE IF NOT EXISTS titres (
   montant         REAL NOT NULL,
   date_emission   TEXT NOT NULL,
   date_echeance   TEXT NOT NULL,
-  statut          TEXT NOT NULL DEFAULT 'emis' CHECK (statut IN ('emis','paye_partiel','paye','impaye','mise_en_demeure','admis_en_non_valeur')),
+  statut          TEXT NOT NULL DEFAULT 'emis' CHECK (statut IN ('emis','paye_partiel','paye','impaye','mise_en_demeure','transmis_comptable','admis_en_non_valeur')),
   montant_paye    REAL NOT NULL DEFAULT 0,
   FOREIGN KEY (declaration_id) REFERENCES declarations(id),
   FOREIGN KEY (assujetti_id) REFERENCES assujettis(id)
 );
+
+CREATE TABLE IF NOT EXISTS titres_executoires (
+  id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+  titre_id              INTEGER NOT NULL UNIQUE,
+  numero_flux           INTEGER NOT NULL UNIQUE,
+  xml_filename          TEXT NOT NULL,
+  xml_content           TEXT NOT NULL,
+  xml_hash              TEXT NOT NULL,
+  mention_signature     TEXT NOT NULL,
+  xsd_validation_ok     INTEGER NOT NULL DEFAULT 0 CHECK (xsd_validation_ok IN (0,1)),
+  xsd_validation_report TEXT,
+  transmitted_at        TEXT NOT NULL DEFAULT (datetime('now')),
+  transmitted_by        INTEGER,
+  FOREIGN KEY (titre_id) REFERENCES titres(id) ON DELETE CASCADE,
+  FOREIGN KEY (transmitted_by) REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_titres_executoires_transmitted_at ON titres_executoires(transmitted_at DESC);
 
 -- Exports comptables PESV2 Hélios (US5.2)
 CREATE TABLE IF NOT EXISTS pesv2_exports (
@@ -500,9 +517,9 @@ CREATE INDEX IF NOT EXISTS idx_rapprochements_log_created_at ON rapprochements_l
 CREATE TABLE IF NOT EXISTS recouvrement_actions (
   id                 INTEGER PRIMARY KEY AUTOINCREMENT,
   titre_id           INTEGER NOT NULL,
-  niveau             TEXT NOT NULL CHECK (niveau IN ('J+10','J+30','J+60')),
-  action_type        TEXT NOT NULL CHECK (action_type IN ('rappel_email','mise_en_demeure','transmission_comptable')),
-  statut             TEXT NOT NULL CHECK (statut IN ('pending','envoye','echec','transmis')),
+  niveau             TEXT NOT NULL CHECK (niveau IN ('J+10','J+30','J+60','retour_comptable')),
+  action_type        TEXT NOT NULL CHECK (action_type IN ('rappel_email','mise_en_demeure','transmission_comptable','admission_non_valeur')),
+  statut             TEXT NOT NULL CHECK (statut IN ('pending','envoye','echec','transmis','classe')),
   email_destinataire TEXT,
   piece_jointe_path  TEXT,
   details            TEXT,
@@ -510,7 +527,7 @@ CREATE TABLE IF NOT EXISTS recouvrement_actions (
   created_at         TEXT NOT NULL DEFAULT (datetime('now')),
   FOREIGN KEY (titre_id) REFERENCES titres(id) ON DELETE CASCADE,
   FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
-  UNIQUE (titre_id, niveau)
+  UNIQUE (titre_id, niveau, action_type)
 );
 CREATE INDEX IF NOT EXISTS idx_recouvrement_actions_titre ON recouvrement_actions(titre_id, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_recouvrement_actions_niveau ON recouvrement_actions(niveau, statut, created_at DESC);

@@ -268,6 +268,98 @@ export function initSchema() {
     }
   }
 
+  const titresSql = (
+    db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'titres'").get() as
+      | { sql: string }
+      | undefined
+  )?.sql;
+  if (titresSql) {
+    const hasTransmisComptableStatut = /statut\s+TEXT\s+NOT\s+NULL\s+DEFAULT\s+'emis'\s+CHECK\s*\(\s*statut\s+IN\s*\([^)]*'transmis_comptable'[^)]*'admis_en_non_valeur'[^)]*\)\s*\)/i.test(
+      titresSql,
+    );
+    if (!hasTransmisComptableStatut) {
+      const invalidTitreStatuts = db
+        .prepare(
+          `SELECT statut, COUNT(*) AS c
+           FROM titres
+           WHERE statut NOT IN ('emis','paye_partiel','paye','impaye','mise_en_demeure','transmis_comptable','admis_en_non_valeur')
+           GROUP BY statut`,
+        )
+        .all() as Array<{ statut: string; c: number }>;
+      if (invalidTitreStatuts.length > 0) {
+        throw new Error(
+          `Migration titres.statut impossible: ${invalidTitreStatuts.map((row) => `${row.statut} (${row.c})`).join(', ')}`,
+        );
+      }
+
+      db.pragma('foreign_keys = OFF');
+      try {
+        db.exec('BEGIN TRANSACTION');
+        try {
+          db.exec(`
+            CREATE TABLE titres_new (
+              id              INTEGER PRIMARY KEY AUTOINCREMENT,
+              numero          TEXT NOT NULL UNIQUE,
+              declaration_id  INTEGER NOT NULL UNIQUE,
+              assujetti_id    INTEGER NOT NULL,
+              annee           INTEGER NOT NULL,
+              montant         REAL NOT NULL,
+              date_emission   TEXT NOT NULL,
+              date_echeance   TEXT NOT NULL,
+              statut          TEXT NOT NULL DEFAULT 'emis' CHECK (statut IN ('emis','paye_partiel','paye','impaye','mise_en_demeure','transmis_comptable','admis_en_non_valeur')),
+              montant_paye    REAL NOT NULL DEFAULT 0,
+              FOREIGN KEY (declaration_id) REFERENCES declarations(id),
+              FOREIGN KEY (assujetti_id) REFERENCES assujettis(id)
+            );
+
+            INSERT INTO titres_new (
+              id, numero, declaration_id, assujetti_id, annee, montant, date_emission, date_echeance, statut, montant_paye
+            )
+            SELECT id, numero, declaration_id, assujetti_id, annee, montant, date_emission, date_echeance, statut, montant_paye
+            FROM titres;
+
+            DROP TABLE titres;
+            ALTER TABLE titres_new RENAME TO titres;
+          `);
+          db.exec('COMMIT');
+        } catch (error) {
+          db.exec('ROLLBACK');
+          throw error;
+        }
+      } finally {
+        db.pragma('foreign_keys = ON');
+      }
+    }
+  }
+
+  const hasTitresExecutoires = (
+    db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'titres_executoires'").get() as
+      | { name: string }
+      | undefined
+  )?.name === 'titres_executoires';
+  if (!hasTitresExecutoires) {
+    db.exec(`
+      CREATE TABLE titres_executoires (
+        id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+        titre_id              INTEGER NOT NULL UNIQUE,
+        numero_flux           INTEGER NOT NULL UNIQUE,
+        xml_filename          TEXT NOT NULL,
+        xml_content           TEXT NOT NULL,
+        xml_hash              TEXT NOT NULL,
+        mention_signature     TEXT NOT NULL,
+        xsd_validation_ok     INTEGER NOT NULL DEFAULT 0 CHECK (xsd_validation_ok IN (0,1)),
+        xsd_validation_report TEXT,
+        transmitted_at        TEXT NOT NULL DEFAULT (datetime('now')),
+        transmitted_by        INTEGER,
+        FOREIGN KEY (titre_id) REFERENCES titres(id) ON DELETE CASCADE,
+        FOREIGN KEY (transmitted_by) REFERENCES users(id) ON DELETE SET NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_titres_executoires_transmitted_at ON titres_executoires(transmitted_at DESC);
+    `);
+  } else {
+    db.exec('CREATE INDEX IF NOT EXISTS idx_titres_executoires_transmitted_at ON titres_executoires(transmitted_at DESC)');
+  }
+
   const paiementsSql = (
     db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'paiements'").get() as
       | { sql: string }
@@ -603,9 +695,9 @@ export function initSchema() {
       CREATE TABLE recouvrement_actions (
         id                 INTEGER PRIMARY KEY AUTOINCREMENT,
         titre_id           INTEGER NOT NULL,
-        niveau             TEXT NOT NULL CHECK (niveau IN ('J+10','J+30','J+60')),
-        action_type        TEXT NOT NULL CHECK (action_type IN ('rappel_email','mise_en_demeure','transmission_comptable')),
-        statut             TEXT NOT NULL CHECK (statut IN ('pending','envoye','echec','transmis')),
+        niveau             TEXT NOT NULL CHECK (niveau IN ('J+10','J+30','J+60','retour_comptable')),
+        action_type        TEXT NOT NULL CHECK (action_type IN ('rappel_email','mise_en_demeure','transmission_comptable','admission_non_valeur')),
+        statut             TEXT NOT NULL CHECK (statut IN ('pending','envoye','echec','transmis','classe')),
         email_destinataire TEXT,
         piece_jointe_path  TEXT,
         details            TEXT,
@@ -613,12 +705,92 @@ export function initSchema() {
         created_at         TEXT NOT NULL DEFAULT (datetime('now')),
         FOREIGN KEY (titre_id) REFERENCES titres(id) ON DELETE CASCADE,
         FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
-        UNIQUE (titre_id, niveau)
+        UNIQUE (titre_id, niveau, action_type)
       );
       CREATE INDEX IF NOT EXISTS idx_recouvrement_actions_titre ON recouvrement_actions(titre_id, created_at DESC, id DESC);
       CREATE INDEX IF NOT EXISTS idx_recouvrement_actions_niveau ON recouvrement_actions(niveau, statut, created_at DESC);
     `);
   } else {
+    const recouvrementSql = (
+      db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'recouvrement_actions'").get() as
+        | { sql: string }
+        | undefined
+    )?.sql ?? '';
+    const hasRetourComptable = /niveau\s+TEXT\s+NOT\s+NULL\s+CHECK\s*\(\s*niveau\s+IN\s*\([^)]*'retour_comptable'[^)]*\)\s*\)/i.test(recouvrementSql);
+    const hasAdmissionNonValeur = /action_type\s+TEXT\s+NOT\s+NULL\s+CHECK\s*\(\s*action_type\s+IN\s*\([^)]*'admission_non_valeur'[^)]*\)\s*\)/i.test(recouvrementSql);
+    const hasClasseStatut = /statut\s+TEXT\s+NOT\s+NULL\s+CHECK\s*\(\s*statut\s+IN\s*\([^)]*'classe'[^)]*\)\s*\)/i.test(recouvrementSql);
+    const hasActionScopedUnique = /UNIQUE\s*\(\s*titre_id\s*,\s*niveau\s*,\s*action_type\s*\)/i.test(recouvrementSql);
+    if (!hasRetourComptable || !hasAdmissionNonValeur || !hasClasseStatut || !hasActionScopedUnique) {
+      const invalidRecouvrementRows = db
+        .prepare(
+          `SELECT COUNT(*) AS c
+           FROM recouvrement_actions
+           WHERE niveau NOT IN ('J+10','J+30','J+60','retour_comptable')
+              OR action_type NOT IN ('rappel_email','mise_en_demeure','transmission_comptable','admission_non_valeur')
+              OR statut NOT IN ('pending','envoye','echec','transmis','classe')`,
+        )
+        .get() as { c: number };
+      if (invalidRecouvrementRows.c > 0) {
+        throw new Error(
+          `Migration recouvrement_actions impossible: ${invalidRecouvrementRows.c} ligne(s) ont des valeurs invalides`,
+        );
+      }
+
+      const duplicateRecouvrementRows = db
+        .prepare(
+          `SELECT titre_id, niveau, action_type, COUNT(*) AS c
+           FROM recouvrement_actions
+           GROUP BY titre_id, niveau, action_type
+           HAVING COUNT(*) > 1`,
+        )
+        .all() as Array<{ titre_id: number; niveau: string; action_type: string; c: number }>;
+      if (duplicateRecouvrementRows.length > 0) {
+        throw new Error(
+          `Migration recouvrement_actions impossible: ${duplicateRecouvrementRows.length} doublon(s) titre/niveau/action_type`,
+        );
+      }
+
+      db.pragma('foreign_keys = OFF');
+      try {
+        db.exec('BEGIN TRANSACTION');
+        try {
+          db.exec(`
+            CREATE TABLE recouvrement_actions_new (
+              id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+              titre_id           INTEGER NOT NULL,
+              niveau             TEXT NOT NULL CHECK (niveau IN ('J+10','J+30','J+60','retour_comptable')),
+              action_type        TEXT NOT NULL CHECK (action_type IN ('rappel_email','mise_en_demeure','transmission_comptable','admission_non_valeur')),
+              statut             TEXT NOT NULL CHECK (statut IN ('pending','envoye','echec','transmis','classe')),
+              email_destinataire TEXT,
+              piece_jointe_path  TEXT,
+              details            TEXT,
+              created_by         INTEGER,
+              created_at         TEXT NOT NULL DEFAULT (datetime('now')),
+              FOREIGN KEY (titre_id) REFERENCES titres(id) ON DELETE CASCADE,
+              FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+              UNIQUE (titre_id, niveau, action_type)
+            );
+
+            INSERT INTO recouvrement_actions_new (
+              id, titre_id, niveau, action_type, statut, email_destinataire, piece_jointe_path, details, created_by, created_at
+            )
+            SELECT id, titre_id, niveau, action_type, statut, email_destinataire, piece_jointe_path, details, created_by, created_at
+            FROM recouvrement_actions;
+
+            DROP TABLE recouvrement_actions;
+            ALTER TABLE recouvrement_actions_new RENAME TO recouvrement_actions;
+            CREATE INDEX IF NOT EXISTS idx_recouvrement_actions_titre ON recouvrement_actions(titre_id, created_at DESC, id DESC);
+            CREATE INDEX IF NOT EXISTS idx_recouvrement_actions_niveau ON recouvrement_actions(niveau, statut, created_at DESC);
+          `);
+          db.exec('COMMIT');
+        } catch (error) {
+          db.exec('ROLLBACK');
+          throw error;
+        }
+      } finally {
+        db.pragma('foreign_keys = ON');
+      }
+    }
     db.exec('CREATE INDEX IF NOT EXISTS idx_recouvrement_actions_titre ON recouvrement_actions(titre_id, created_at DESC, id DESC)');
     db.exec('CREATE INDEX IF NOT EXISTS idx_recouvrement_actions_niveau ON recouvrement_actions(niveau, statut, created_at DESC)');
   }

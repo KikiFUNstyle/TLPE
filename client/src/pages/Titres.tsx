@@ -6,6 +6,14 @@ import { TitreRecouvrementHistory, type RecouvrementAction } from './TitreRecouv
 import { buildBordereauFilename, buildBordereauPath, canExportBordereau } from './titresBordereau';
 import { parsePayfipConfirmationSearch } from './payfip';
 import { PayfipConfirmationView } from './PayfipConfirmation';
+import {
+  TITRE_STATUS_OPTIONS,
+  canAdmettreNonValeur,
+  canRendreExecutoire,
+  canViewRecouvrementHistory,
+  getTitreStatusBadgeVariant,
+  getTitreStatusLabel,
+} from './titreStatut';
 
 interface Titre {
   id: number;
@@ -207,6 +215,62 @@ export default function Titres() {
     }
   };
 
+  const refreshHistoryIfOpen = async (titre: Titre) => {
+    if (historyFor?.id !== titre.id) return;
+    try {
+      const payload = await api<TitreHistoriqueResponse>(`/api/titres/${titre.id}/historique`);
+      setHistoryData(payload);
+      setHistoryFor(payload.titre);
+    } catch {
+      // noop: l'erreur principale est déjà affichée via l'action initiatrice
+    }
+  };
+
+  const downloadTitreExecutoire = async (titre: Titre) => {
+    setErr(null);
+    setInfo(null);
+    try {
+      const { blob, filename } = await apiBlobWithMetadata(`/api/titres/${titre.id}/rendre-executoire`, {
+        method: 'POST',
+      });
+      const href = window.URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = href;
+      anchor.download = filename || `titre-executoire-${titre.numero}.xml`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(href);
+      setInfo(`Titre ${titre.numero} transmis au comptable public.`);
+      load();
+      await refreshHistoryIfOpen(titre);
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  };
+
+  const markAdmisNonValeur = async (titre: Titre) => {
+    const commentaire = window.prompt(
+      'Commentaire de retour comptable (admission en non-valeur) :',
+      'Retour comptable negatif - creance irrecouvrable',
+    );
+    if (commentaire === null) return;
+
+    setErr(null);
+    setInfo(null);
+    try {
+      await api(`/api/titres/${titre.id}/admettre-non-valeur`, {
+        method: 'POST',
+        body: JSON.stringify({ commentaire }),
+      });
+      setInfo(`Titre ${titre.numero} admis en non-valeur.`);
+      load();
+      await refreshHistoryIfOpen(titre);
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  };
+
   return (
     <>
       <div className="page-header">
@@ -227,12 +291,11 @@ export default function Titres() {
           <option>{new Date().getFullYear()}</option>
         </select>
         <select value={statut} onChange={(e) => setStatut(e.target.value)}>
-          <option value="">Tous statuts</option>
-          <option value="emis">Emis</option>
-          <option value="paye_partiel">Paye partiel</option>
-          <option value="paye">Paye</option>
-          <option value="impaye">Impaye</option>
-          <option value="mise_en_demeure">Mise en demeure</option>
+          {TITRE_STATUS_OPTIONS.map((option) => (
+            <option key={option.value || 'all'} value={option.value}>
+              {option.label}
+            </option>
+          ))}
         </select>
         <div className="spacer" />
         {canManageTitres && (
@@ -323,10 +386,10 @@ export default function Titres() {
                 <td>{formatEuro(t.montant - t.montant_paye)}</td>
                 <td>{formatDate(t.date_emission)}</td>
                 <td>{formatDate(t.date_echeance)}</td>
-                <td><span className={`badge ${t.statut === 'paye' ? 'success' : t.statut === 'emis' ? 'info' : 'warn'}`}>{t.statut}</span></td>
+                <td><span className={`badge ${getTitreStatusBadgeVariant(t.statut)}`}>{getTitreStatusLabel(t.statut)}</span></td>
                 <td>
                   <a className="btn small secondary" href={`/api/titres/${t.id}/pdf`} target="_blank" rel="noreferrer">PDF</a>
-                  {(t.statut === 'impaye' || t.statut === 'mise_en_demeure' || canManageTitres) && (
+                  {canViewRecouvrementHistory(t.statut, canManageTitres) && (
                     <button
                       className="btn small secondary"
                       style={{ marginLeft: 4 }}
@@ -350,6 +413,28 @@ export default function Titres() {
                   )}
                   {hasRole('admin', 'financier') && t.statut !== 'paye' && (
                     <button className="btn small" style={{ marginLeft: 4 }} onClick={() => setPaiementFor(t)}>Paiement</button>
+                  )}
+                  {canRendreExecutoire(t.statut, canManageTitres) && (
+                    <button
+                      className="btn small secondary"
+                      style={{ marginLeft: 4 }}
+                      onClick={() => {
+                        void downloadTitreExecutoire(t);
+                      }}
+                    >
+                      Rendre exécutoire
+                    </button>
+                  )}
+                  {canAdmettreNonValeur(t.statut, canManageTitres) && (
+                    <button
+                      className="btn small secondary"
+                      style={{ marginLeft: 4 }}
+                      onClick={() => {
+                        void markAdmisNonValeur(t);
+                      }}
+                    >
+                      Admettre non-valeur
+                    </button>
                   )}
                 </td>
               </tr>
@@ -391,7 +476,7 @@ function TitreHistoryModal({
       <div className="dialog" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 760 }}>
         <h2>Historique de recouvrement</h2>
         <p style={{ color: 'var(--c-muted)', fontSize: 13 }}>
-          Titre {titre.numero} · Statut {titre.statut} · Solde dû {formatEuro(titre.montant - titre.montant_paye)}
+          Titre {titre.numero} · Statut {getTitreStatusLabel(titre.statut)} · Solde dû {formatEuro(titre.montant - titre.montant_paye)}
         </p>
         {loading ? <div>Chargement...</div> : <TitreRecouvrementHistory actions={data?.actions ?? []} />}
         <div className="actions">

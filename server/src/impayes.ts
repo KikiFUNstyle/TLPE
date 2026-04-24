@@ -2,9 +2,9 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { db, logAudit } from './db';
 
-export type EscaladeNiveau = 'J+10' | 'J+30' | 'J+60';
-export type EscaladeActionType = 'rappel_email' | 'mise_en_demeure' | 'transmission_comptable';
-export type EscaladeActionStatut = 'pending' | 'envoye' | 'echec' | 'transmis';
+export type EscaladeNiveau = 'J+10' | 'J+30' | 'J+60' | 'retour_comptable';
+export type EscaladeActionType = 'rappel_email' | 'mise_en_demeure' | 'transmission_comptable' | 'admission_non_valeur';
+export type EscaladeActionStatut = 'pending' | 'envoye' | 'echec' | 'transmis' | 'classe';
 
 export interface RecouvrementActionRow {
   id: number;

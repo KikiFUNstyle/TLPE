@@ -112,6 +112,23 @@ Ouvrir ensuite http://localhost:5173.
   - aucun déclenchement sur les titres avec `contentieux` ouvert ou `moratoire` accordé / en instruction
   - J+30 génère un PDF de mise en demeure dans `server/data/mises_en_demeure/impayes/` et passe le titre au statut `mise_en_demeure`
   - J+60 journalise une transmission au comptable public et l'historique est visible depuis la page `Titres`
+- Smoke test US5.9:
+  - la page `Titres` expose l'action `Rendre exécutoire` uniquement pour `admin|financier` sur les titres en `mise_en_demeure`
+  - `POST /api/titres/:id/rendre-executoire` télécharge un XML PESV2 complément validé XSD, passe le titre à `transmis_comptable` et trace `rendre-executoire` dans `audit_log`
+  - `GET /api/titres/:id/executoire/xml` restitue le flux persistant avec ACL contribuable stricte
+  - `POST /api/titres/:id/admettre-non-valeur` n'est autorisé que pour les titres `transmis_comptable`, journalise le retour comptable et bascule le statut vers `admis_en_non_valeur`
+  - l'historique de recouvrement affiche la transmission comptable et le commentaire d'admission en non-valeur
+
+## Transmission comptable public / titre exécutoire (US5.9)
+
+Le module **Titres** couvre désormais la transmission d'un titre exécutoire au comptable public après mise en demeure :
+
+- bouton **Rendre exécutoire** pour les rôles `admin|financier` sur les titres au statut `mise_en_demeure`,
+- génération d'un flux XML complémentaire persistant (`titres_executoires`) avec hash SHA-256, mention de visa ordonnateur et validation XSD locale via `xmllint`,
+- téléchargement ultérieur via `GET /api/titres/:id/executoire/xml`,
+- passage du titre au statut `transmis_comptable`, avec journalisation dans `recouvrement_actions` et `audit_log`,
+- gestion du retour négatif comptable par **admission en non-valeur**, statut `admis_en_non_valeur`, commentaire métier et restitution dans l'historique du titre.
+
 
 ## Mandats SEPA / export pain.008 (US5.4)
 
