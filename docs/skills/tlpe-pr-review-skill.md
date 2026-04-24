@@ -93,6 +93,7 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
   - migration runtime idempotente pour les bases legacy,
   - éviter `ALTER TABLE ... ADD COLUMN ... DEFAULT (datetime('now'))` ou toute autre expression non constante: reconstruire la table si une valeur dérivée/fonctionnelle est nécessaire,
   - ajout/reconstruction des `CHECK`/`UNIQUE` au runtime pour les bases legacy (pas seulement dans `schema.sql`),
+  - ne pas ajouter d'index explicite qui duplique un index implicite déjà créé par une contrainte `UNIQUE` ou `PRIMARY KEY` identique,
   - nettoyage explicite des nouvelles tables dans les fixtures de tests qui purgent `campagnes`/tables parentes,
   - ordre de purge compatible FK dans les fixtures (supprimer d'abord les tables enfants, ex. `contentieux` avant `titres`),
   - non-régression sur une base locale préexistante (pas seulement sur une base de test vierge).

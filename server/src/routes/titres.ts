@@ -912,6 +912,14 @@ titresRouter.post('/mises-en-demeure/batch', requireRole('admin', 'financier'), 
       return titre;
     });
 
+    const titreSolde = titres.find((titre) => {
+      const solde = Number((titre.montant - titre.montant_paye).toFixed(2));
+      return solde <= 0 || titre.statut === 'paye';
+    });
+    if (titreSolde) {
+      throw new Pesv2RouteError('Impossible de generer une mise en demeure pour un titre deja solde', 409);
+    }
+
     const items: Array<{ titre_id: number; numero: string; piece_jointe_id: number; download_url: string }> = [];
     for (const titre of titres) {
       const result = await ensureMiseEnDemeureForTitre({

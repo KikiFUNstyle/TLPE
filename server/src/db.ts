@@ -129,8 +129,6 @@ export function initSchema() {
         created_at       TEXT NOT NULL DEFAULT (datetime('now')),
         UNIQUE (annee, numero_ordre)
       );
-      CREATE INDEX IF NOT EXISTS idx_titre_mises_en_demeure_sequences_annee
-        ON titre_mises_en_demeure_sequences(annee, numero_ordre);
     `);
   }
 

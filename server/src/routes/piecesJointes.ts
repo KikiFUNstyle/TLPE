@@ -66,7 +66,6 @@ const createSchema = z.object({
 
 export const piecesJointesRouter = Router();
 piecesJointesRouter.use(authMiddleware);
-piecesJointesRouter.use(requireRole('admin', 'gestionnaire', 'financier', 'contribuable'));
 
 interface PieceJointeRow {
   id: number;
@@ -158,8 +157,9 @@ function canAccessEntity(
   entiteId: number,
 ): boolean {
   if (!user) return false;
-  if (user.role !== 'contribuable') return true;
-  if (!user.assujetti_id) return false;
+  if (user.role === 'admin' || user.role === 'gestionnaire') return true;
+  if (user.role === 'financier') return entite === 'titre';
+  if (user.role !== 'contribuable' || !user.assujetti_id) return false;
 
   if (entite === 'dispositif') {
     const row = db.prepare('SELECT assujetti_id FROM dispositifs WHERE id = ?').get(entiteId) as
@@ -281,7 +281,7 @@ async function readStoredFile(cheminRelatif: string): Promise<{
   };
 }
 
-piecesJointesRouter.post('/', upload.single('fichier'), async (req, res) => {
+piecesJointesRouter.post('/', requireRole('admin', 'gestionnaire', 'contribuable'), upload.single('fichier'), async (req, res) => {
   try {
     const parsed = createSchema.safeParse(req.body);
     if (!parsed.success) {

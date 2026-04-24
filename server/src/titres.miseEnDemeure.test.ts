@@ -286,6 +286,61 @@ test('POST /api/titres/mises-en-demeure/batch est atomique si un titre est intro
   assert.equal(titre?.statut, 'impaye');
 });
 
+test('POST /api/titres/mises-en-demeure/batch est atomique si un titre est deja solde', async () => {
+  const fx = resetFixtures();
+  db.prepare("UPDATE titres SET montant_paye = montant, statut = 'paye' WHERE id = ?").run(fx.titreB);
+
+  const res = await requestJson({
+    method: 'POST',
+    path: '/api/titres/mises-en-demeure/batch',
+    headers: makeAuthHeader(fx.financier),
+    body: { titre_ids: [fx.titreA, fx.titreB] },
+  });
+
+  assert.equal(res.status, 409);
+  assert.match(res.text, /solde|paye/i);
+
+  const count = (db.prepare('SELECT COUNT(*) AS c FROM titre_mises_en_demeure').get() as { c: number }).c;
+  assert.equal(count, 0);
+  const titres = db.prepare('SELECT id, statut FROM titres ORDER BY id').all() as Array<{ id: number; statut: string }>;
+  assert.deepEqual(titres.map((row) => row.statut), ['impaye', 'paye']);
+});
+
+test('GET et DELETE /api/pieces-jointes/:id refusent au financier l acces aux pieces non liees a un titre', async () => {
+  const fx = resetFixtures();
+  const declarationId = Number((db.prepare('SELECT id FROM declarations ORDER BY id LIMIT 1').get() as { id: number }).id);
+  const relativePath = 'declaration/test/attestation.pdf';
+  const absolutePath = path.resolve(__dirname, '..', 'data', 'uploads', relativePath);
+  fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
+  fs.writeFileSync(absolutePath, Buffer.from('%PDF-1.4\nforbidden\n', 'utf8'));
+
+  const pieceId = Number(
+    db
+      .prepare(
+        `INSERT INTO pieces_jointes (entite, entite_id, nom, mime_type, taille, chemin, uploaded_by)
+         VALUES ('declaration', ?, 'attestation.pdf', 'application/pdf', ?, ?, ?)`,
+      )
+      .run(declarationId, Buffer.byteLength('%PDF-1.4\nforbidden\n', 'utf8'), relativePath, fx.financier.id).lastInsertRowid,
+  );
+
+  const downloadRes = await request({
+    method: 'GET',
+    path: `/api/pieces-jointes/${pieceId}`,
+    headers: makeAuthHeader(fx.financier),
+  });
+  assert.equal(downloadRes.status, 403);
+
+  const deleteRes = await request({
+    method: 'DELETE',
+    path: `/api/pieces-jointes/${pieceId}`,
+    headers: makeAuthHeader(fx.financier),
+  });
+  assert.equal(deleteRes.status, 403);
+
+  const deletedAt = (db.prepare('SELECT deleted_at FROM pieces_jointes WHERE id = ?').get(pieceId) as { deleted_at: string | null }).deleted_at;
+  assert.equal(deletedAt, null);
+});
+
 test('POST /api/titres/:id/mise-en-demeure regenere un PDF si l ancienne piece jointe a ete supprimee logiquement', async () => {
   const fx = resetFixtures();
 
