@@ -113,6 +113,39 @@ Audit:
 
 - `logAudit()` à chaque upload / download / soft delete (entité `piece_jointe`)
 
+## Paiement en ligne PayFip / Tipi (US5.3)
+
+Le portail contribuable prend en charge un flux PayFip/Tipi simulé depuis l'écran **Titres** :
+
+- bouton **Payer en ligne** sur chaque titre non soldé du contribuable,
+- préparation d'une redirection PayFip avec `collectivite`, `numero_titre`, `montant`, `reference`, `return_url`, `callback_url`,
+- retour frontend sur `/paiement/confirmation` avec page dédiée de confirmation/annulation/refus (et bannière récapitulative si retour historisé sur `/titres`),
+- callback backend `POST /api/paiements/callback/payfip` avec validation MAC HMAC-SHA256,
+- création automatique d'un paiement `modalite=tipi`, `provider=payfip`, traçabilité complète (`transaction_id`, `callback_payload`, `statut`),
+- rapprochement automatique du titre en cas de callback confirmé.
+
+Configuration minimale :
+
+```bash
+export TLPE_PAYFIP_SECRET=<cle-hmac>
+export TLPE_PAYFIP_BASE_URL=https://payfip.example/payer
+export TLPE_PAYFIP_COLLECTIVITE=33063
+export TLPE_PAYFIP_RETURN_URL=http://localhost:5173/paiement/confirmation
+export TLPE_PAYFIP_CALLBACK_URL=http://localhost:4000/api/paiements/callback/payfip
+```
+
+Convention de signature callback :
+
+```text
+HMAC_SHA256(secret, "<numero_titre>|<reference>|<montant_2_decimales>|<statut>|<transaction_id>")
+```
+
+Mapping des statuts PayFip :
+
+- `success` → paiement `confirme`, rapprochement du titre,
+- `cancel` → paiement `annule`, sans mise à jour du solde,
+- `failed` → paiement `refuse`, sans mise à jour du solde.
+
 ## Ouverture et paramétrage d'une campagne déclarative annuelle (US3.1)
 
 Le module Référentiels expose désormais une gestion des campagnes annuelles dans l'onglet **Campagnes**:

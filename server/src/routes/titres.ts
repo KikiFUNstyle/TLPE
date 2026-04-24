@@ -9,10 +9,13 @@ import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { db, logAudit } from '../db';
 import { authMiddleware, requireRole } from '../auth';
+import { registerPayfipTitresRoutes } from './paiements';
 
 export const titresRouter = Router();
 
 titresRouter.use(authMiddleware);
+
+registerPayfipTitresRoutes(titresRouter);
 
 const BORDEREAU_COLLECTIVITE = process.env.TLPE_COLLECTIVITE || 'Collectivite territoriale';
 const BORDEREAU_ORDONNATEUR = process.env.TLPE_ORDONNATEUR || 'Ordonnateur TLPE';

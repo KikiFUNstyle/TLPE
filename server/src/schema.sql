@@ -361,13 +361,18 @@ CREATE INDEX IF NOT EXISTS idx_pesv2_export_titres_titre ON pesv2_export_titres(
 -- Paiements
 -- =====================================================================
 CREATE TABLE IF NOT EXISTS paiements (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  titre_id    INTEGER NOT NULL,
-  montant     REAL NOT NULL,
-  date_paiement TEXT NOT NULL,
-  modalite    TEXT NOT NULL CHECK (modalite IN ('virement','cheque','tipi','sepa','numeraire')),
-  reference   TEXT,
-  commentaire TEXT,
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  titre_id         INTEGER NOT NULL,
+  montant          REAL NOT NULL,
+  date_paiement    TEXT NOT NULL,
+  modalite         TEXT NOT NULL CHECK (modalite IN ('virement','cheque','tipi','sepa','numeraire')),
+  reference        TEXT,
+  commentaire      TEXT,
+  provider         TEXT NOT NULL DEFAULT 'manuel' CHECK (provider IN ('manuel','payfip')),
+  statut           TEXT NOT NULL DEFAULT 'confirme' CHECK (statut IN ('confirme','annule','refuse','en_attente')),
+  transaction_id   TEXT UNIQUE,
+  callback_payload TEXT,
+  created_at       TEXT NOT NULL DEFAULT (datetime('now')),
   FOREIGN KEY (titre_id) REFERENCES titres(id) ON DELETE CASCADE
 );
 

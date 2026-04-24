@@ -13,6 +13,7 @@ import Referentiels from './pages/Referentiels';
 import Contentieux from './pages/Contentieux';
 import Carte from './pages/Carte';
 import DeclarationReceiptVerify from './pages/DeclarationReceiptVerify';
+import { PayfipConfirmationPage } from './pages/PayfipConfirmationPage';
 
 export default function App() {
   const { user, loading, logout } = useAuth();
@@ -26,6 +27,7 @@ export default function App() {
       <main className="main" style={{ padding: 24 }}>
         <Routes>
           <Route path="/verification/accuse/:token" element={<DeclarationReceiptVerify />} />
+          <Route path="/paiement/confirmation" element={<PayfipConfirmationPage />} />
           <Route path="/login" element={<Login />} />
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
@@ -93,6 +95,7 @@ export default function App() {
           <Route path="/simulateur" element={<Simulateur />} />
           <Route path="/referentiels" element={<Referentiels />} />
           <Route path="/verification/accuse/:token" element={<DeclarationReceiptVerify />} />
+          <Route path="/paiement/confirmation" element={<PayfipConfirmationPage />} />
           <Route path="/login" element={<Navigate to="/" replace />} />
           <Route path="*" element={<div className="empty">Page introuvable</div>} />
         </Routes>

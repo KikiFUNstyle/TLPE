@@ -66,7 +66,10 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
   - conservation du nom de fichier renvoyé par le backend (`Content-Disposition`) quand il porte un identifiant métier incrémental.
 - Pour toute nouvelle table métier SQLite, vérifier en review:
   - migration runtime idempotente pour les bases legacy,
+  - éviter `ALTER TABLE ... ADD COLUMN ... DEFAULT (datetime('now'))` ou toute autre expression non constante: reconstruire la table si une valeur dérivée/fonctionnelle est nécessaire,
+  - ajout/reconstruction des `CHECK`/`UNIQUE` au runtime pour les bases legacy (pas seulement dans `schema.sql`),
   - nettoyage explicite des nouvelles tables dans les fixtures de tests qui purgent `campagnes`/tables parentes,
+  - ordre de purge compatible FK dans les fixtures (supprimer d'abord les tables enfants, ex. `contentieux` avant `titres`),
   - non-régression sur une base locale préexistante (pas seulement sur une base de test vierge).
 - Commandes minimales à exécuter:
   - `npm test`
@@ -95,6 +98,14 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
 - Vérifier que le moteur de calcul applique la quote-part **après** barème/prorata/coefficient/exonération, puis arrondi métier inchangé (euro inférieur).
 - Vérifier au moins 2 tests unitaires dédiés: cas multi-annonceurs (2/3 quote-parts) et cas d'entrée invalide (`quote_part > 1`).
 - Vérifier la restitution UI/PDF: saisie avec défaut `1.0` et affichage explicite du pourcentage (ex. `33 %`) sur le titre de recettes.
+
+### 12) Paiement en ligne & callbacks signés (appris sur US5.3)
+- Vérifier que l'initiation de paiement est réservée au contribuable propriétaire du titre et bloque tout accès inter-assujetti.
+- Vérifier que la redirection signée persiste les paramètres métier minimaux (`numero_titre`, `montant`, `reference`, URLs de retour/callback) et qu'ils sont couverts par une MAC/HMAC testée.
+- Vérifier l'idempotence des callbacks via un identifiant de transaction unique (`transaction_id`) pour éviter les doubles rapprochements.
+- Vérifier le mapping métier des statuts externes (`success/cancel/failed` → statut paiement + impact ou non sur le solde du titre).
+- Vérifier la traçabilité complète du paiement externe: `provider`, `statut`, `transaction_id`, payload callback brut et `audit_log` dédié.
+- Vérifier la cohérence documentation/configuration/UI: route frontend de confirmation réellement exposée, variable `TLPE_PAYFIP_RETURN_URL` alignée avec cette route, tests UI couvrant succès + annulation/refus.
 
 ## Format de sortie review
 
