@@ -398,7 +398,7 @@ test('POST /api/sepa/export-batch génère les ordres à échéance puis exporte
   assert.match(first.text, /<InstrId>SEPA-FRST-1-1<\/InstrId>/);
   assert.match(first.text, /<SchmeNm>\s*<Prtry>SEPA<\/Prtry>\s*<\/SchmeNm>/);
   assert.match(first.text, /<EndToEndId>RUM-ALPHA-001-TIT-SEPA-2026-000001<\/EndToEndId>/);
-  assert.doesNotMatch(first.text, /TIT-SEPA-2026-000002/);
+  assert.doesNotMatch(first.text, /TIT-SEPA-2025-000002/);
 
   const firstOrder = db.prepare('SELECT sequence_type, statut, mandat_id, titre_id FROM sepa_prelevements WHERE titre_id = ?').get(fx.titreDue) as
     | { sequence_type: string; statut: string; mandat_id: number; titre_id: number }
