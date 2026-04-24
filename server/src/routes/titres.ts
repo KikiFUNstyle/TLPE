@@ -36,11 +36,34 @@ function genNumeroTitre(annee: number): string {
   return `TIT-${annee}-${String(c + 1).padStart(6, '0')}`;
 }
 
+function buildNumeroMiseEnDemeure(annee: number, ordre: number): string {
+  return `MED-${annee}-${String(ordre).padStart(6, '0')}`;
+}
+
+function allocateNumeroOrdreMiseEnDemeure(annee: number): number {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const next = (
+      db
+        .prepare(
+          `SELECT COALESCE(MAX(numero_ordre), 0) + 1 AS next
+           FROM titre_mises_en_demeure_sequences
+           WHERE annee = ?`,
+        )
+        .get(annee) as { next: number }
+    ).next;
+
+    db.prepare(`INSERT INTO titre_mises_en_demeure_sequences (annee, numero_ordre) VALUES (?, ?)`).run(annee, next);
+    db.exec('COMMIT');
+    return next;
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
 function genNumeroMiseEnDemeure(annee: number): string {
-  const c = (
-    db.prepare('SELECT COUNT(*) AS c FROM titre_mises_en_demeure WHERE annee = ?').get(annee) as { c: number }
-  ).c;
-  return `MED-${annee}-${String(c + 1).padStart(6, '0')}`;
+  return buildNumeroMiseEnDemeure(annee, allocateNumeroOrdreMiseEnDemeure(annee));
 }
 
 function buildTitreMiseEnDemeureStoragePath(annee: number, nom: string): string {
@@ -53,6 +76,7 @@ type TitreMiseEnDemeureRow = {
   piece_jointe_id: number;
   chemin: string;
   nom: string;
+  deleted_at?: string | null;
 };
 
 type TitreWithDebiteur = {
@@ -163,14 +187,14 @@ async function ensureMiseEnDemeureForTitre(params: {
 }): Promise<TitreMiseEnDemeureRow> {
   const existing = db
     .prepare(
-      `SELECT med.titre_id, med.numero, med.piece_jointe_id, pj.chemin, pj.nom
+      `SELECT med.titre_id, med.numero, med.piece_jointe_id, pj.chemin, pj.nom, pj.deleted_at
        FROM titre_mises_en_demeure med
        JOIN pieces_jointes pj ON pj.id = med.piece_jointe_id
        WHERE med.titre_id = ?
        LIMIT 1`,
     )
     .get(params.titre.id) as TitreMiseEnDemeureRow | undefined;
-  if (existing) return existing;
+  if (existing && !existing.deleted_at) return existing;
 
   const solde = Number((params.titre.montant - params.titre.montant_paye).toFixed(2));
   if (solde <= 0 || params.titre.statut === 'paye') {
@@ -191,10 +215,18 @@ async function ensureMiseEnDemeureForTitre(params: {
 
     const pieceJointeId = Number(pieceInfo.lastInsertRowid);
 
-    db.prepare(
-      `INSERT INTO titre_mises_en_demeure (numero, titre_id, piece_jointe_id, annee, mode, generated_by)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-    ).run(numero, params.titre.id, pieceJointeId, params.titre.annee, params.mode, params.userId);
+    if (existing?.deleted_at) {
+      db.prepare(
+        `UPDATE titre_mises_en_demeure
+         SET numero = ?, piece_jointe_id = ?, mode = ?, generated_by = ?, created_at = datetime('now')
+         WHERE titre_id = ?`,
+      ).run(numero, pieceJointeId, params.mode, params.userId, params.titre.id);
+    } else {
+      db.prepare(
+        `INSERT INTO titre_mises_en_demeure (numero, titre_id, piece_jointe_id, annee, mode, generated_by)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      ).run(numero, params.titre.id, pieceJointeId, params.titre.annee, params.mode, params.userId);
+    }
 
     if (params.titre.statut !== 'mise_en_demeure') {
       db.prepare(`UPDATE titres SET statut = 'mise_en_demeure' WHERE id = ?`).run(params.titre.id);
@@ -211,6 +243,7 @@ async function ensureMiseEnDemeureForTitre(params: {
         piece_jointe_id: pieceJointeId,
         mode: params.mode,
         solde,
+        regenerated_after_soft_delete: Boolean(existing?.deleted_at),
       },
       ip: params.ip ?? null,
     });
@@ -221,6 +254,7 @@ async function ensureMiseEnDemeureForTitre(params: {
       piece_jointe_id: pieceJointeId,
       chemin: pdf.chemin,
       nom: pdf.nom,
+      deleted_at: null,
     } satisfies TitreMiseEnDemeureRow;
   });
 
@@ -870,14 +904,16 @@ titresRouter.post('/mises-en-demeure/batch', requireRole('admin', 'financier'), 
   }
 
   try {
-    const items: Array<{ titre_id: number; numero: string; piece_jointe_id: number; download_url: string }> = [];
-
-    for (const titreId of parsed.data.titre_ids) {
+    const titres = parsed.data.titre_ids.map((titreId) => {
       const titre = loadTitreForMiseEnDemeure(String(titreId));
       if (!titre) {
-        return res.status(404).json({ error: `Titre introuvable: ${titreId}` });
+        throw new Pesv2RouteError(`Titre introuvable: ${titreId}`, 404);
       }
+      return titre;
+    });
 
+    const items: Array<{ titre_id: number; numero: string; piece_jointe_id: number; download_url: string }> = [];
+    for (const titre of titres) {
       const result = await ensureMiseEnDemeureForTitre({
         titre,
         userId: req.user!.id,

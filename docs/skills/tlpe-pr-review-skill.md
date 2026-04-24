@@ -55,7 +55,11 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
 - Pour toute US de mise en demeure sur titres, vérifier explicitement en review :
   - route manuelle sécurisée (`POST /api/titres/:id/mise-en-demeure`) + route batch sécurisée (`POST /api/titres/mises-en-demeure/batch`),
   - numérotation unique et stable via table dédiée (`titre_mises_en_demeure`) avec réutilisation idempotente si un PDF existe déjà pour le titre,
+  - séquence de numérotation résistante à la concurrence (pas de `COUNT(*) + 1`) et migration runtime/schéma dédiée si un compteur persistant est introduit,
   - archivage du PDF dans `pieces_jointes` avec entité `titre`, `download_url` renvoyé par l'API et traçabilité `audit_log` dédiée,
+  - téléchargement réellement autorisé pour tous les rôles producteurs du document (`admin|financier`) avec test bout-en-bout du `download_url`,
+  - en cas de soft delete de la pièce jointe, ne jamais renvoyer un `download_url` obsolète : régénérer ou refuser explicitement avec couverture de test,
+  - batch atomique côté validation d'entrée/résolution des titres (pas de résultats partiels silencieux si un élément est introuvable),
   - blocage métier sur les titres soldés, tests couverture happy path + batch + refus 409,
   - présence d'un déclencheur UI explicite côté page Titres (unitaire + lot) réservé aux rôles `admin|financier`.
 - Pour tout export binaire métier (PDF/XLSX bordereau, titre, rapport), vérifier en review:

@@ -20,8 +20,8 @@ function makeAuthHeader(user: AuthUser): Record<string, string> {
   return { Authorization: `Bearer ${signToken(user)}` };
 }
 
-async function requestJson(params: {
-  method: 'GET' | 'POST';
+async function request(params: {
+  method: 'GET' | 'POST' | 'DELETE';
   path: string;
   headers?: Record<string, string>;
   body?: unknown;
@@ -37,21 +37,25 @@ async function requestJson(params: {
   }
 
   try {
+    const contentTypeHeader = params.body ? { 'Content-Type': 'application/json' } : {};
     const res = await fetch(`http://127.0.0.1:${address.port}${params.path}`, {
       method: params.method,
       headers: {
-        'Content-Type': 'application/json',
+        ...contentTypeHeader,
         ...(params.headers || {}),
       },
       body: params.body ? JSON.stringify(params.body) : undefined,
     });
 
     const contentType = res.headers.get('content-type') || '';
-    const text = await res.text();
+    const arrayBuffer = await res.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    const text = contentType.includes('application/pdf') ? '' : buffer.toString('utf8');
     return {
       status: res.status,
       contentType,
       text,
+      buffer,
       json: contentType.includes('application/json') && text ? JSON.parse(text) : null,
     };
   } finally {
@@ -59,14 +63,26 @@ async function requestJson(params: {
   }
 }
 
+async function requestJson(params: {
+  method: 'GET' | 'POST' | 'DELETE';
+  path: string;
+  headers?: Record<string, string>;
+  body?: unknown;
+}) {
+  return request(params);
+}
+
 function resetFixtures() {
   initSchema();
+  const uploadsRoot = path.resolve(__dirname, '..', 'data', 'uploads');
+  fs.rmSync(path.join(uploadsRoot, 'mises_en_demeure_titres'), { recursive: true, force: true });
   const hasTitreMisesEnDemeure = (
     db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'titre_mises_en_demeure'").get() as
       | { name: string }
       | undefined
   )?.name === 'titre_mises_en_demeure';
   if (hasTitreMisesEnDemeure) {
+    db.exec('DELETE FROM titre_mises_en_demeure_sequences');
     db.exec('DELETE FROM titre_mises_en_demeure');
   }
   db.exec('DELETE FROM declaration_receipts');
@@ -228,6 +244,74 @@ test('POST /api/titres/:id/mise-en-demeure genere un PDF, stocke la piece jointe
     | undefined;
   assert.ok(audit);
   assert.match(audit?.details ?? '', /MED-2026-000001/);
+});
+
+test('POST /api/titres/:id/mise-en-demeure permet au financier de telecharger le PDF genere', async () => {
+  const fx = resetFixtures();
+
+  const generationRes = await requestJson({
+    method: 'POST',
+    path: `/api/titres/${fx.titreA}/mise-en-demeure`,
+    headers: makeAuthHeader(fx.financier),
+  });
+
+  assert.equal(generationRes.status, 201);
+
+  const downloadRes = await request({
+    method: 'GET',
+    path: String(generationRes.json?.download_url),
+    headers: makeAuthHeader(fx.financier),
+  });
+
+  assert.equal(downloadRes.status, 200);
+  assert.match(downloadRes.contentType, /application\/pdf/i);
+  assert.ok(downloadRes.buffer.length > 0);
+  assert.equal(downloadRes.buffer.subarray(0, 5).toString('utf8'), '%PDF-');
+});
+
+test('POST /api/titres/mises-en-demeure/batch est atomique si un titre est introuvable', async () => {
+  const fx = resetFixtures();
+
+  const res = await requestJson({
+    method: 'POST',
+    path: '/api/titres/mises-en-demeure/batch',
+    headers: makeAuthHeader(fx.financier),
+    body: { titre_ids: [fx.titreA, 999999] },
+  });
+
+  assert.equal(res.status, 404);
+  const count = (db.prepare('SELECT COUNT(*) AS c FROM titre_mises_en_demeure').get() as { c: number }).c;
+  assert.equal(count, 0);
+  const titre = db.prepare('SELECT statut FROM titres WHERE id = ?').get(fx.titreA) as { statut: string } | undefined;
+  assert.equal(titre?.statut, 'impaye');
+});
+
+test('POST /api/titres/:id/mise-en-demeure regenere un PDF si l ancienne piece jointe a ete supprimee logiquement', async () => {
+  const fx = resetFixtures();
+
+  const firstRes = await requestJson({
+    method: 'POST',
+    path: `/api/titres/${fx.titreA}/mise-en-demeure`,
+    headers: makeAuthHeader(fx.financier),
+  });
+  assert.equal(firstRes.status, 201);
+
+  const deleteRes = await request({
+    method: 'DELETE',
+    path: `/api/pieces-jointes/${firstRes.json?.piece_jointe_id}`,
+    headers: makeAuthHeader(fx.financier),
+  });
+  assert.equal(deleteRes.status, 204);
+
+  const secondRes = await requestJson({
+    method: 'POST',
+    path: `/api/titres/${fx.titreA}/mise-en-demeure`,
+    headers: makeAuthHeader(fx.financier),
+  });
+
+  assert.equal(secondRes.status, 201);
+  assert.notEqual(secondRes.json?.piece_jointe_id, firstRes.json?.piece_jointe_id);
+  assert.notEqual(secondRes.json?.numero, firstRes.json?.numero);
 });
 
 test('POST /api/titres/mises-en-demeure/batch genere un lot avec numerotation unique et statuts mis a jour', async () => {

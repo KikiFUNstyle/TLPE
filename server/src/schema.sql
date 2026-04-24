@@ -547,6 +547,16 @@ CREATE TABLE IF NOT EXISTS titre_mises_en_demeure (
 );
 CREATE INDEX IF NOT EXISTS idx_titre_mises_en_demeure_annee ON titre_mises_en_demeure(annee, numero);
 
+CREATE TABLE IF NOT EXISTS titre_mises_en_demeure_sequences (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  annee            INTEGER NOT NULL,
+  numero_ordre     INTEGER NOT NULL,
+  created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (annee, numero_ordre)
+);
+CREATE INDEX IF NOT EXISTS idx_titre_mises_en_demeure_sequences_annee
+  ON titre_mises_en_demeure_sequences(annee, numero_ordre);
+
 -- =====================================================================
 -- Audit log (traçabilite cf. section 12.2)
 -- =====================================================================

@@ -115,6 +115,41 @@ export function initSchema() {
     `);
   }
 
+  const hasTitreMisesEnDemeureSequences = (
+    db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'titre_mises_en_demeure_sequences'").get() as
+      | { name: string }
+      | undefined
+  )?.name === 'titre_mises_en_demeure_sequences';
+  if (!hasTitreMisesEnDemeureSequences) {
+    db.exec(`
+      CREATE TABLE titre_mises_en_demeure_sequences (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        annee            INTEGER NOT NULL,
+        numero_ordre     INTEGER NOT NULL,
+        created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE (annee, numero_ordre)
+      );
+      CREATE INDEX IF NOT EXISTS idx_titre_mises_en_demeure_sequences_annee
+        ON titre_mises_en_demeure_sequences(annee, numero_ordre);
+    `);
+  }
+
+  if (hasTitreMisesEnDemeure) {
+    const sequenceBackfillCount = (
+      db.prepare('SELECT COUNT(*) AS c FROM titre_mises_en_demeure_sequences').get() as { c: number }
+    ).c;
+    if (sequenceBackfillCount === 0) {
+      db.exec(`
+        INSERT INTO titre_mises_en_demeure_sequences (annee, numero_ordre, created_at)
+        SELECT
+          annee,
+          CAST(substr(numero, -6) AS INTEGER) AS numero_ordre,
+          created_at
+        FROM titre_mises_en_demeure
+      `);
+    }
+  }
+
   // migration legacy -> ajoute relance_j7_courrier sur campagnes si table deja presente
   const hasCampagnes = (
     db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'campagnes'").get() as
