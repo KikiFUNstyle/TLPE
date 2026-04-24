@@ -26,6 +26,7 @@ basée sur les articles L2333-6 à L2333-16 du CGCT.
 | Hash SHA-256 de soumission (accusé) | §5.2 | OK |
 | Titres de recettes + PDF (ordonnancement) + bordereau récapitulatif PDF/Excel horodaté avec hash SHA-256 | §7.1 / US5.1 | OK + tests |
 | Mandats SEPA + export pain.008.001.02 avec validation IBAN/BIC, séquencement FRST/RCUR et validation XSD locale | §7.2 / US5.4 | OK + tests |
+| Import de relevés bancaires (CSV paramétrable / OFX / MT940), dédoublonnage par transaction, page Rapprochement réservée admin/financier | §7.3 / US5.5 | OK + tests |
 | Paiements (5 modalités) + recouvrement | §7.2 | OK |
 | Contentieux / réclamations | §8 | OK |
 | Tableau de bord exécutif + KPI déclaratifs temps réel (US3.7: attendus/soumises/validées/rejetées, drilldown zone/type, évolution journalière, auto-refresh 5 min) | §10.1 / §5.4 | OK |
@@ -97,6 +98,11 @@ Ouvrir ensuite http://localhost:5173.
   - `POST /api/assujettis/:id/mandats-sepa/:mandatId/revoke` révoque explicitement le mandat actif et trace `revoke-mandat-sepa`
   - `POST /api/sepa/export-batch` génère un XML `pain.008.001.02` téléchargeable, avec séquencement `FRST` puis `RCUR` selon l'historique
   - les mandats révoqués sont ignorés à l'export et une erreur de validation XSD retourne un message client générique (`Erreur interne export SEPA`)
+- Smoke test US5.5:
+  - la page `Rapprochement bancaire` n'est visible et accessible que pour `admin|financier`
+  - `POST /api/rapprochement/import` accepte `csv|ofx|mt940`, crée `releves_bancaires` + `lignes_releve` et trace `audit_log` (`action=import`, `entite=releve_bancaire`)
+  - un second import contenant les mêmes `transaction_id` n'insère pas de doublons et les remonte dans `duplicates`
+  - `GET /api/rapprochement` liste les relevés importés et les lignes non rapprochées
 
 ## Mandats SEPA / export pain.008 (US5.4)
 

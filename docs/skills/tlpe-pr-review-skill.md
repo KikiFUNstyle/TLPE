@@ -48,6 +48,9 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
 - Couvrir happy path + edge cases + erreurs validation.
 - Ajouter des tests d'idempotence pour tout envoi batch/notification.
 - Vérifier qu'un test échoue avant fix (TDD) quand c'est possible.
+- Pour tout import volumique (relevés, CSV métier, lots), vérifier qu'aucune requête `IN (...)` n'utilise un nombre non borné de paramètres SQLite : traiter en batch ou table temporaire, avec test de non-régression au-delà de `MAX_VARIABLE_NUMBER`.
+- Pour tout parseur MT940/format bancaire, vérifier que les références métier sont préservées même sans séparateur `//` et que le code type (`NTRF`, `NMSC`, etc.) n'est pas restitué comme référence client.
+- Pour toute liste UI de doublons/aperçus importés, vérifier une clé React réellement unique et stable (`transaction_id` seul est insuffisant si la vue affiche plusieurs doublons du même identifiant).
 - Pour toute US avec document généré (PDF, accusé, courrier), ajouter un test API qui valide la présence des métadonnées de restitution (`token/hash/download_url`) et un test service qui vérifie la persistance + réutilisation idempotente.
 - Pour tout export binaire métier (PDF/XLSX bordereau, titre, rapport), vérifier en review:
   - contrôle d'accès explicite par rôle,
@@ -72,6 +75,10 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
 - Pour tout téléchargement binaire déclenché par un POST JSON, vérifier en review:
   - `Content-Type: application/json` bien envoyé côté client,
   - conservation du nom de fichier renvoyé par le backend (`Content-Disposition`) quand il porte un identifiant métier incrémental.
+- Pour toute route d'import/parsing de fichier métier (CSV/XLSX/OFX/MT940/XML), vérifier en review:
+  - distinction explicite entre erreurs de validation utilisateur/parsing attendu (4xx avec message exploitable) et erreurs inattendues de persistance/runtime (5xx générique sans fuite de détails internes),
+  - présence d'un test de non-régression couvrant au moins un cas 4xx métier et un cas 5xx interne masqué,
+  - journalisation serveur des erreurs inattendues avant réponse 5xx.
 - Pour toute nouvelle table métier SQLite, vérifier en review:
   - migration runtime idempotente pour les bases legacy,
   - éviter `ALTER TABLE ... ADD COLUMN ... DEFAULT (datetime('now'))` ou toute autre expression non constante: reconstruire la table si une valeur dérivée/fonctionnelle est nécessaire,
