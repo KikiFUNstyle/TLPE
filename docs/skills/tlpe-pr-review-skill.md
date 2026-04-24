@@ -137,6 +137,15 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
 - Vérifier qu'un endpoint/API d'historique de recouvrement respecte les droits d'accès du contribuable (pas d'accès inter-assujetti) et qu'un test couvre cette restitution.
 - Vérifier que le scheduler quotidien exécute aussi ce workflow et qu'un smoke test de démarrage confirme que l'application démarre toujours après intégration du job.
 
+### 15) Titre exécutoire & transmission comptable public (appris sur US5.9)
+- Vérifier la cohérence **machine à états backend + UI** quand un nouveau statut titre est introduit (`transmis_comptable`, `admis_en_non_valeur`) : schéma SQL, migration runtime, filtres de liste, badges/libellés et actions visibles.
+- Vérifier que `POST /api/titres/:id/rendre-executoire` est réservé à `admin|financier`, refuse tout statut hors `mise_en_demeure`, persiste un export immuable dédié (`titres_executoires`) avec hash, mention de visa/signature, auteur et horodatage.
+- Vérifier qu'un téléchargement binaire métier déclenché par POST conserve le `Content-Disposition` backend côté UI et qu'un test couvre explicitement cette restitution.
+- Vérifier que le flux XML complémentaire est validé XSD au runtime **et** que le schéma reste accessible après build (`dist/` ou fallback `src/`), avec réponse client générique sur erreur interne et logs serveur détaillés.
+- Vérifier qu'une admission en non-valeur ne soit possible qu'après `transmis_comptable`, qu'elle crée un événement distinct de retour comptable dans l'historique, et qu'un commentaire métier soit restitué côté UI.
+- Vérifier que le bouton/accès `Historique` reste visible pour les statuts terminaux de recouvrement (`transmis_comptable`, `admis_en_non_valeur`) afin d'éviter de masquer la traçabilité après action utilisateur.
+- Vérifier l'idempotence métier/technique de la transmission comptable et du retour négatif (contrainte DB ou garde explicite) pour éviter les doublons de flux ou d'actions de recouvrement.
+
 ## Format de sortie review
 
 1. **Résumé**

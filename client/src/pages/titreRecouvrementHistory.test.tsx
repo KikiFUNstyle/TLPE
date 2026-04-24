@@ -38,6 +38,16 @@ test('TitreRecouvrementHistory rend les actions J+10/J+30/J+60 avec pièces join
           piece_jointe_path: null,
           details: JSON.stringify({ download_url: '/api/titres/1/pdf' }),
         },
+        {
+          id: 4,
+          niveau: 'retour_comptable',
+          action_type: 'admission_non_valeur',
+          statut: 'classe',
+          created_at: '2026-11-15 05:00:00',
+          email_destinataire: null,
+          piece_jointe_path: null,
+          details: JSON.stringify({ commentaire: 'Retour comptable negatif - creance irrecouvrable' }),
+        },
       ],
     }),
   );
@@ -46,6 +56,8 @@ test('TitreRecouvrementHistory rend les actions J+10/J+30/J+60 avec pièces join
   assert.match(html, /Rappel automatique/);
   assert.match(html, /Mise en demeure/);
   assert.match(html, /Comptable public/);
+  assert.match(html, /Admission en non-valeur/);
   assert.match(html, /mises_en_demeure\/impayes\/mise-en-demeure-1.pdf/);
   assert.match(html, /\/api\/titres\/1\/pdf/);
+  assert.match(html, /Retour comptable negatif - creance irrecouvrable/);
 });
