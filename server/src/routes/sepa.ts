@@ -62,7 +62,7 @@ type SepaValidationResult = {
   report: string;
 };
 
-const mandatCreateSchema = z.object({
+export const mandatCreateSchema = z.object({
   rum: z.string().trim().min(3).max(64),
   iban: z.string().trim().min(5).max(64),
   bic: z.string().trim().min(8).max(11),
@@ -84,7 +84,7 @@ const exportBatchSchema = z
     }
   });
 
-const revokeMandatSchema = z.object({
+export const revokeMandatSchema = z.object({
   date_revocation: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 });
 
@@ -327,7 +327,7 @@ function buildSepaXml(orders: SepaOrder[], numeroLot: number, datePrelevement: s
     .join('');
 
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<Document>
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.008.001.02">
   <CstmrDrctDbtInitn>
     <GrpHdr>
       <MsgId>${messageId}</MsgId>
@@ -350,7 +350,7 @@ function buildSepaXml(orders: SepaOrder[], numeroLot: number, datePrelevement: s
   };
 }
 
-function listMandatsForAssujetti(assujettiId: number) {
+export function listMandatsForAssujetti(assujettiId: number) {
   return db
     .prepare(
       `SELECT id, rum, bic, date_signature, statut, date_revocation, created_at, updated_at,

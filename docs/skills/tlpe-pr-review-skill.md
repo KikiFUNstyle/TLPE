@@ -57,6 +57,7 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
 - Pour tout export XML métier (PESV2, pain.008, flux DGFiP), vérifier en review:
   - sélection métier exclusive et explicite (campagne **ou** période, jamais les deux),
   - validation XSD automatisée dans les tests et au runtime avant restitution,
+  - cohérence namespace XML/XSD: `targetNamespace` défini dans le schéma et document exporté namespacé avec l'URI ISO attendue,
   - réponse client sûre: détails techniques complets en logs serveur seulement, message générique côté API si l'échec est interne,
   - entêtes de téléchargement cohérents (`Content-Type`, `Content-Disposition`) et nommage déterministe du fichier.
 - Pour toute US de prélèvement/mandat SEPA, vérifier explicitement:

@@ -369,6 +369,7 @@ test('POST /api/sepa/export-batch génère les ordres à échéance puis exporte
   assert.equal(first.status, 200);
   assert.match(first.contentType, /xml/);
   assert.match(first.disposition, /pain\.008-000001\.xml/);
+  assert.match(first.text, /<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain\.008\.001\.02"/);
   assert.match(first.text, /<SeqTp>FRST<\/SeqTp>/);
   assert.match(first.text, /<InstrId>SEPA-1<\/InstrId>/);
   assert.match(first.text, /<EndToEndId>RUM-ALPHA-001-TIT-SEPA-2026-000001<\/EndToEndId>/);
