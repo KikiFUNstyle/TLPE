@@ -49,11 +49,18 @@ interface CsvConfigState {
   dateFormat: DateFormat;
 }
 
-interface ImportSummary {
+export interface ImportSummary {
   releve: ReleveBancaire;
   lignesImportees: number;
   lignesIgnorees: number;
   duplicates: Array<{ transaction_id: string; libelle: string; montant: number }>;
+}
+
+export function makeDuplicateRowKey(
+  duplicate: { transaction_id: string; libelle: string; montant: number },
+  index: number,
+) {
+  return `${duplicate.transaction_id}::${duplicate.libelle}::${duplicate.montant.toFixed(2)}::${index}`;
 }
 
 const defaultCsvConfig: CsvConfigState = {
@@ -259,8 +266,8 @@ export default function Rapprochement({ initialData }: RapprochementProps = {}) 
                       </tr>
                     </thead>
                     <tbody>
-                      {importSummary.duplicates.map((duplicate) => (
-                        <tr key={duplicate.transaction_id}>
+                      {importSummary.duplicates.map((duplicate, index) => (
+                        <tr key={makeDuplicateRowKey(duplicate, index)}>
                           <td>{duplicate.transaction_id}</td>
                           <td>{duplicate.libelle}</td>
                           <td>{formatEuro(duplicate.montant)}</td>

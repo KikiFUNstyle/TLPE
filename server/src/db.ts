@@ -505,10 +505,12 @@ export function initSchema() {
         FOREIGN KEY (releve_id) REFERENCES releves_bancaires(id) ON DELETE CASCADE,
         FOREIGN KEY (paiement_id) REFERENCES paiements(id) ON DELETE SET NULL
       );
+      CREATE INDEX IF NOT EXISTS idx_lignes_releve_releve ON lignes_releve(releve_id);
       CREATE INDEX IF NOT EXISTS idx_lignes_releve_rapproche ON lignes_releve(rapproche, date DESC);
       CREATE INDEX IF NOT EXISTS idx_lignes_releve_paiement ON lignes_releve(paiement_id);
     `);
   } else {
+    db.exec('CREATE INDEX IF NOT EXISTS idx_lignes_releve_releve ON lignes_releve(releve_id)');
     db.exec('CREATE INDEX IF NOT EXISTS idx_lignes_releve_rapproche ON lignes_releve(rapproche, date DESC)');
     db.exec('CREATE INDEX IF NOT EXISTS idx_lignes_releve_paiement ON lignes_releve(paiement_id)');
   }

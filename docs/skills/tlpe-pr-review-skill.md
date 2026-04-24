@@ -48,6 +48,9 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
 - Couvrir happy path + edge cases + erreurs validation.
 - Ajouter des tests d'idempotence pour tout envoi batch/notification.
 - Vérifier qu'un test échoue avant fix (TDD) quand c'est possible.
+- Pour tout import volumique (relevés, CSV métier, lots), vérifier qu'aucune requête `IN (...)` n'utilise un nombre non borné de paramètres SQLite : traiter en batch ou table temporaire, avec test de non-régression au-delà de `MAX_VARIABLE_NUMBER`.
+- Pour tout parseur MT940/format bancaire, vérifier que les références métier sont préservées même sans séparateur `//` et que le code type (`NTRF`, `NMSC`, etc.) n'est pas restitué comme référence client.
+- Pour toute liste UI de doublons/aperçus importés, vérifier une clé React réellement unique et stable (`transaction_id` seul est insuffisant si la vue affiche plusieurs doublons du même identifiant).
 - Pour toute US avec document généré (PDF, accusé, courrier), ajouter un test API qui valide la présence des métadonnées de restitution (`token/hash/download_url`) et un test service qui vérifie la persistance + réutilisation idempotente.
 - Pour tout export binaire métier (PDF/XLSX bordereau, titre, rapport), vérifier en review:
   - contrôle d'accès explicite par rôle,

@@ -335,6 +335,17 @@ function parseMt940ValueDate(raw: string): string | null {
   return parseDate(`${year}${mm}${dd}`, 'yyyymmdd');
 }
 
+function parseMt940References(rest: string) {
+  const delimiterIndex = rest.indexOf('//');
+  const customerSegment = delimiterIndex >= 0 ? rest.slice(0, delimiterIndex) : rest;
+  const bankSegment = delimiterIndex >= 0 ? rest.slice(delimiterIndex + 2) : '';
+  const customerReference = customerSegment.slice(4).trim();
+  return {
+    customerReference: customerReference || null,
+    bankReference: bankSegment.trim() || null,
+  };
+}
+
 function parseMt940Statement(content: string, fileName: string): ParsedStatement {
   const lines = content.replace(/\r/g, '').split('\n');
   const parsedLines: ParsedStatementLine[] = [];
@@ -406,13 +417,13 @@ function parseMt940Statement(content: string, fileName: string): ParsedStatement
       const amount = parseSignedAmount(amountMatch[1]);
       if (amount === null) continue;
       rest = rest.slice(amountMatch[1].length);
-      const [, customerReferenceRaw = '', bankReferenceRaw = ''] = rest.split('//');
+      const { customerReference, bankReference } = parseMt940References(rest);
       current = {
         date: valueDate,
         montant: Number((amount * sign).toFixed(2)),
-        reference: customerReferenceRaw.trim() || null,
-        transactionId: bankReferenceRaw.trim() || null,
-        libelle: customerReferenceRaw.trim() || 'Opération MT940',
+        reference: customerReference,
+        transactionId: bankReference,
+        libelle: customerReference ?? 'Opération MT940',
         raw61: payload,
       };
       continue;

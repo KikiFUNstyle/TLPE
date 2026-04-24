@@ -4,6 +4,7 @@ import express from 'express';
 import { db, initSchema } from './db';
 import { hashPassword, signToken, type AuthUser } from './auth';
 import { rapprochementRouter } from './routes/rapprochement';
+import { importReleveBancaire } from './rapprochement';
 import { parseStatementFile } from './rapprochementImport';
 
 function createApp() {
@@ -167,13 +168,49 @@ test('parseStatementFile supporte CSV paramétrable, OFX et MT940', () => {
 
   const mt940 = parseStatementFile({
     fileName: 'releve.mt940',
-    contentBase64: toBase64(':20:START\n:25:FR761234\n:60F:C260401EUR0,00\n:61:2604010401C150,45NTRFNONREF//BANKREF1\n:86:VIREMENT CLIENT\n:62F:C260430EUR150,45\n'),
+    contentBase64: toBase64(
+      ':20:START\n'
+      + ':25:FR761234\n'
+      + ':60F:C260401EUR0,00\n'
+      + ':61:2604010401C150,45NTRFNONREF//BANKREF1\n'
+      + ':86:VIREMENT CLIENT\n'
+      + ':61:2604020402D12,00NMSCNREFSANSBANK\n'
+      + ':86:FRAIS BANCAIRES\n'
+      + ':62F:C260430EUR138,45\n',
+    ),
   });
   assert.equal(mt940.accountId, 'FR761234');
   assert.equal(mt940.dateDebut, '2026-04-01');
   assert.equal(mt940.dateFin, '2026-04-30');
-  assert.equal(mt940.lignes.length, 1);
+  assert.equal(mt940.lignes.length, 2);
   assert.equal(mt940.lignes[0].transaction_id, 'mt940:BANKREF1');
+  assert.equal(mt940.lignes[0].reference, 'NONREF');
+  assert.equal(mt940.lignes[0].libelle, 'VIREMENT CLIENT');
+  assert.equal(mt940.lignes[1].transaction_id, 'mt940:NREFSANSBANK');
+  assert.equal(mt940.lignes[1].reference, 'NREFSANSBANK');
+  assert.equal(mt940.lignes[1].libelle, 'FRAIS BANCAIRES');
+});
+
+test('importReleveBancaire supporte les gros fichiers sans dépasser la limite SQLite des paramètres', () => {
+  const fx = resetFixtures();
+  const lineCount = 33010;
+  const rows = ['date;libelle;montant;reference;transaction_id'];
+  for (let i = 0; i < lineCount; i += 1) {
+    rows.push(`2026-04-01;Versement ${i};1,00;REF-${i};BANK-${i}`);
+  }
+
+  const res = importReleveBancaire({
+    fileName: 'releve-massif.csv',
+    contentBase64: toBase64(`${rows.join('\n')}\n`),
+    format: 'csv',
+    userId: fx.financier.id,
+    ip: '127.0.0.1',
+  });
+
+  assert.equal(res.lignesImportees, lineCount);
+  assert.equal(res.lignesIgnorees, 0);
+  const count = (db.prepare('SELECT COUNT(*) AS c FROM lignes_releve').get() as { c: number }).c;
+  assert.equal(count, lineCount);
 });
 
 test('POST /api/rapprochement/import importe un relevé et déduplique par transaction bancaire', async () => {

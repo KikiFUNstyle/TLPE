@@ -57,12 +57,34 @@ function mapReleveById(id: number): ReleveBancaireRow {
     .get(id) as ReleveBancaireRow;
 }
 
+const DUPLICATE_LOOKUP_BATCH_SIZE = 500;
+
 function toDuplicateSummary(line: ParsedStatement['lignes'][number]) {
   return {
     transaction_id: line.transaction_id,
     libelle: line.libelle,
     montant: line.montant,
   };
+}
+
+function listExistingTransactionIds(transactionIds: string[]) {
+  if (transactionIds.length === 0) return new Set<string>();
+
+  const existingIds = new Set<string>();
+  for (let index = 0; index < transactionIds.length; index += DUPLICATE_LOOKUP_BATCH_SIZE) {
+    const batch = transactionIds.slice(index, index + DUPLICATE_LOOKUP_BATCH_SIZE);
+    const placeholders = batch.map(() => '?').join(', ');
+    const rows = db
+      .prepare(
+        `SELECT transaction_id
+         FROM lignes_releve
+         WHERE transaction_id IN (${placeholders})`,
+      )
+      .all(...batch) as Array<{ transaction_id: string }>;
+    rows.forEach((row) => existingIds.add(row.transaction_id));
+  }
+
+  return existingIds;
 }
 
 export function importReleveBancaire(options: ImportRapprochementOptions): ImportRapprochementResult {
@@ -74,16 +96,7 @@ export function importReleveBancaire(options: ImportRapprochementOptions): Impor
   });
 
   const transactionIds = parsed.lignes.map((line) => line.transaction_id);
-  const existingRows = transactionIds.length
-    ? (db
-        .prepare(
-          `SELECT transaction_id
-           FROM lignes_releve
-           WHERE transaction_id IN (${transactionIds.map(() => '?').join(', ')})`,
-        )
-        .all(...transactionIds) as Array<{ transaction_id: string }>)
-    : [];
-  const existingIds = new Set(existingRows.map((row) => row.transaction_id));
+  const existingIds = listExistingTransactionIds(transactionIds);
   const seenIds = new Set(existingIds);
   const duplicates: Array<{ transaction_id: string; libelle: string; montant: number }> = [];
   const lignesAAjouter = parsed.lignes.filter((line) => {
