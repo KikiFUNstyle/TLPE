@@ -196,7 +196,7 @@ test('computeProrata plafonne prorata a 1 (depose apres fin annee ignoree)', () 
 test('calculerTLPE applique le prorata temporis avec date_pose et date_depose', () => {
   db.exec('DELETE FROM exonerations');
   // publicitaire 4m2 : 15.5 EUR/m2, annee entiere = 62
-  // Pose 01/07 au 31/12 : ~185 jours -> 4 * 15.5 * (185/365) ~ 33.sWith floor
+  // Pose 01/07 au 31/12 : ~185 jours -> 4 * 15.5 * (185/365) ~ 33. Floor gives a value below 62.
   const r = calculerTLPE({
     annee: 2024,
     categorie: 'publicitaire',

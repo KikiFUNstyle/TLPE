@@ -118,7 +118,7 @@ test('authMiddleware rejette Authorization sans prefix Bearer', () => {
   assert.equal(res.statusCode, 401);
 });
 
-test('authMiddleware rejette un token malforma/expire', () => {
+test('authMiddleware rejette un token malformé/expire', () => {
   const req: { headers: Record<string, string> } = {
     headers: { authorization: 'Bearer entete.payload.signature_invalide' },
   };
