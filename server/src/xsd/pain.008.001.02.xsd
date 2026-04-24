@@ -31,7 +31,13 @@
                 <xs:complexType>
                   <xs:sequence>
                     <xs:element name="PmtInfId" type="xs:string" />
-                    <xs:element name="PmtMtd" type="xs:string" />
+                    <xs:element name="PmtMtd">
+                      <xs:simpleType>
+                        <xs:restriction base="xs:string">
+                          <xs:enumeration value="DD" />
+                        </xs:restriction>
+                      </xs:simpleType>
+                    </xs:element>
                     <xs:element name="BtchBookg" type="xs:boolean" />
                     <xs:element name="NbOfTxs" type="xs:positiveInteger" />
                     <xs:element name="CtrlSum" type="xs:decimal" />
@@ -97,7 +103,13 @@
                         </xs:sequence>
                       </xs:complexType>
                     </xs:element>
-                    <xs:element name="ChrgBr" type="xs:string" />
+                    <xs:element name="ChrgBr">
+                      <xs:simpleType>
+                        <xs:restriction base="xs:string">
+                          <xs:enumeration value="SLEV" />
+                        </xs:restriction>
+                      </xs:simpleType>
+                    </xs:element>
                     <xs:element name="CdtrSchmeId">
                       <xs:complexType>
                         <xs:sequence>

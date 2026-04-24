@@ -252,7 +252,7 @@ function buildSepaXml(orders: SepaOrder[], numeroLot: number, datePrelevement: s
           (order, orderIndex) => `
         <DrctDbtTxInf>
           <PmtId>
-            <InstrId>SEPA-${orderIndex + 1}</InstrId>
+            <InstrId>${xmlEscape(`SEPA-${sequenceType}-${groupIndex + 1}-${orderIndex + 1}`)}</InstrId>
             <EndToEndId>${xmlEscape(`${order.rum}-${order.numero}`)}</EndToEndId>
           </PmtId>
           <InstdAmt Ccy="EUR">${order.montant_restant.toFixed(2)}</InstdAmt>

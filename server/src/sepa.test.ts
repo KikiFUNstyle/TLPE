@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import express from 'express';
 import { db, initSchema } from './db';
 import { hashPassword, signToken, type AuthUser } from './auth';
@@ -55,6 +57,28 @@ async function request(params: {
     };
   } finally {
     server.close();
+  }
+}
+
+function validateCurrentPain008Xsd(xml: string): { ok: boolean; report: string } {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tlpe-sepa-test-'));
+  const xmlPath = path.join(tempDir, 'pain.008.xml');
+  const xsdPath = path.join(__dirname, 'xsd', 'pain.008.001.02.xsd');
+  fs.writeFileSync(xmlPath, xml, 'utf8');
+  try {
+    execFileSync('xmllint', ['--noout', '--schema', xsdPath, xmlPath], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return { ok: true, report: 'ok' };
+  } catch (error) {
+    const stderr =
+      typeof error === 'object' && error !== null && 'stderr' in error
+        ? String((error as { stderr?: string | Buffer }).stderr ?? '').trim()
+        : String(error);
+    return { ok: false, report: stderr };
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
   }
 }
 
@@ -371,7 +395,7 @@ test('POST /api/sepa/export-batch génère les ordres à échéance puis exporte
   assert.match(first.disposition, /pain\.008-000001\.xml/);
   assert.match(first.text, /<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain\.008\.001\.02"/);
   assert.match(first.text, /<SeqTp>FRST<\/SeqTp>/);
-  assert.match(first.text, /<InstrId>SEPA-1<\/InstrId>/);
+  assert.match(first.text, /<InstrId>SEPA-FRST-1-1<\/InstrId>/);
   assert.match(first.text, /<EndToEndId>RUM-ALPHA-001-TIT-SEPA-2026-000001<\/EndToEndId>/);
   assert.doesNotMatch(first.text, /TIT-SEPA-2026-000002/);
 
@@ -392,7 +416,11 @@ test('POST /api/sepa/export-batch génère les ordres à échéance puis exporte
 
   assert.equal(second.status, 200);
   assert.match(second.text, /<SeqTp>RCUR<\/SeqTp>/);
+  assert.match(second.text, /<InstrId>SEPA-RCUR-1-1<\/InstrId>/);
   assert.match(second.text, /TIT-SEPA-2025-000002/);
+
+  const xsdValidation = validateCurrentPain008Xsd(second.text);
+  assert.equal(xsdValidation.ok, true, xsdValidation.report);
 
   const exports = db.prepare('SELECT numero_lot, xsd_validation_ok, ordres_count FROM sepa_exports ORDER BY numero_lot').all() as Array<{
     numero_lot: number;

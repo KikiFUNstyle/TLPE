@@ -66,8 +66,7 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
   - impossibilité d'avoir plusieurs mandats `actif` pour un même assujetti sans révocation explicite du précédent, idéalement protégée aussi par une contrainte DB / index unique partiel et pas uniquement par l'API,
   - séquencement `FRST` / `RCUR` basé sur l'historique réel des prélèvements déjà exportés,
   - exclusion des mandats révoqués ou sans solde exigible,
-  - traçabilité `audit_log` pour création de mandat et export du lot.
-
+  - traçabilité `audit_log` pour création de mandat et export du lot,
   - classification d'erreur explicite: erreurs de saisie / sélection métier en 4xx, erreurs internes runtime/XSD/xmllint en 5xx générique sans fuite de détails serveur au client.
 - Pour tout téléchargement binaire déclenché par un POST JSON, vérifier en review:
   - `Content-Type: application/json` bien envoyé côté client,
