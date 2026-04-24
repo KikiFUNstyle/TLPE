@@ -14,6 +14,7 @@ import Contentieux from './pages/Contentieux';
 import Carte from './pages/Carte';
 import DeclarationReceiptVerify from './pages/DeclarationReceiptVerify';
 import { PayfipConfirmationPage } from './pages/PayfipConfirmationPage';
+import Rapprochement from './pages/Rapprochement';
 
 export default function App() {
   const { user, loading, logout } = useAuth();
@@ -36,6 +37,7 @@ export default function App() {
   }
 
   const isContribuable = user.role === 'contribuable';
+  const canAccessRapprochement = user.role === 'admin' || user.role === 'financier';
 
   return (
     <div className="app">
@@ -60,6 +62,7 @@ export default function App() {
               <NavLink to="/dispositifs">Dispositifs</NavLink>
               <NavLink to="/declarations">Declarations</NavLink>
               <NavLink to="/titres">Titres de recettes</NavLink>
+              {canAccessRapprochement && <NavLink to="/rapprochement">Rapprochement bancaire</NavLink>}
               <NavLink to="/contentieux">Contentieux</NavLink>
               <NavLink to="/carte">Carte des dispositifs</NavLink>
             </>
@@ -90,6 +93,7 @@ export default function App() {
           <Route path="/declarations" element={<Declarations />} />
           <Route path="/declarations/:id" element={<DeclarationDetail />} />
           <Route path="/titres" element={<Titres />} />
+          <Route path="/rapprochement" element={canAccessRapprochement ? <Rapprochement /> : <Navigate to="/" replace />} />
           <Route path="/contentieux" element={<Contentieux />} />
           <Route path="/carte" element={<Carte />} />
           <Route path="/simulateur" element={<Simulateur />} />
