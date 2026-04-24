@@ -442,6 +442,59 @@ CREATE TABLE IF NOT EXISTS paiements (
 );
 
 -- =====================================================================
+-- Rapprochement bancaire / relevés importés
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS releves_bancaires (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  format           TEXT NOT NULL CHECK (format IN ('csv','ofx','mt940')),
+  fichier_nom      TEXT NOT NULL,
+  compte_bancaire  TEXT,
+  date_debut       TEXT,
+  date_fin         TEXT,
+  imported_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  imported_by      INTEGER,
+  FOREIGN KEY (imported_by) REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_releves_bancaires_imported_at ON releves_bancaires(imported_at DESC);
+
+CREATE TABLE IF NOT EXISTS lignes_releve (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  releve_id        INTEGER NOT NULL,
+  date             TEXT NOT NULL,
+  libelle          TEXT NOT NULL,
+  montant          REAL NOT NULL,
+  reference        TEXT,
+  transaction_id   TEXT NOT NULL UNIQUE,
+  rapproche        INTEGER NOT NULL DEFAULT 0 CHECK (rapproche IN (0,1)),
+  paiement_id      INTEGER,
+  raw_data         TEXT,
+  created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (releve_id) REFERENCES releves_bancaires(id) ON DELETE CASCADE,
+  FOREIGN KEY (paiement_id) REFERENCES paiements(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_lignes_releve_releve ON lignes_releve(releve_id);
+CREATE INDEX IF NOT EXISTS idx_lignes_releve_rapproche ON lignes_releve(rapproche, date DESC);
+CREATE INDEX IF NOT EXISTS idx_lignes_releve_paiement ON lignes_releve(paiement_id);
+
+CREATE TABLE IF NOT EXISTS rapprochements_log (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  ligne_releve_id  INTEGER NOT NULL,
+  titre_id         INTEGER,
+  paiement_id      INTEGER,
+  mode             TEXT NOT NULL CHECK (mode IN ('auto','manuel')),
+  resultat         TEXT NOT NULL CHECK (resultat IN ('rapproche','partiel','excedentaire','erreur_reference','errone')),
+  commentaire      TEXT,
+  user_id          INTEGER,
+  created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (ligne_releve_id) REFERENCES lignes_releve(id) ON DELETE CASCADE,
+  FOREIGN KEY (titre_id) REFERENCES titres(id) ON DELETE SET NULL,
+  FOREIGN KEY (paiement_id) REFERENCES paiements(id) ON DELETE SET NULL,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rapprochements_log_ligne ON rapprochements_log(ligne_releve_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_rapprochements_log_created_at ON rapprochements_log(created_at DESC, id DESC);
+
+-- =====================================================================
 -- Contentieux
 -- =====================================================================
 CREATE TABLE IF NOT EXISTS contentieux (

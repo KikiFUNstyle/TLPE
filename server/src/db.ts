@@ -460,6 +460,138 @@ export function initSchema() {
       db.pragma('foreign_keys = ON');
     }
   }
+
+  const hasRelevesBancaires = (
+    db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'releves_bancaires'").get() as
+      | { name: string }
+      | undefined
+  )?.name === 'releves_bancaires';
+  if (!hasRelevesBancaires) {
+    db.exec(`
+      CREATE TABLE releves_bancaires (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        format           TEXT NOT NULL CHECK (format IN ('csv','ofx','mt940')),
+        fichier_nom      TEXT NOT NULL,
+        compte_bancaire  TEXT,
+        date_debut       TEXT,
+        date_fin         TEXT,
+        imported_at      TEXT NOT NULL DEFAULT (datetime('now')),
+        imported_by      INTEGER,
+        FOREIGN KEY (imported_by) REFERENCES users(id) ON DELETE SET NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_releves_bancaires_imported_at ON releves_bancaires(imported_at DESC);
+    `);
+  }
+
+  const lignesReleveSql = (
+    db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'lignes_releve'").get() as
+      | { sql: string }
+      | undefined
+  )?.sql;
+  if (!lignesReleveSql) {
+    db.exec(`
+      CREATE TABLE lignes_releve (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        releve_id        INTEGER NOT NULL,
+        date             TEXT NOT NULL,
+        libelle          TEXT NOT NULL,
+        montant          REAL NOT NULL,
+        reference        TEXT,
+        transaction_id   TEXT NOT NULL UNIQUE,
+        rapproche        INTEGER NOT NULL DEFAULT 0 CHECK (rapproche IN (0,1)),
+        paiement_id      INTEGER,
+        raw_data         TEXT,
+        created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (releve_id) REFERENCES releves_bancaires(id) ON DELETE CASCADE,
+        FOREIGN KEY (paiement_id) REFERENCES paiements(id) ON DELETE SET NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_lignes_releve_releve ON lignes_releve(releve_id);
+      CREATE INDEX IF NOT EXISTS idx_lignes_releve_rapproche ON lignes_releve(rapproche, date DESC);
+      CREATE INDEX IF NOT EXISTS idx_lignes_releve_paiement ON lignes_releve(paiement_id);
+    `);
+  } else {
+    db.exec('CREATE INDEX IF NOT EXISTS idx_lignes_releve_releve ON lignes_releve(releve_id)');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_lignes_releve_rapproche ON lignes_releve(rapproche, date DESC)');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_lignes_releve_paiement ON lignes_releve(paiement_id)');
+  }
+
+  const hasRapprochementsLog = (
+    db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'rapprochements_log'").get() as
+      | { name: string }
+      | undefined
+  )?.name === 'rapprochements_log';
+  if (!hasRapprochementsLog) {
+    db.exec(`
+      CREATE TABLE rapprochements_log (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        ligne_releve_id  INTEGER NOT NULL,
+        titre_id         INTEGER,
+        paiement_id      INTEGER,
+        mode             TEXT NOT NULL CHECK (mode IN ('auto','manuel')),
+        resultat         TEXT NOT NULL CHECK (resultat IN ('rapproche','partiel','excedentaire','erreur_reference','errone')),
+        commentaire      TEXT,
+        user_id          INTEGER,
+        created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (ligne_releve_id) REFERENCES lignes_releve(id) ON DELETE CASCADE,
+        FOREIGN KEY (titre_id) REFERENCES titres(id) ON DELETE SET NULL,
+        FOREIGN KEY (paiement_id) REFERENCES paiements(id) ON DELETE SET NULL,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_rapprochements_log_ligne ON rapprochements_log(ligne_releve_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_rapprochements_log_created_at ON rapprochements_log(created_at DESC, id DESC);
+    `);
+  } else {
+    const rapprochementsLogSql = (
+      db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'rapprochements_log'").get() as
+        | { sql: string }
+        | undefined
+    )?.sql ?? '';
+    const hasErroneWorkflow = /resultat\s+TEXT\s+NOT\s+NULL\s+CHECK\s*\(\s*resultat\s+IN\s*\([^)]*'errone'[^)]*\)\s*\)/i.test(rapprochementsLogSql);
+    if (!hasErroneWorkflow) {
+      db.pragma('foreign_keys = OFF');
+      try {
+        db.exec('BEGIN TRANSACTION');
+        try {
+          db.exec(`
+            CREATE TABLE rapprochements_log_new (
+              id               INTEGER PRIMARY KEY AUTOINCREMENT,
+              ligne_releve_id  INTEGER NOT NULL,
+              titre_id         INTEGER,
+              paiement_id      INTEGER,
+              mode             TEXT NOT NULL CHECK (mode IN ('auto','manuel')),
+              resultat         TEXT NOT NULL CHECK (resultat IN ('rapproche','partiel','excedentaire','erreur_reference','errone')),
+              commentaire      TEXT,
+              user_id          INTEGER,
+              created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+              FOREIGN KEY (ligne_releve_id) REFERENCES lignes_releve(id) ON DELETE CASCADE,
+              FOREIGN KEY (titre_id) REFERENCES titres(id) ON DELETE SET NULL,
+              FOREIGN KEY (paiement_id) REFERENCES paiements(id) ON DELETE SET NULL,
+              FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+            );
+
+            INSERT INTO rapprochements_log_new (
+              id, ligne_releve_id, titre_id, paiement_id, mode, resultat, commentaire, user_id, created_at
+            )
+            SELECT id, ligne_releve_id, titre_id, paiement_id, mode, resultat, commentaire, user_id, created_at
+            FROM rapprochements_log;
+
+            DROP TABLE rapprochements_log;
+            ALTER TABLE rapprochements_log_new RENAME TO rapprochements_log;
+            CREATE INDEX IF NOT EXISTS idx_rapprochements_log_ligne ON rapprochements_log(ligne_releve_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_rapprochements_log_created_at ON rapprochements_log(created_at DESC, id DESC);
+          `);
+          db.exec('COMMIT');
+        } catch (error) {
+          db.exec('ROLLBACK');
+          throw error;
+        }
+      } finally {
+        db.pragma('foreign_keys = ON');
+      }
+    }
+    db.exec('CREATE INDEX IF NOT EXISTS idx_rapprochements_log_ligne ON rapprochements_log(ligne_releve_id, created_at DESC)');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_rapprochements_log_created_at ON rapprochements_log(created_at DESC, id DESC)');
+  }
 }
 
 export function logAudit(params: {
