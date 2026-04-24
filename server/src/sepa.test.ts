@@ -477,3 +477,43 @@ test('POST /api/sepa/export-batch ignore les mandats révoqués et masque les er
     fs.renameSync(backupPath, xsdPath);
   }
 });
+
+test('POST /api/sepa/export-batch valide aussi les coordonnées créancier configurées côté environnement', async () => {
+  const fx = resetFixtures();
+
+  db.prepare(
+    `INSERT INTO mandats_sepa (assujetti_id, rum, iban, bic, date_signature, statut)
+     VALUES (?, 'RUM-ALPHA-001', 'FR7630006000011234567890189', 'AGRIFRPPXXX', '2026-01-15', 'actif')`,
+  ).run(fx.assujettiId);
+
+  const previousIban = process.env.TLPE_SEPA_CREDITOR_IBAN;
+  const previousBic = process.env.TLPE_SEPA_CREDITOR_BIC;
+  process.env.TLPE_SEPA_CREDITOR_IBAN = 'FR761234';
+  process.env.TLPE_SEPA_CREDITOR_BIC = 'BIC-INVALIDE';
+
+  try {
+    const errored = await request({
+      method: 'POST',
+      path: '/api/sepa/export-batch',
+      headers: makeAuthHeader(fx.financier),
+      body: { date_reference: '2026-08-31', date_prelevement: '2026-09-05' },
+    });
+
+    assert.equal(errored.status, 500);
+    assert.match(errored.text, /Erreur interne export SEPA/);
+    assert.doesNotMatch(errored.text, /IBAN créancier invalide/i);
+    assert.doesNotMatch(errored.text, /BIC créancier invalide/i);
+  } finally {
+    if (previousIban === undefined) {
+      delete process.env.TLPE_SEPA_CREDITOR_IBAN;
+    } else {
+      process.env.TLPE_SEPA_CREDITOR_IBAN = previousIban;
+    }
+
+    if (previousBic === undefined) {
+      delete process.env.TLPE_SEPA_CREDITOR_BIC;
+    } else {
+      process.env.TLPE_SEPA_CREDITOR_BIC = previousBic;
+    }
+  }
+});

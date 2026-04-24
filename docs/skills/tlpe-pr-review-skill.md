@@ -63,11 +63,12 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
 - Pour toute US de prélèvement/mandat SEPA, vérifier explicitement:
   - présence d'une table métier dédiée (`mandats_sepa`, `sepa_exports`, `sepa_prelevements`, table de liaison si lot),
   - contrôle IBAN/BIC avant persistance, avec restitution masquée de l'IBAN côté UI/API,
+  - validation des coordonnées créancier configurées (`TLPE_SEPA_CREDITOR_IBAN`, `TLPE_SEPA_CREDITOR_BIC`) avant génération du XML, avec échec interne générique si la configuration runtime est invalide,
   - impossibilité d'avoir plusieurs mandats `actif` pour un même assujetti sans révocation explicite du précédent, idéalement protégée aussi par une contrainte DB / index unique partiel et pas uniquement par l'API,
   - séquencement `FRST` / `RCUR` basé sur l'historique réel des prélèvements déjà exportés,
   - exclusion des mandats révoqués ou sans solde exigible,
   - traçabilité `audit_log` pour création de mandat et export du lot,
-  - classification d'erreur explicite: erreurs de saisie / sélection métier en 4xx, erreurs internes runtime/XSD/xmllint en 5xx générique sans fuite de détails serveur au client.
+  - classification d'erreur explicite: erreurs de saisie / sélection métier en 4xx, erreurs internes runtime/XSD/xmllint/configuration bancaire en 5xx générique sans fuite de détails serveur au client.
 - Pour tout téléchargement binaire déclenché par un POST JSON, vérifier en review:
   - `Content-Type: application/json` bien envoyé côté client,
   - conservation du nom de fichier renvoyé par le backend (`Content-Disposition`) quand il porte un identifiant métier incrémental.

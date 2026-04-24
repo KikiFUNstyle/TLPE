@@ -12,10 +12,10 @@ import { db, logAudit } from '../db';
 export const sepaRouter = Router();
 sepaRouter.use(authMiddleware);
 
-const CREDITOR_NAME = process.env.TLPE_SEPA_CREDITOR_NAME || 'Collectivite territoriale';
-const CREDITOR_IBAN = process.env.TLPE_SEPA_CREDITOR_IBAN || 'FR1420041010050500013M02606';
-const CREDITOR_BIC = process.env.TLPE_SEPA_CREDITOR_BIC || 'PSSTFRPPPAR';
-const CREDITOR_ICS = process.env.TLPE_SEPA_CREDITOR_ICS || 'FR12ZZZ123456';
+const DEFAULT_CREDITOR_NAME = 'Collectivite territoriale';
+const DEFAULT_CREDITOR_IBAN = 'FR1420041010050500013M02606';
+const DEFAULT_CREDITOR_BIC = 'PSSTFRPPPAR';
+const DEFAULT_CREDITOR_ICS = 'FR12ZZZ123456';
 
 export class SepaRouteError extends Error {
   constructor(
@@ -167,6 +167,24 @@ function validateSepaXml(xml: string): SepaValidationResult {
   }
 }
 
+function getSepaCreditorConfig() {
+  const creditor = {
+    name: process.env.TLPE_SEPA_CREDITOR_NAME || DEFAULT_CREDITOR_NAME,
+    iban: normalizeIban(process.env.TLPE_SEPA_CREDITOR_IBAN || DEFAULT_CREDITOR_IBAN),
+    bic: normalizeBic(process.env.TLPE_SEPA_CREDITOR_BIC || DEFAULT_CREDITOR_BIC),
+    ics: process.env.TLPE_SEPA_CREDITOR_ICS || DEFAULT_CREDITOR_ICS,
+  };
+
+  if (!isValidIBAN(creditor.iban)) {
+    throw new SepaRouteError('IBAN créancier invalide', 500);
+  }
+  if (!isValidBIC(creditor.bic)) {
+    throw new SepaRouteError('BIC créancier invalide', 500);
+  }
+
+  return creditor;
+}
+
 function nextSepaNumeroLot(): number {
   const row = db.prepare('SELECT COALESCE(MAX(numero_lot), 0) + 1 AS next_numero FROM sepa_exports').get() as {
     next_numero: number;
@@ -233,6 +251,7 @@ function buildSepaOrders(dateReference: string): SepaOrder[] {
 }
 
 function buildSepaXml(orders: SepaOrder[], numeroLot: number, datePrelevement: string) {
+  const creditor = getSepaCreditorConfig();
   const totalMontant = Number(orders.reduce((sum, order) => sum + order.montant_restant, 0).toFixed(2));
   const messageId = `TLPE-SEPA-${String(numeroLot).padStart(6, '0')}`;
   const createdAt = new Date().toISOString();
@@ -300,16 +319,16 @@ function buildSepaXml(orders: SepaOrder[], numeroLot: number, datePrelevement: s
       </PmtTpInf>
       <ReqdColltnDt>${xmlEscape(datePrelevement)}</ReqdColltnDt>
       <Cdtr>
-        <Nm>${xmlEscape(CREDITOR_NAME)}</Nm>
+        <Nm>${xmlEscape(creditor.name)}</Nm>
       </Cdtr>
       <CdtrAcct>
         <Id>
-          <IBAN>${xmlEscape(CREDITOR_IBAN)}</IBAN>
+          <IBAN>${xmlEscape(creditor.iban)}</IBAN>
         </Id>
       </CdtrAcct>
       <CdtrAgt>
         <FinInstnId>
-          <BIC>${xmlEscape(CREDITOR_BIC)}</BIC>
+          <BIC>${xmlEscape(creditor.bic)}</BIC>
         </FinInstnId>
       </CdtrAgt>
       <ChrgBr>SLEV</ChrgBr>
@@ -317,7 +336,7 @@ function buildSepaXml(orders: SepaOrder[], numeroLot: number, datePrelevement: s
         <Id>
           <PrvtId>
             <Othr>
-              <Id>${xmlEscape(CREDITOR_ICS)}</Id>
+              <Id>${xmlEscape(creditor.ics)}</Id>
             </Othr>
           </PrvtId>
         </Id>
@@ -335,7 +354,7 @@ function buildSepaXml(orders: SepaOrder[], numeroLot: number, datePrelevement: s
       <NbOfTxs>${orders.length}</NbOfTxs>
       <CtrlSum>${totalMontant.toFixed(2)}</CtrlSum>
       <InitgPty>
-        <Nm>${xmlEscape(CREDITOR_NAME)}</Nm>
+        <Nm>${xmlEscape(creditor.name)}</Nm>
       </InitgPty>
     </GrpHdr>${paymentInfos}
   </CstmrDrctDbtInitn>
