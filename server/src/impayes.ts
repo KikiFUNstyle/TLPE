@@ -90,10 +90,11 @@ function hasBlockingProcedure(titreId: number): boolean {
            type = 'contentieux'
            OR (
              type = 'moratoire'
-             AND (
-               lower(COALESCE(decision, '')) LIKE '%accorde%'
-               OR statut IN ('ouvert', 'instruction')
-             )
+            AND (
+              lower(COALESCE(decision, '')) LIKE '%accorde%'
+              OR lower(COALESCE(decision, '')) LIKE '%accordé%'
+              OR statut IN ('ouvert', 'instruction')
+            )
            )
          )
        LIMIT 1`,

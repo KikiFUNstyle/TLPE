@@ -204,6 +204,23 @@ test('runEscaladeImpayes déclenche J+10 uniquement pour les titres impayés san
   assert.equal(blockedCount, 0);
 });
 
+test('runEscaladeImpayes bloque aussi un moratoire accordé avec accent même si le statut n’est plus ouvert', () => {
+  const fx = resetFixtures();
+  db.prepare("UPDATE contentieux SET statut = 'non_lieu', decision = 'Moratoire accordé sur 6 mois' WHERE titre_id = ?").run(
+    fx.titreMoratoireId,
+  );
+
+  const result = runEscaladeImpayes({ runDateIso: '2026-09-11', userId: fx.financier.id, ip: '127.0.0.1' });
+
+  assert.equal(result.processed, 1);
+  assert.equal(result.blocked, 2);
+
+  const blockedCount = (
+    db.prepare('SELECT COUNT(*) AS c FROM recouvrement_actions WHERE titre_id = ?').get(fx.titreMoratoireId) as { c: number }
+  ).c;
+  assert.equal(blockedCount, 0);
+});
+
 test('runEscaladeImpayes déclenche J+30 avec PDF de mise en demeure et expose l’historique via l’API titres', async () => {
   const fx = resetFixtures();
   db.prepare("UPDATE titres SET date_echeance = '2026-08-12' WHERE id = ?").run(fx.titreJ10Id);

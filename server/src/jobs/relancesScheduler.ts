@@ -1,7 +1,20 @@
-import { runEscaladeImpayes } from '../impayes';
-import { runRelancesDeclarations } from '../relances';
+import { runEscaladeImpayes, type RunEscaladeImpayesResult } from '../impayes';
+import { runRelancesDeclarations, type RunRelancesResult } from '../relances';
 
 let timer: NodeJS.Timeout | null = null;
+
+export type DailyJobRunResult = {
+  relances: {
+    ok: boolean;
+    result?: RunRelancesResult;
+    error?: string;
+  };
+  impayes: {
+    ok: boolean;
+    result?: RunEscaladeImpayesResult;
+    error?: string;
+  };
+};
 
 function msUntilNextDailyRun(hour = 5, minute = 0): number {
   const now = new Date();
@@ -13,20 +26,44 @@ function msUntilNextDailyRun(hour = 5, minute = 0): number {
   return next.getTime() - now.getTime();
 }
 
+export function runDailyJobs(deps?: {
+  runRelances?: () => RunRelancesResult;
+  runImpayes?: () => RunEscaladeImpayesResult;
+}): DailyJobRunResult {
+  const executeRelances = deps?.runRelances ?? runRelancesDeclarations;
+  const executeImpayes = deps?.runImpayes ?? runEscaladeImpayes;
+
+  const relances: DailyJobRunResult['relances'] = { ok: false };
+  const impayes: DailyJobRunResult['impayes'] = { ok: false };
+
+  try {
+    relances.result = executeRelances();
+    relances.ok = true;
+  } catch (error) {
+    relances.error = error instanceof Error ? error.message : String(error);
+    // eslint-disable-next-line no-console
+    console.error('[TLPE] Erreur job relances declarations', error);
+  }
+
+  try {
+    impayes.result = executeImpayes();
+    impayes.ok = true;
+  } catch (error) {
+    impayes.error = error instanceof Error ? error.message : String(error);
+    // eslint-disable-next-line no-console
+    console.error('[TLPE] Erreur job escalade impayes', error);
+  }
+
+  // eslint-disable-next-line no-console
+  console.log('[TLPE] Jobs quotidiens executes', { relances, impayes });
+  return { relances, impayes };
+}
+
 function scheduleNextDailyTick() {
   const delay = msUntilNextDailyRun();
   timer = setTimeout(() => {
     try {
-      const relancesResult = runRelancesDeclarations();
-      const impayesResult = runEscaladeImpayes();
-      // eslint-disable-next-line no-console
-      console.log('[TLPE] Jobs quotidiens executes', {
-        relances: relancesResult,
-        impayes: impayesResult,
-      });
-    } catch (error) {
-      // eslint-disable-next-line no-console
-      console.error('[TLPE] Erreur jobs quotidiens', error);
+      runDailyJobs();
     } finally {
       scheduleNextDailyTick();
     }

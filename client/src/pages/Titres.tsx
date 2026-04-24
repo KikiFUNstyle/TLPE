@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState } from 'react';
 import { api, apiBlob, apiBlobWithMetadata } from '../api';
 import { formatDate, formatEuro } from '../format';
 import { useAuth } from '../auth';
@@ -31,6 +31,15 @@ interface TitreHistoriqueResponse {
   actions: RecouvrementAction[];
 }
 
+export function shouldApplyHistoryResponse(params: {
+  requestId: number;
+  activeRequestId: number;
+  requestedTitreId: number;
+  responseTitreId: number;
+}): boolean {
+  return params.requestId === params.activeRequestId && params.requestedTitreId === params.responseTitreId;
+}
+
 export default function Titres() {
   const { hasRole } = useAuth();
   const [rows, setRows] = useState<Titre[]>([]);
@@ -48,6 +57,7 @@ export default function Titres() {
   const [historyFor, setHistoryFor] = useState<Titre | null>(null);
   const [historyData, setHistoryData] = useState<TitreHistoriqueResponse | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const historyRequestIdRef = useRef(0);
   const [payfipConfirmation, setPayfipConfirmation] = useState<ReturnType<typeof parsePayfipConfirmationSearch> | null>(null);
 
   useEffect(() => {
@@ -193,17 +203,32 @@ export default function Titres() {
   };
 
   const openHistory = async (titre: Titre) => {
+    const requestId = historyRequestIdRef.current + 1;
+    historyRequestIdRef.current = requestId;
     setHistoryFor(titre);
     setHistoryData(null);
     setHistoryLoading(true);
     setErr(null);
     try {
       const payload = await api<TitreHistoriqueResponse>(`/api/titres/${titre.id}/historique`);
-      setHistoryData(payload);
+      if (
+        shouldApplyHistoryResponse({
+          requestId,
+          activeRequestId: historyRequestIdRef.current,
+          requestedTitreId: titre.id,
+          responseTitreId: payload.titre.id,
+        })
+      ) {
+        setHistoryData(payload);
+      }
     } catch (e) {
-      setErr((e as Error).message);
+      if (requestId === historyRequestIdRef.current) {
+        setErr((e as Error).message);
+      }
     } finally {
-      setHistoryLoading(false);
+      if (requestId === historyRequestIdRef.current) {
+        setHistoryLoading(false);
+      }
     }
   };
 
@@ -365,6 +390,7 @@ export default function Titres() {
           loading={historyLoading}
           data={historyData}
           onClose={() => {
+            historyRequestIdRef.current += 1;
             setHistoryFor(null);
             setHistoryData(null);
             setHistoryLoading(false);
