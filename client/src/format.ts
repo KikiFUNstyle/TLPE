@@ -24,3 +24,8 @@ export function formatDate(v: string | null | undefined): string {
     return v;
   }
 }
+
+export function toLocalDateInputValue(date = new Date()): string {
+  const offsetMs = date.getTimezoneOffset() * 60_000;
+  return new Date(date.getTime() - offsetMs).toISOString().slice(0, 10);
+}
