@@ -121,7 +121,7 @@ Exemple d'appel :
 ```bash
 curl -X POST http://localhost:4000/api/sepa/export-batch \
   -H 'Content-Type: application/json' \
-  -H 'Authorization: Bearer <jwt>' \
+  -H 'Authorization: Bearer ***' \
   -d '{"date_reference":"2026-08-31","date_prelevement":"2026-09-05"}' \
   -o pain.008-000001.xml
 ```

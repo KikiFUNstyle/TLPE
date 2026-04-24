@@ -375,6 +375,9 @@ CREATE TABLE IF NOT EXISTS mandats_sepa (
   CHECK ((statut = 'actif' AND date_revocation IS NULL) OR (statut = 'revoque' AND date_revocation IS NOT NULL))
 );
 CREATE INDEX IF NOT EXISTS idx_mandats_sepa_assujetti ON mandats_sepa(assujetti_id, statut);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mandats_sepa_one_active_per_assujetti
+  ON mandats_sepa(assujetti_id)
+  WHERE statut = 'actif';
 
 CREATE TABLE IF NOT EXISTS sepa_exports (
   id                    INTEGER PRIMARY KEY AUTOINCREMENT,

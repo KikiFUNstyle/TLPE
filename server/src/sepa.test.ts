@@ -261,6 +261,15 @@ test('POST /api/assujettis/:id/mandats-sepa valide IBAN/BIC et journalise la crÃ
   assert.equal(stored!.iban, 'FR7630006000011234567890189');
   assert.equal(stored!.bic, 'AGRIFRPPXXX');
 
+  assert.throws(
+    () =>
+      db.prepare(
+        `INSERT INTO mandats_sepa (assujetti_id, rum, iban, bic, date_signature, statut)
+         VALUES (?, 'RUM-DIRECT-002', 'FR7630006000011234567890189', 'AGRIFRPPXXX', '2026-02-01', 'actif')`,
+      ).run(fx.assujettiId),
+    /UNIQUE/i,
+  );
+
   const audit = db.prepare("SELECT action, details FROM audit_log WHERE action = 'create-mandat-sepa'").get() as
     | { action: string; details: string }
     | undefined;

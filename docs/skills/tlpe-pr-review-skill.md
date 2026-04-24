@@ -62,7 +62,7 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
 - Pour toute US de prélèvement/mandat SEPA, vérifier explicitement:
   - présence d'une table métier dédiée (`mandats_sepa`, `sepa_exports`, `sepa_prelevements`, table de liaison si lot),
   - contrôle IBAN/BIC avant persistance, avec restitution masquée de l'IBAN côté UI/API,
-  - impossibilité d'avoir plusieurs mandats `actif` pour un même assujetti sans révocation explicite du précédent,
+  - impossibilité d'avoir plusieurs mandats `actif` pour un même assujetti sans révocation explicite du précédent, idéalement protégée aussi par une contrainte DB / index unique partiel et pas uniquement par l'API,
   - séquencement `FRST` / `RCUR` basé sur l'historique réel des prélèvements déjà exportés,
   - exclusion des mandats révoqués ou sans solde exigible,
   - traçabilité `audit_log` pour création de mandat et export du lot.
