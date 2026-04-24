@@ -170,6 +170,8 @@ test('parseStatementFile supporte CSV paramétrable, OFX et MT940', () => {
     contentBase64: toBase64(':20:START\n:25:FR761234\n:60F:C260401EUR0,00\n:61:2604010401C150,45NTRFNONREF//BANKREF1\n:86:VIREMENT CLIENT\n:62F:C260430EUR150,45\n'),
   });
   assert.equal(mt940.accountId, 'FR761234');
+  assert.equal(mt940.dateDebut, '2026-04-01');
+  assert.equal(mt940.dateFin, '2026-04-30');
   assert.equal(mt940.lignes.length, 1);
   assert.equal(mt940.lignes[0].transaction_id, 'mt940:BANKREF1');
 });
@@ -215,6 +217,35 @@ test('POST /api/rapprochement/import importe un relevé et déduplique par trans
   assert.ok(audit);
   assert.equal(audit?.action, 'import');
   assert.match(audit?.details ?? '', /BANK-001/);
+});
+
+test('POST /api/rapprochement/import ignore aussi les doublons présents dans un même fichier', async () => {
+  const fx = resetFixtures();
+
+  const res = await request({
+    method: 'POST',
+    path: '/api/rapprochement/import',
+    headers: makeAuthHeader(fx.financier),
+    body: {
+      fileName: 'releve-duplique.csv',
+      contentBase64: toBase64(
+        'date;libelle;montant;reference;transaction_id\n'
+        + '2026-04-01;Virement Alpha;150,45;PAY-001;BANK-001\n'
+        + '2026-04-01;Virement Alpha bis;150,45;PAY-001;BANK-001\n'
+        + '2026-04-02;Virement Beta;99,99;PAY-002;BANK-002\n',
+      ),
+      format: 'csv',
+    },
+  });
+
+  assert.equal(res.status, 201);
+  assert.equal(res.json?.lignesImportees, 2);
+  assert.equal(res.json?.lignesIgnorees, 1);
+  assert.equal(res.json?.duplicates.length, 1);
+  assert.equal(res.json?.duplicates[0].transaction_id, 'csv:BANK-001');
+
+  const count = (db.prepare('SELECT COUNT(*) AS c FROM lignes_releve').get() as { c: number }).c;
+  assert.equal(count, 2);
 });
 
 test('GET /api/rapprochement expose les lignes non rapprochées et protège la route', async () => {

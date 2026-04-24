@@ -57,14 +57,12 @@ function mapReleveById(id: number): ReleveBancaireRow {
     .get(id) as ReleveBancaireRow;
 }
 
-function mapParsedDuplicates(parsed: ParsedStatement, existingIds: Set<string>) {
-  return parsed.lignes
-    .filter((line) => existingIds.has(line.transaction_id))
-    .map((line) => ({
-      transaction_id: line.transaction_id,
-      libelle: line.libelle,
-      montant: line.montant,
-    }));
+function toDuplicateSummary(line: ParsedStatement['lignes'][number]) {
+  return {
+    transaction_id: line.transaction_id,
+    libelle: line.libelle,
+    montant: line.montant,
+  };
 }
 
 export function importReleveBancaire(options: ImportRapprochementOptions): ImportRapprochementResult {
@@ -86,8 +84,16 @@ export function importReleveBancaire(options: ImportRapprochementOptions): Impor
         .all(...transactionIds) as Array<{ transaction_id: string }>)
     : [];
   const existingIds = new Set(existingRows.map((row) => row.transaction_id));
-  const duplicates = mapParsedDuplicates(parsed, existingIds);
-  const lignesAAjouter = parsed.lignes.filter((line) => !existingIds.has(line.transaction_id));
+  const seenIds = new Set(existingIds);
+  const duplicates: Array<{ transaction_id: string; libelle: string; montant: number }> = [];
+  const lignesAAjouter = parsed.lignes.filter((line) => {
+    if (seenIds.has(line.transaction_id)) {
+      duplicates.push(toDuplicateSummary(line));
+      return false;
+    }
+    seenIds.add(line.transaction_id);
+    return true;
+  });
 
   const insertStatement = db.prepare(
     `INSERT INTO lignes_releve (

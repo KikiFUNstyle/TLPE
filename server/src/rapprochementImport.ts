@@ -377,11 +377,11 @@ function parseMt940Statement(content: string, fileName: string): ParsedStatement
       continue;
     }
     if (line.startsWith(':60F:') || line.startsWith(':60M:')) {
-      dateDebut = parseMt940ValueDate(line.slice(5, 11));
+      dateDebut = parseMt940ValueDate(line.slice(6, 12));
       continue;
     }
     if (line.startsWith(':62F:') || line.startsWith(':62M:')) {
-      dateFin = parseMt940ValueDate(line.slice(5, 11));
+      dateFin = parseMt940ValueDate(line.slice(6, 12));
       continue;
     }
     if (line.startsWith(':61:')) {
