@@ -3,6 +3,11 @@ import { api, apiBlob, apiBlobWithMetadata } from '../api';
 import { formatDate, formatEuro } from '../format';
 import { useAuth } from '../auth';
 import { buildBordereauFilename, buildBordereauPath, canExportBordereau } from './titresBordereau';
+import {
+  canGenerateMiseEnDemeure,
+  getBatchEligibleTitreIds,
+  getMiseEnDemeureActionLabel,
+} from './titresMiseEnDemeure';
 import { parsePayfipConfirmationSearch } from './payfip';
 import { PayfipConfirmationView } from './PayfipConfirmation';
 
@@ -37,7 +42,8 @@ export default function Titres() {
   const [statut, setStatut] = useState('');
   const [err, setErr] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
-  const [exporting, setExporting] = useState<null | 'pdf' | 'xlsx' | 'pesv2'>(null);
+  const [exporting, setExporting] = useState<null | 'pdf' | 'xlsx' | 'pesv2' | 'mise-en-demeure-batch'>(null);
+  const [downloadingMiseEnDemeureId, setDownloadingMiseEnDemeureId] = useState<number | null>(null);
   const [paiementFor, setPaiementFor] = useState<Titre | null>(null);
   const [payfipConfirmation, setPayfipConfirmation] = useState<ReturnType<typeof parsePayfipConfirmationSearch> | null>(null);
 
@@ -78,6 +84,8 @@ export default function Titres() {
   }, []);
 
   const canManageTitres = hasRole('admin', 'financier');
+  const selectedMiseEnDemeureTitreIds = getBatchEligibleTitreIds(rows, canManageTitres);
+  const canRunMiseEnDemeureBatch = canManageTitres && exporting === null && selectedMiseEnDemeureTitreIds.length > 0;
   const canExport = canExportBordereau({ annee, canManage: canManageTitres });
   const canExportPesv2 =
     canManageTitres &&
@@ -159,6 +167,58 @@ export default function Titres() {
         }
       }
       setErr(message);
+    } finally {
+      setExporting(null);
+    }
+  };
+
+  const downloadMiseEnDemeure = async (titre: Titre) => {
+    if (!canGenerateMiseEnDemeure(titre, canManageTitres)) return;
+    setDownloadingMiseEnDemeureId(titre.id);
+    setErr(null);
+    setInfo(null);
+    try {
+      const payload = await api<{
+        numero: string;
+        download_url: string;
+      }>(`/api/titres/${titre.id}/mise-en-demeure`, {
+        method: 'POST',
+      });
+      const blob = await apiBlob(payload.download_url);
+      const href = window.URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = href;
+      anchor.download = `${payload.numero}.pdf`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(href);
+      setInfo(`Mise en demeure ${payload.numero} téléchargée.`);
+      load();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setDownloadingMiseEnDemeureId(null);
+    }
+  };
+
+  const runMiseEnDemeureBatch = async () => {
+    if (!canRunMiseEnDemeureBatch) return;
+    setExporting('mise-en-demeure-batch');
+    setErr(null);
+    setInfo(null);
+    try {
+      const payload = await api<{
+        count: number;
+        items: Array<{ numero: string }>;
+      }>('/api/titres/mises-en-demeure/batch', {
+        method: 'POST',
+        body: JSON.stringify({ titre_ids: selectedMiseEnDemeureTitreIds }),
+      });
+      setInfo(`Lot de ${payload.count} mises en demeure généré (${payload.items.map((item) => item.numero).join(', ')}).`);
+      load();
+    } catch (e) {
+      setErr((e as Error).message);
     } finally {
       setExporting(null);
     }
@@ -272,6 +332,25 @@ export default function Titres() {
             >
               {exporting === 'pesv2' ? 'Export PESV2...' : 'Export PESV2 XML'}
             </button>
+            <button
+              className="btn secondary"
+              disabled={!canRunMiseEnDemeureBatch}
+              onClick={() => {
+                void runMiseEnDemeureBatch();
+              }}
+              title={
+                selectedMiseEnDemeureTitreIds.length > 0
+                  ? `Générer un lot pour ${selectedMiseEnDemeureTitreIds.length} titre(s) éligible(s)`
+                  : 'Aucun titre impayé éligible dans la liste courante'
+              }
+            >
+              {exporting === 'mise-en-demeure-batch'
+                ? 'Génération lot MED...'
+                : `Lot mises en demeure (${selectedMiseEnDemeureTitreIds.length})`}
+            </button>
+            <span className="toolbar-hint">
+              Génère les courriers PDF pour les titres impayés affichés (max 100) et les archive dans les pièces jointes.
+            </span>
           </>
         )}
         <span style={{ color: 'var(--c-muted)', fontSize: 13 }}>{rows.length} resultat(s)</span>
@@ -302,6 +381,18 @@ export default function Titres() {
                 <td><span className={`badge ${t.statut === 'paye' ? 'success' : t.statut === 'emis' ? 'info' : 'warn'}`}>{t.statut}</span></td>
                 <td>
                   <a className="btn small secondary" href={`/api/titres/${t.id}/pdf`} target="_blank" rel="noreferrer">PDF</a>
+                  {hasRole('admin', 'financier') && canGenerateMiseEnDemeure(t, canManageTitres) && (
+                    <button
+                      className="btn small secondary"
+                      style={{ marginLeft: 4 }}
+                      disabled={downloadingMiseEnDemeureId === t.id}
+                      onClick={() => {
+                        void downloadMiseEnDemeure(t);
+                      }}
+                    >
+                      {downloadingMiseEnDemeureId === t.id ? 'MED...' : getMiseEnDemeureActionLabel(t)}
+                    </button>
+                  )}
                   {hasRole('contribuable') && t.statut !== 'paye' && (
                     <button
                       className="btn small secondary"

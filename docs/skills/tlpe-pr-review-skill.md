@@ -52,6 +52,12 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
 - Pour tout parseur MT940/format bancaire, vérifier que les références métier sont préservées même sans séparateur `//` et que le code type (`NTRF`, `NMSC`, etc.) n'est pas restitué comme référence client.
 - Pour toute liste UI de doublons/aperçus importés, vérifier une clé React réellement unique et stable (`transaction_id` seul est insuffisant si la vue affiche plusieurs doublons du même identifiant).
 - Pour toute US avec document généré (PDF, accusé, courrier), ajouter un test API qui valide la présence des métadonnées de restitution (`token/hash/download_url`) et un test service qui vérifie la persistance + réutilisation idempotente.
+- Pour toute US de mise en demeure sur titres, vérifier explicitement en review :
+  - route manuelle sécurisée (`POST /api/titres/:id/mise-en-demeure`) + route batch sécurisée (`POST /api/titres/mises-en-demeure/batch`),
+  - numérotation unique et stable via table dédiée (`titre_mises_en_demeure`) avec réutilisation idempotente si un PDF existe déjà pour le titre,
+  - archivage du PDF dans `pieces_jointes` avec entité `titre`, `download_url` renvoyé par l'API et traçabilité `audit_log` dédiée,
+  - blocage métier sur les titres soldés, tests couverture happy path + batch + refus 409,
+  - présence d'un déclencheur UI explicite côté page Titres (unitaire + lot) réservé aux rôles `admin|financier`.
 - Pour tout export binaire métier (PDF/XLSX bordereau, titre, rapport), vérifier en review:
   - contrôle d'accès explicite par rôle,
   - filtrage métier exact des données exportées,

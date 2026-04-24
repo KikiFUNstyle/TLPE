@@ -10,7 +10,7 @@
     "start": "node dist/index.js",
     "seed": "tsx src/seed.ts",
     "job:activate-baremes": "node dist/jobs/activateBaremes.js",
-    "test": "tsx --test src/calculator.test.ts src/baremes.test.ts src/zones.test.ts src/assujettisImport.test.ts src/dispositifsImport.test.ts src/dispositifsCarte.test.ts src/apiEntreprise.test.ts src/services/ban.test.ts src/piecesJointes.test.ts src/campagnes.test.ts src/invitations.test.ts src/relances.test.ts src/validations/declaration.test.ts src/services/declarationReceipt.test.ts src/declarations.receipt.test.ts src/dashboardMetrics.test.ts src/titres.bordereau.test.ts src/titres.pesv2.test.ts src/payfip.test.ts src/sepa.test.ts src/rapprochement.test.ts"
+    "test": "tsx --test src/calculator.test.ts src/baremes.test.ts src/zones.test.ts src/assujettisImport.test.ts src/dispositifsImport.test.ts src/dispositifsCarte.test.ts src/apiEntreprise.test.ts src/services/ban.test.ts src/piecesJointes.test.ts src/campagnes.test.ts src/invitations.test.ts src/relances.test.ts src/validations/declaration.test.ts src/services/declarationReceipt.test.ts src/declarations.receipt.test.ts src/dashboardMetrics.test.ts src/titres.bordereau.test.ts src/titres.pesv2.test.ts src/payfip.test.ts src/sepa.test.ts src/rapprochement.test.ts src/titres.miseEnDemeure.test.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.901.0",

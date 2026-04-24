@@ -9,6 +9,7 @@ import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { db, logAudit } from '../db';
 import { authMiddleware, requireRole } from '../auth';
+import { deleteStoredFile, saveFile } from './piecesJointes';
 import { registerPayfipTitresRoutes } from './paiements';
 
 export const titresRouter = Router();
@@ -33,6 +34,202 @@ class Pesv2RouteError extends Error {
 function genNumeroTitre(annee: number): string {
   const c = (db.prepare('SELECT COUNT(*) AS c FROM titres WHERE annee = ?').get(annee) as { c: number }).c;
   return `TIT-${annee}-${String(c + 1).padStart(6, '0')}`;
+}
+
+function genNumeroMiseEnDemeure(annee: number): string {
+  const c = (
+    db.prepare('SELECT COUNT(*) AS c FROM titre_mises_en_demeure WHERE annee = ?').get(annee) as { c: number }
+  ).c;
+  return `MED-${annee}-${String(c + 1).padStart(6, '0')}`;
+}
+
+function buildTitreMiseEnDemeureStoragePath(annee: number, nom: string): string {
+  return path.posix.join('mises_en_demeure_titres', String(annee), nom);
+}
+
+type TitreMiseEnDemeureRow = {
+  titre_id: number;
+  numero: string;
+  piece_jointe_id: number;
+  chemin: string;
+  nom: string;
+};
+
+type TitreWithDebiteur = {
+  id: number;
+  numero: string;
+  declaration_id: number;
+  assujetti_id: number;
+  annee: number;
+  montant: number;
+  montant_paye: number;
+  date_emission: string;
+  date_echeance: string;
+  statut: string;
+  raison_sociale: string;
+  identifiant_tlpe: string;
+  siret: string | null;
+  adresse_rue: string | null;
+  adresse_cp: string | null;
+  adresse_ville: string | null;
+};
+
+function createMiseEnDemeurePdf(
+  titre: TitreWithDebiteur,
+  numeroMiseEnDemeure: string,
+): Promise<{ nom: string; chemin: string; taille: number; buffer: Buffer }> {
+  const nom = `${numeroMiseEnDemeure}.pdf`;
+  const chemin = buildTitreMiseEnDemeureStoragePath(titre.annee, nom);
+  const doc = new PDFDocument({ size: 'A4', margin: 48 });
+  const chunks: Buffer[] = [];
+
+  return new Promise<{ nom: string; chemin: string; taille: number; buffer: Buffer }>((resolve, reject) => {
+    doc.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+    doc.on('error', reject);
+    doc.on('end', () => {
+      const buffer = Buffer.concat(chunks);
+      resolve({
+        nom,
+        chemin,
+        taille: buffer.length,
+        buffer,
+      });
+    });
+
+    const montantDu = Number((titre.montant - titre.montant_paye).toFixed(2));
+    const adresse = [titre.adresse_rue, [titre.adresse_cp, titre.adresse_ville].filter(Boolean).join(' ')].filter(Boolean).join(' - ');
+
+    doc.fontSize(13).text(BORDEREAU_COLLECTIVITE);
+    doc.fontSize(10).fillColor('#555').text(BORDEREAU_ORDONNATEUR);
+    doc.moveDown(1).fillColor('black');
+    doc.fontSize(18).text('MISE EN DEMEURE DE PAYER - TLPE', { align: 'center' });
+    doc.moveDown(0.6);
+    doc.fontSize(11).fillColor('#555').text('Lettre recommandee avec accuse de reception', { align: 'center' });
+    doc.moveDown(1).fillColor('black');
+
+    doc.fontSize(11);
+    doc.text(`Numero de mise en demeure : ${numeroMiseEnDemeure}`);
+    doc.text(`Reference du titre : ${titre.numero}`);
+    doc.text(`Date d'emission du titre : ${titre.date_emission}`);
+    doc.text(`Date d'echeance initiale : ${titre.date_echeance}`);
+    doc.text('Delai de paiement apres reception : 30 jours');
+    doc.moveDown();
+
+    doc.fontSize(12).text('Debiteur', { underline: true });
+    doc.fontSize(11);
+    doc.text(`Raison sociale : ${titre.raison_sociale}`);
+    doc.text(`Identifiant TLPE : ${titre.identifiant_tlpe}`);
+    if (titre.siret) doc.text(`SIRET : ${titre.siret}`);
+    if (adresse) doc.text(`Adresse : ${adresse}`);
+    doc.moveDown();
+
+    doc.fontSize(12).text('Montants dus', { underline: true });
+    doc.fontSize(11);
+    doc.text(`Montant initial du titre : ${titre.montant.toFixed(2)} EUR`);
+    doc.text(`Montant deja regle : ${titre.montant_paye.toFixed(2)} EUR`);
+    doc.text(`Montant restant du : ${montantDu.toFixed(2)} EUR`);
+    doc.moveDown();
+
+    doc.fontSize(12).text('Objet', { underline: true });
+    doc.fontSize(11).text(
+      'Par la presente, vous etes mis en demeure de regler le solde du titre de recettes mentionne ci-dessus dans un delai de 30 jours a compter de la reception de ce courrier.',
+      { align: 'justify' },
+    );
+    doc.moveDown();
+    doc.text(
+      'A defaut de paiement dans ce delai, la collectivite pourra engager la procedure de recouvrement force et transmettre le dossier au comptable public.',
+      { align: 'justify' },
+    );
+    doc.moveDown();
+    doc.fontSize(12).text('Voies de recours et mentions legales', { underline: true });
+    doc.fontSize(11).text(
+      'Toute contestation doit etre adressee au service TLPE par ecrit, avec les justificatifs utiles, dans les delais legaux applicables. Le present courrier vaut mise en demeure prealable avant poursuites de recouvrement.',
+      { align: 'justify' },
+    );
+    doc.moveDown(2);
+
+    doc.text('Fait pour servir et valoir ce que de droit.');
+    doc.moveDown(2);
+    doc.text(BORDEREAU_ORDONNATEUR, { align: 'right' });
+    doc.end();
+  });
+}
+
+async function ensureMiseEnDemeureForTitre(params: {
+  titre: TitreWithDebiteur;
+  userId: number;
+  mode: 'manuel' | 'batch';
+  ip?: string | null;
+}): Promise<TitreMiseEnDemeureRow> {
+  const existing = db
+    .prepare(
+      `SELECT med.titre_id, med.numero, med.piece_jointe_id, pj.chemin, pj.nom
+       FROM titre_mises_en_demeure med
+       JOIN pieces_jointes pj ON pj.id = med.piece_jointe_id
+       WHERE med.titre_id = ?
+       LIMIT 1`,
+    )
+    .get(params.titre.id) as TitreMiseEnDemeureRow | undefined;
+  if (existing) return existing;
+
+  const solde = Number((params.titre.montant - params.titre.montant_paye).toFixed(2));
+  if (solde <= 0 || params.titre.statut === 'paye') {
+    throw new Pesv2RouteError('Impossible de generer une mise en demeure pour un titre deja solde', 409);
+  }
+
+  const numero = genNumeroMiseEnDemeure(params.titre.annee);
+  const pdf = await createMiseEnDemeurePdf(params.titre, numero);
+  await saveFile(pdf.chemin, pdf.buffer, 'application/pdf');
+
+  const txResult = db.transaction(() => {
+    const pieceInfo = db
+      .prepare(
+        `INSERT INTO pieces_jointes (entite, entite_id, nom, mime_type, taille, chemin, uploaded_by)
+         VALUES ('titre', ?, ?, 'application/pdf', ?, ?, ?)`,
+      )
+      .run(params.titre.id, pdf.nom, pdf.taille, pdf.chemin, params.userId);
+
+    const pieceJointeId = Number(pieceInfo.lastInsertRowid);
+
+    db.prepare(
+      `INSERT INTO titre_mises_en_demeure (numero, titre_id, piece_jointe_id, annee, mode, generated_by)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(numero, params.titre.id, pieceJointeId, params.titre.annee, params.mode, params.userId);
+
+    if (params.titre.statut !== 'mise_en_demeure') {
+      db.prepare(`UPDATE titres SET statut = 'mise_en_demeure' WHERE id = ?`).run(params.titre.id);
+    }
+
+    logAudit({
+      userId: params.userId,
+      action: 'generate-mise-en-demeure',
+      entite: 'titre',
+      entiteId: params.titre.id,
+      details: {
+        numero,
+        titre_numero: params.titre.numero,
+        piece_jointe_id: pieceJointeId,
+        mode: params.mode,
+        solde,
+      },
+      ip: params.ip ?? null,
+    });
+
+    return {
+      titre_id: params.titre.id,
+      numero,
+      piece_jointe_id: pieceJointeId,
+      chemin: pdf.chemin,
+      nom: pdf.nom,
+    } satisfies TitreMiseEnDemeureRow;
+  });
+
+  try {
+    return txResult();
+  } catch (error) {
+    await deleteStoredFile(pdf.chemin).catch(() => undefined);
+    throw error;
+  }
 }
 
 function formatDateTime(date: Date): string {
@@ -617,6 +814,92 @@ titresRouter.post('/export-pesv2', requireRole('admin', 'financier'), (req, res)
 
     console.error('[TLPE] Erreur export PESV2 inattendue', error);
     return res.status(500).json({ error: 'Erreur interne export PESV2' });
+  }
+});
+
+function loadTitreForMiseEnDemeure(titreId: string): TitreWithDebiteur | undefined {
+  return db
+    .prepare(
+      `SELECT t.id, t.numero, t.declaration_id, t.assujetti_id, t.annee, t.montant, t.montant_paye,
+              t.date_emission, t.date_echeance, t.statut, a.raison_sociale, a.identifiant_tlpe,
+              a.siret, a.adresse_rue, a.adresse_cp, a.adresse_ville
+       FROM titres t
+       JOIN assujettis a ON a.id = t.assujetti_id
+       WHERE t.id = ?`,
+    )
+    .get(titreId) as TitreWithDebiteur | undefined;
+}
+
+const miseEnDemeureBatchSchema = z.object({
+  titre_ids: z.array(z.number().int().positive()).min(1).max(100),
+});
+
+titresRouter.post('/:id/mise-en-demeure', requireRole('admin', 'financier'), async (req, res) => {
+  const titre = loadTitreForMiseEnDemeure(req.params.id);
+  if (!titre) {
+    return res.status(404).json({ error: 'Titre introuvable' });
+  }
+
+  try {
+    const result = await ensureMiseEnDemeureForTitre({
+      titre,
+      userId: req.user!.id,
+      mode: 'manuel',
+      ip: req.ip ?? null,
+    });
+    return res.status(201).json({
+      titre_id: result.titre_id,
+      numero: result.numero,
+      piece_jointe_id: result.piece_jointe_id,
+      download_url: `/api/pieces-jointes/${result.piece_jointe_id}`,
+    });
+  } catch (error) {
+    if (error instanceof Pesv2RouteError) {
+      return res.status(error.status).json({ error: error.message });
+    }
+
+    console.error('[TLPE] Erreur génération mise en demeure', error);
+    return res.status(500).json({ error: 'Erreur interne génération mise en demeure' });
+  }
+});
+
+titresRouter.post('/mises-en-demeure/batch', requireRole('admin', 'financier'), async (req, res) => {
+  const parsed = miseEnDemeureBatchSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  try {
+    const items: Array<{ titre_id: number; numero: string; piece_jointe_id: number; download_url: string }> = [];
+
+    for (const titreId of parsed.data.titre_ids) {
+      const titre = loadTitreForMiseEnDemeure(String(titreId));
+      if (!titre) {
+        return res.status(404).json({ error: `Titre introuvable: ${titreId}` });
+      }
+
+      const result = await ensureMiseEnDemeureForTitre({
+        titre,
+        userId: req.user!.id,
+        mode: 'batch',
+        ip: req.ip ?? null,
+      });
+      items.push({
+        titre_id: result.titre_id,
+        numero: result.numero,
+        piece_jointe_id: result.piece_jointe_id,
+        download_url: `/api/pieces-jointes/${result.piece_jointe_id}`,
+      });
+    }
+
+    return res.status(201).json({ count: items.length, items });
+  } catch (error) {
+    if (error instanceof Pesv2RouteError) {
+      return res.status(error.status).json({ error: error.message });
+    }
+
+    console.error('[TLPE] Erreur génération batch mises en demeure', error);
+    return res.status(500).json({ error: 'Erreur interne génération batch mises en demeure' });
   }
 });
 
