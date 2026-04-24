@@ -343,6 +343,7 @@ function parseMt940References(rest: string) {
   return {
     customerReference: customerReference || null,
     bankReference: bankSegment.trim() || null,
+    transactionCandidate: bankSegment.trim() || null,
   };
 }
 
@@ -375,7 +376,7 @@ function parseMt940Statement(content: string, fileName: string): ParsedStatement
         libelle: current.libelle,
         montant: current.montant,
         reference: current.reference,
-        candidate: current.transactionId ?? current.reference,
+        candidate: current.transactionId ?? sha1(current.raw61),
       }),
       raw_data: JSON.stringify({ line61: current.raw61, libelle: current.libelle }),
     });
@@ -417,12 +418,12 @@ function parseMt940Statement(content: string, fileName: string): ParsedStatement
       const amount = parseSignedAmount(amountMatch[1]);
       if (amount === null) continue;
       rest = rest.slice(amountMatch[1].length);
-      const { customerReference, bankReference } = parseMt940References(rest);
+      const { customerReference, transactionCandidate } = parseMt940References(rest);
       current = {
         date: valueDate,
         montant: Number((amount * sign).toFixed(2)),
         reference: customerReference,
-        transactionId: bankReference,
+        transactionId: transactionCandidate,
         libelle: customerReference ?? 'Opération MT940',
         raw61: payload,
       };

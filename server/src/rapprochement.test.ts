@@ -186,9 +186,28 @@ test('parseStatementFile supporte CSV paramétrable, OFX et MT940', () => {
   assert.equal(mt940.lignes[0].transaction_id, 'mt940:BANKREF1');
   assert.equal(mt940.lignes[0].reference, 'NONREF');
   assert.equal(mt940.lignes[0].libelle, 'VIREMENT CLIENT');
-  assert.equal(mt940.lignes[1].transaction_id, 'mt940:NREFSANSBANK');
+  assert.match(mt940.lignes[1].transaction_id, /^mt940:[0-9a-f]{40}$/);
   assert.equal(mt940.lignes[1].reference, 'NREFSANSBANK');
   assert.equal(mt940.lignes[1].libelle, 'FRAIS BANCAIRES');
+});
+
+test('parseStatementFile génère des transaction_id distincts en MT940 sans référence bancaire explicite', () => {
+  const mt940 = parseStatementFile({
+    fileName: 'releve-sans-bankref.mt940',
+    contentBase64: toBase64(
+      ':20:START\n'
+      + ':25:FR761234\n'
+      + ':60F:C260401EUR0,00\n'
+      + ':61:2604010401C150,45NTRFNONREF\n'
+      + ':86:VIREMENT CLIENT A\n'
+      + ':61:2604020402C150,45NTRFNONREF\n'
+      + ':86:VIREMENT CLIENT B\n'
+      + ':62F:C260430EUR300,90\n',
+    ),
+  });
+
+  assert.equal(mt940.lignes.length, 2);
+  assert.notEqual(mt940.lignes[0].transaction_id, mt940.lignes[1].transaction_id);
 });
 
 test('importReleveBancaire supporte les gros fichiers sans dépasser la limite SQLite des paramètres', () => {
