@@ -122,6 +122,12 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
 - Vérifier la traçabilité complète du paiement externe: `provider`, `statut`, `transaction_id`, payload callback brut et `audit_log` dédié.
 - Vérifier la cohérence documentation/configuration/UI: route frontend de confirmation réellement exposée, variable `TLPE_PAYFIP_RETURN_URL` alignée avec cette route, tests UI couvrant succès + annulation/refus.
 
+### 13) Rapprochement bancaire automatique / manuel (appris sur US5.6)
+- Vérifier que le rapprochement automatique ne crée un `paiement` que pour une écriture bancaire strictement positive et un titre réellement détecté dans le libellé ou la référence.
+- Vérifier que les cas métier d'exception restent en attente avec workflow explicite et testé (`partiel`, `excedentaire`, `erreur_reference`, `errone`) sans solder abusivement le titre.
+- Vérifier que le journal des rapprochements expose bien `mode` (`auto|manuel`), `resultat`, `numero_titre`, `user_display` et `created_at`, avec au moins un test backend couvrant auto + manuel.
+- Vérifier qu'un rapprochement manuel crée un paiement `modalite=virement`, met à jour `montant_paye/statut` du titre, trace `audit_log`, et rejette proprement les lignes déjà rapprochées ou non encaissables.
+
 ## Format de sortie review
 
 1. **Résumé**

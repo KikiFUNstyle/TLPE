@@ -98,11 +98,13 @@ Ouvrir ensuite http://localhost:5173.
   - `POST /api/assujettis/:id/mandats-sepa/:mandatId/revoke` révoque explicitement le mandat actif et trace `revoke-mandat-sepa`
   - `POST /api/sepa/export-batch` génère un XML `pain.008.001.02` téléchargeable, avec séquencement `FRST` puis `RCUR` selon l'historique
   - les mandats révoqués sont ignorés à l'export et une erreur de validation XSD retourne un message client générique (`Erreur interne export SEPA`)
-- Smoke test US5.5:
+- Smoke test US5.5 / US5.6:
   - la page `Rapprochement bancaire` n'est visible et accessible que pour `admin|financier`
   - `POST /api/rapprochement/import` accepte `csv|ofx|mt940`, crée `releves_bancaires` + `lignes_releve` et trace `audit_log` (`action=import`, `entite=releve_bancaire`)
   - un second import contenant les mêmes `transaction_id` n'insère pas de doublons et les remonte dans `duplicates`
-  - `GET /api/rapprochement` liste les relevés importés et les lignes non rapprochées
+  - `POST /api/rapprochement/auto` matche un numéro de titre détecté dans la référence ou le libellé, crée un paiement `modalite=virement`, met à jour le statut du titre (`paye|paye_partiel`) et journalise le résultat (`rapproche|partiel|excedentaire|erreur_reference`)
+  - les lignes excédentaires ou en erreur de référence restent en attente avec un workflow distinct et une correspondance manuelle possible via `POST /api/rapprochement/manual`
+  - `GET /api/rapprochement` liste les relevés importés, les lignes non rapprochées enrichies par workflow et le journal des rapprochements (`auto|manuel`, qui/quand)
 
 ## Mandats SEPA / export pain.008 (US5.4)
 
