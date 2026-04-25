@@ -263,3 +263,63 @@ test('runRelancesDeclarations retourne niveau null hors J-30/J-15/J-7', () => {
   ).c;
   assert.equal(relanceNotifs, 0);
 });
+
+test('computeRunDateForNiveau calcule les dates correctes pour chaque niveau', () => {
+  assert.equal(computeRunDateForNiveau('2034-03-31', 'J-30'), '2034-03-01');
+  assert.equal(computeRunDateForNiveau('2034-03-31', 'J-15'), '2034-03-16');
+  assert.equal(computeRunDateForNiveau('2034-03-31', 'J-7'), '2034-03-24');
+});
+
+test('runRelancesDeclarations retourne campagne_id=0 si aucune campagne active', () => {
+  resetTables();
+  const result = runRelancesDeclarations({ runDateIso: '2099-01-01' });
+  assert.equal(result.campagne_id, 0);
+  assert.equal(result.annee, 0);
+  assert.equal(result.niveau, null);
+  assert.equal(result.total_eligibles, 0);
+});
+
+test('runRelancesDeclarations en mode mock-failure comptabilise les echecs', () => {
+  resetTables();
+  const prevMode = process.env.TLPE_EMAIL_DELIVERY_MODE;
+  process.env.TLPE_EMAIL_DELIVERY_MODE = 'mock-failure';
+
+  try {
+    const adminId = seedAdmin('admin-fail@tlpe.local');
+    const annee = 2039;
+    seedAssujetti('TLPE-REL-FAIL', 'fail@example.fr');
+
+    const campagneId = createCampagne({
+      annee,
+      date_ouverture: '2039-01-01',
+      date_limite_declaration: '2039-03-31',
+      date_cloture: '2039-04-15',
+      relance_j7_courrier: false,
+      created_by: adminId,
+    });
+    openCampagne(campagneId, adminId);
+
+    const runDate = computeRunDateForNiveau('2039-03-31', 'J-30');
+    const result = runRelancesDeclarations({ runDateIso: runDate, userId: adminId });
+
+    assert.equal(result.niveau, 'J-30');
+    assert.equal(result.total_eligibles, 1);
+    assert.equal(result.sent, 0);
+    assert.equal(result.failed, 1);
+
+    const notif = db
+      .prepare(
+        `SELECT statut, erreur
+         FROM notifications_email
+         WHERE campagne_id = ? AND relance_niveau = 'J-30'
+         ORDER BY id DESC
+         LIMIT 1`,
+      )
+      .get(campagneId) as { statut: string; erreur: string } | undefined;
+    assert.ok(notif);
+    assert.equal(notif!.statut, 'echec');
+    assert.ok(notif!.erreur?.includes('mock-failure'));
+  } finally {
+    process.env.TLPE_EMAIL_DELIVERY_MODE = prevMode;
+  }
+});
