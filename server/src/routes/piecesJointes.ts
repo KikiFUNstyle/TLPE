@@ -66,6 +66,7 @@ const createSchema = z.object({
 
 export const piecesJointesRouter = Router();
 piecesJointesRouter.use(authMiddleware);
+piecesJointesRouter.use(requireRole('admin', 'gestionnaire', 'financier', 'contribuable'));
 
 interface PieceJointeRow {
   id: number;

@@ -400,6 +400,50 @@ test('POST /api/titres/mises-en-demeure/batch genere un lot avec numerotation un
   assert.deepEqual(titres.map((row) => row.statut), ['mise_en_demeure', 'mise_en_demeure']);
 });
 
+test('POST /api/titres/mises-en-demeure/batch reutilise de facon idempotente une mise en demeure deja active pour un titre desormais solde', async () => {
+  const fx = resetFixtures();
+
+  const firstRes = await requestJson({
+    method: 'POST',
+    path: `/api/titres/${fx.titreA}/mise-en-demeure`,
+    headers: makeAuthHeader(fx.financier),
+  });
+  assert.equal(firstRes.status, 201);
+
+  db.prepare("UPDATE titres SET montant_paye = montant, statut = 'paye' WHERE id = ?").run(fx.titreA);
+
+  const batchRes = await requestJson({
+    method: 'POST',
+    path: '/api/titres/mises-en-demeure/batch',
+    headers: makeAuthHeader(fx.financier),
+    body: { titre_ids: [fx.titreA, fx.titreB] },
+  });
+
+  assert.equal(batchRes.status, 201);
+  assert.equal(batchRes.json?.count, 2);
+  assert.deepEqual(
+    (batchRes.json?.items || []).map((item: { titre_id: number; numero: string; piece_jointe_id: number }) => ({
+      titre_id: item.titre_id,
+      numero: item.numero,
+      piece_jointe_id: item.piece_jointe_id,
+    })),
+    [
+      { titre_id: fx.titreA, numero: firstRes.json?.numero, piece_jointe_id: firstRes.json?.piece_jointe_id },
+      { titre_id: fx.titreB, numero: 'MED-2026-000002', piece_jointe_id: batchRes.json?.items?.[1]?.piece_jointe_id },
+    ],
+  );
+
+  const rows = db.prepare('SELECT numero, titre_id, mode FROM titre_mises_en_demeure ORDER BY numero').all() as Array<{
+    numero: string;
+    titre_id: number;
+    mode: string;
+  }>;
+  assert.deepEqual(rows, [
+    { numero: 'MED-2026-000001', titre_id: fx.titreA, mode: 'manuel' },
+    { numero: 'MED-2026-000002', titre_id: fx.titreB, mode: 'batch' },
+  ]);
+});
+
 test('POST /api/titres/:id/mise-en-demeure refuse un titre deja solde', async () => {
   const fx = resetFixtures();
   db.prepare("UPDATE titres SET montant_paye = montant, statut = 'paye' WHERE id = ?").run(fx.titreA);

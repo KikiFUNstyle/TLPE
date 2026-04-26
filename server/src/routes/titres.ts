@@ -912,7 +912,23 @@ titresRouter.post('/mises-en-demeure/batch', requireRole('admin', 'financier'), 
       return titre;
     });
 
-    const titreSolde = titres.find((titre) => {
+    const titresWithReuseState = titres.map((titre) => {
+      const hasActiveMiseEnDemeure = Boolean(
+        db
+          .prepare(
+            `SELECT 1
+             FROM titre_mises_en_demeure med
+             JOIN pieces_jointes pj ON pj.id = med.piece_jointe_id
+             WHERE med.titre_id = ? AND pj.deleted_at IS NULL
+             LIMIT 1`,
+          )
+          .get(titre.id),
+      );
+      return { titre, hasActiveMiseEnDemeure };
+    });
+
+    const titreSolde = titresWithReuseState.find(({ titre, hasActiveMiseEnDemeure }) => {
+      if (hasActiveMiseEnDemeure) return false;
       const solde = Number((titre.montant - titre.montant_paye).toFixed(2));
       return solde <= 0 || titre.statut === 'paye';
     });
@@ -921,7 +937,7 @@ titresRouter.post('/mises-en-demeure/batch', requireRole('admin', 'financier'), 
     }
 
     const items: Array<{ titre_id: number; numero: string; piece_jointe_id: number; download_url: string }> = [];
-    for (const titre of titres) {
+    for (const { titre } of titresWithReuseState) {
       const result = await ensureMiseEnDemeureForTitre({
         titre,
         userId: req.user!.id,
