@@ -253,6 +253,7 @@ a:hover { text-decoration: underline; }
 .toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
 .toolbar input, .toolbar select { padding: 6px 10px; border: 1px solid var(--c-border); border-radius: 4px; font-size: 14px; }
 .toolbar .spacer { flex: 1; }
+.toolbar-hint { color: var(--c-muted); font-size: 12px; }
 
 .dialog-backdrop {
   position: fixed;

@@ -52,6 +52,16 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
 - Pour tout parseur MT940/format bancaire, vérifier que les références métier sont préservées même sans séparateur `//` et que le code type (`NTRF`, `NMSC`, etc.) n'est pas restitué comme référence client.
 - Pour toute liste UI de doublons/aperçus importés, vérifier une clé React réellement unique et stable (`transaction_id` seul est insuffisant si la vue affiche plusieurs doublons du même identifiant).
 - Pour toute US avec document généré (PDF, accusé, courrier), ajouter un test API qui valide la présence des métadonnées de restitution (`token/hash/download_url`) et un test service qui vérifie la persistance + réutilisation idempotente.
+- Pour toute US de mise en demeure sur titres, vérifier explicitement en review :
+  - route manuelle sécurisée (`POST /api/titres/:id/mise-en-demeure`) + route batch sécurisée (`POST /api/titres/mises-en-demeure/batch`),
+  - numérotation unique et stable via table dédiée (`titre_mises_en_demeure`) avec réutilisation idempotente si un PDF existe déjà pour le titre,
+  - séquence de numérotation résistante à la concurrence (pas de `COUNT(*) + 1`) et migration runtime/schéma dédiée si un compteur persistant est introduit,
+  - archivage du PDF dans `pieces_jointes` avec entité `titre`, `download_url` renvoyé par l'API et traçabilité `audit_log` dédiée,
+  - téléchargement réellement autorisé pour tous les rôles producteurs du document (`admin|financier`) avec test bout-en-bout du `download_url`,
+  - en cas de soft delete de la pièce jointe, ne jamais renvoyer un `download_url` obsolète : régénérer ou refuser explicitement avec couverture de test,
+  - batch atomique côté validation d'entrée/résolution des titres (pas de résultats partiels silencieux si un élément est introuvable),
+  - blocage métier sur les titres soldés, tests couverture happy path + batch + refus 409,
+  - présence d'un déclencheur UI explicite côté page Titres (unitaire + lot) réservé aux rôles `admin|financier`.
 - Pour tout export binaire métier (PDF/XLSX bordereau, titre, rapport), vérifier en review:
   - contrôle d'accès explicite par rôle,
   - filtrage métier exact des données exportées,
@@ -83,6 +93,7 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
   - migration runtime idempotente pour les bases legacy,
   - éviter `ALTER TABLE ... ADD COLUMN ... DEFAULT (datetime('now'))` ou toute autre expression non constante: reconstruire la table si une valeur dérivée/fonctionnelle est nécessaire,
   - ajout/reconstruction des `CHECK`/`UNIQUE` au runtime pour les bases legacy (pas seulement dans `schema.sql`),
+  - ne pas ajouter d'index explicite qui duplique un index implicite déjà créé par une contrainte `UNIQUE` ou `PRIMARY KEY` identique,
   - nettoyage explicite des nouvelles tables dans les fixtures de tests qui purgent `campagnes`/tables parentes,
   - ordre de purge compatible FK dans les fixtures (supprimer d'abord les tables enfants, ex. `contentieux` avant `titres`),
   - non-régression sur une base locale préexistante (pas seulement sur une base de test vierge).

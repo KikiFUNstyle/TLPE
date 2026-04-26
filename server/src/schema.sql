@@ -556,7 +556,7 @@ CREATE TABLE IF NOT EXISTS contentieux (
 -- =====================================================================
 CREATE TABLE IF NOT EXISTS pieces_jointes (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
-  entite        TEXT NOT NULL CHECK (entite IN ('dispositif','declaration','contentieux')),
+  entite        TEXT NOT NULL CHECK (entite IN ('dispositif','declaration','contentieux','titre')),
   entite_id     INTEGER NOT NULL,
   nom           TEXT NOT NULL,
   mime_type     TEXT NOT NULL,
@@ -569,6 +569,29 @@ CREATE TABLE IF NOT EXISTS pieces_jointes (
 );
 CREATE INDEX IF NOT EXISTS idx_pieces_jointes_entite ON pieces_jointes(entite, entite_id, deleted_at);
 CREATE INDEX IF NOT EXISTS idx_pieces_jointes_uploaded_by ON pieces_jointes(uploaded_by);
+
+CREATE TABLE IF NOT EXISTS titre_mises_en_demeure (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  numero           TEXT NOT NULL UNIQUE,
+  titre_id         INTEGER NOT NULL UNIQUE,
+  piece_jointe_id  INTEGER NOT NULL UNIQUE,
+  annee            INTEGER NOT NULL,
+  mode             TEXT NOT NULL DEFAULT 'manuel' CHECK (mode IN ('manuel','batch')),
+  generated_by     INTEGER,
+  created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (titre_id) REFERENCES titres(id) ON DELETE CASCADE,
+  FOREIGN KEY (piece_jointe_id) REFERENCES pieces_jointes(id) ON DELETE CASCADE,
+  FOREIGN KEY (generated_by) REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_titre_mises_en_demeure_annee ON titre_mises_en_demeure(annee, numero);
+
+CREATE TABLE IF NOT EXISTS titre_mises_en_demeure_sequences (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  annee            INTEGER NOT NULL,
+  numero_ordre     INTEGER NOT NULL,
+  created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (annee, numero_ordre)
+);
 
 -- =====================================================================
 -- Audit log (traçabilite cf. section 12.2)

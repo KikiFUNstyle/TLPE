@@ -43,8 +43,108 @@ export function initSchema() {
   if (hasPiecesJointes) {
     const pieceColumns = db.prepare("PRAGMA table_info('pieces_jointes')").all() as Array<{ name: string }>;
     const hasDeletedAt = pieceColumns.some((col) => col.name === 'deleted_at');
-    if (!hasDeletedAt) {
-      db.exec('ALTER TABLE pieces_jointes ADD COLUMN deleted_at TEXT');
+    const piecesJointesSql = (
+      db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'pieces_jointes'").get() as
+        | { sql: string }
+        | undefined
+    )?.sql;
+    const hasTitreEntite = /entite\s+TEXT\s+NOT\s+NULL\s+CHECK\s*\(\s*entite\s+IN\s*\('dispositif','declaration','contentieux','titre'\)\s*\)/i.test(
+      piecesJointesSql ?? '',
+    );
+    if (!hasDeletedAt || !hasTitreEntite) {
+      db.pragma('foreign_keys = OFF');
+      try {
+        db.exec('BEGIN TRANSACTION');
+        try {
+          db.exec(`
+            CREATE TABLE pieces_jointes_new (
+              id            INTEGER PRIMARY KEY AUTOINCREMENT,
+              entite        TEXT NOT NULL CHECK (entite IN ('dispositif','declaration','contentieux','titre')),
+              entite_id     INTEGER NOT NULL,
+              nom           TEXT NOT NULL,
+              mime_type     TEXT NOT NULL,
+              taille        INTEGER NOT NULL CHECK (taille > 0),
+              chemin        TEXT NOT NULL,
+              uploaded_by   INTEGER,
+              created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+              deleted_at    TEXT,
+              FOREIGN KEY (uploaded_by) REFERENCES users(id)
+            );
+
+            INSERT INTO pieces_jointes_new (id, entite, entite_id, nom, mime_type, taille, chemin, uploaded_by, created_at, deleted_at)
+            SELECT id, entite, entite_id, nom, mime_type, taille, chemin, uploaded_by, created_at, ${hasDeletedAt ? 'deleted_at' : 'NULL'}
+            FROM pieces_jointes;
+
+            DROP TABLE pieces_jointes;
+            ALTER TABLE pieces_jointes_new RENAME TO pieces_jointes;
+            CREATE INDEX IF NOT EXISTS idx_pieces_jointes_entite ON pieces_jointes(entite, entite_id, deleted_at);
+            CREATE INDEX IF NOT EXISTS idx_pieces_jointes_uploaded_by ON pieces_jointes(uploaded_by);
+          `);
+          db.exec('COMMIT');
+        } catch (error) {
+          db.exec('ROLLBACK');
+          throw error;
+        }
+      } finally {
+        db.pragma('foreign_keys = ON');
+      }
+    }
+  }
+
+  const hasTitreMisesEnDemeure = (
+    db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'titre_mises_en_demeure'").get() as
+      | { name: string }
+      | undefined
+  )?.name === 'titre_mises_en_demeure';
+  if (!hasTitreMisesEnDemeure) {
+    db.exec(`
+      CREATE TABLE titre_mises_en_demeure (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        numero           TEXT NOT NULL UNIQUE,
+        titre_id         INTEGER NOT NULL UNIQUE,
+        piece_jointe_id  INTEGER NOT NULL UNIQUE,
+        annee            INTEGER NOT NULL,
+        mode             TEXT NOT NULL DEFAULT 'manuel' CHECK (mode IN ('manuel','batch')),
+        generated_by     INTEGER,
+        created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (titre_id) REFERENCES titres(id) ON DELETE CASCADE,
+        FOREIGN KEY (piece_jointe_id) REFERENCES pieces_jointes(id) ON DELETE CASCADE,
+        FOREIGN KEY (generated_by) REFERENCES users(id) ON DELETE SET NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_titre_mises_en_demeure_annee ON titre_mises_en_demeure(annee, numero);
+    `);
+  }
+
+  const hasTitreMisesEnDemeureSequences = (
+    db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'titre_mises_en_demeure_sequences'").get() as
+      | { name: string }
+      | undefined
+  )?.name === 'titre_mises_en_demeure_sequences';
+  if (!hasTitreMisesEnDemeureSequences) {
+    db.exec(`
+      CREATE TABLE titre_mises_en_demeure_sequences (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        annee            INTEGER NOT NULL,
+        numero_ordre     INTEGER NOT NULL,
+        created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE (annee, numero_ordre)
+      );
+    `);
+  }
+
+  if (hasTitreMisesEnDemeure) {
+    const sequenceBackfillCount = (
+      db.prepare('SELECT COUNT(*) AS c FROM titre_mises_en_demeure_sequences').get() as { c: number }
+    ).c;
+    if (sequenceBackfillCount === 0) {
+      db.exec(`
+        INSERT INTO titre_mises_en_demeure_sequences (annee, numero_ordre, created_at)
+        SELECT
+          annee,
+          CAST(substr(numero, -6) AS INTEGER) AS numero_ordre,
+          created_at
+        FROM titre_mises_en_demeure
+      `);
     }
   }
 

@@ -24,7 +24,7 @@ basée sur les articles L2333-6 à L2333-16 du CGCT.
 | Quote-part dispositifs numériques partagés (0-100%, contrôle somme ≤ 100%, impact calcul + PDF titre) | §6.2 (US4.1) | OK + tests |
 | Accusé de réception PDF horodaté avec hash SHA-256 + QR de vérification + téléchargement sur détail déclaration | §5.2 / US3.6 | OK + tests |
 | Hash SHA-256 de soumission (accusé) | §5.2 | OK |
-| Titres de recettes + PDF (ordonnancement) + bordereau récapitulatif PDF/Excel horodaté avec hash SHA-256 | §7.1 / US5.1 | OK + tests |
+| Titres de recettes + PDF (ordonnancement) + bordereau récapitulatif PDF/Excel horodaté avec hash SHA-256 + mises en demeure PDF unitaire/batch archivées | §7.1 / US5.1 / US5.8 | OK + tests |
 | Escalade automatique des impayés (J+10 / J+30 / J+60) + historique par titre | §7.4 / US5.7 | OK + tests |
 | Mandats SEPA + export pain.008.001.02 avec validation IBAN/BIC, séquencement FRST/RCUR et validation XSD locale | §7.2 / US5.4 | OK + tests |
 | Import de relevés bancaires (CSV paramétrable / OFX / MT940), dédoublonnage par transaction, page Rapprochement réservée admin/financier | §7.3 / US5.5 | OK + tests |
@@ -90,6 +90,7 @@ Ouvrir ensuite http://localhost:5173.
   - le dashboard affiche le taux de déclaration, l'évolution vs N-1, le drilldown par zone/type et le graphe d'évolution journalière
 - Smoke test US5.1:
   - la page `Titres` affiche les boutons `Bordereau PDF` / `Bordereau Excel` uniquement pour `admin|financier` quand une année est sélectionnée
+- la page `Titres` propose désormais `Générer mise en demeure` sur chaque titre impayé et un lot `mises en demeure` (max 100 titres filtrés) pour produire/archiver les PDF recommandés en `pieces_jointes`
   - `GET /api/titres/bordereau?annee=YYYY&format=pdf|xlsx` retourne les titres filtrés de l'exercice, le total, l'horodatage et un hash SHA-256
   - un export du bordereau écrit une trace `audit_log` (`action=export-bordereau`)
 - Smoke test US5.4:

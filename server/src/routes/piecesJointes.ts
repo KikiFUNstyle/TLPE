@@ -42,7 +42,7 @@ if (!useS3 && !fs.existsSync(UPLOADS_DIR)) {
   fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 }
 
-function resolveUploadAbsolutePath(cheminRelatif: string): string {
+export function resolveUploadAbsolutePath(cheminRelatif: string): string {
   const uploadRoot = path.resolve(UPLOADS_DIR);
   const absolutePath = path.resolve(uploadRoot, cheminRelatif);
   if (absolutePath !== uploadRoot && !absolutePath.startsWith(`${uploadRoot}${path.sep}`)) {
@@ -60,17 +60,17 @@ const upload = multer({
 });
 
 const createSchema = z.object({
-  entite: z.enum(['dispositif', 'declaration', 'contentieux']),
+  entite: z.enum(['dispositif', 'declaration', 'contentieux', 'titre']),
   entite_id: z.coerce.number().int().positive(),
 });
 
 export const piecesJointesRouter = Router();
 piecesJointesRouter.use(authMiddleware);
-piecesJointesRouter.use(requireRole('admin', 'gestionnaire', 'contribuable'));
+piecesJointesRouter.use(requireRole('admin', 'gestionnaire', 'financier', 'contribuable'));
 
 interface PieceJointeRow {
   id: number;
-  entite: 'dispositif' | 'declaration' | 'contentieux';
+  entite: 'dispositif' | 'declaration' | 'contentieux' | 'titre';
   entite_id: number;
   nom: string;
   mime_type: string;
@@ -121,7 +121,7 @@ export function detectMimeFromMagicBytes(buffer: Buffer): string | null {
 }
 
 function buildStorageRelativePath(params: {
-  entite: 'dispositif' | 'declaration' | 'contentieux';
+  entite: 'dispositif' | 'declaration' | 'contentieux' | 'titre';
   entiteId: number;
   filename: string;
   mimeType: string;
@@ -135,7 +135,7 @@ function buildStorageRelativePath(params: {
   return path.posix.join(params.entite, String(params.entiteId), y, m, name);
 }
 
-function checkEntityExists(entite: 'dispositif' | 'declaration' | 'contentieux', entiteId: number): boolean {
+function checkEntityExists(entite: 'dispositif' | 'declaration' | 'contentieux' | 'titre', entiteId: number): boolean {
   if (entite === 'dispositif') {
     const row = db.prepare('SELECT id FROM dispositifs WHERE id = ?').get(entiteId) as { id: number } | undefined;
     return !!row;
@@ -144,18 +144,23 @@ function checkEntityExists(entite: 'dispositif' | 'declaration' | 'contentieux',
     const row = db.prepare('SELECT id FROM declarations WHERE id = ?').get(entiteId) as { id: number } | undefined;
     return !!row;
   }
-  const row = db.prepare('SELECT id FROM contentieux WHERE id = ?').get(entiteId) as { id: number } | undefined;
+  if (entite === 'contentieux') {
+    const row = db.prepare('SELECT id FROM contentieux WHERE id = ?').get(entiteId) as { id: number } | undefined;
+    return !!row;
+  }
+  const row = db.prepare('SELECT id FROM titres WHERE id = ?').get(entiteId) as { id: number } | undefined;
   return !!row;
 }
 
 function canAccessEntity(
   user: Express.Request['user'],
-  entite: 'dispositif' | 'declaration' | 'contentieux',
+  entite: 'dispositif' | 'declaration' | 'contentieux' | 'titre',
   entiteId: number,
 ): boolean {
   if (!user) return false;
-  if (user.role !== 'contribuable') return true;
-  if (!user.assujetti_id) return false;
+  if (user.role === 'admin' || user.role === 'gestionnaire') return true;
+  if (user.role === 'financier') return entite === 'titre';
+  if (user.role !== 'contribuable' || !user.assujetti_id) return false;
 
   if (entite === 'dispositif') {
     const row = db.prepare('SELECT assujetti_id FROM dispositifs WHERE id = ?').get(entiteId) as
@@ -171,13 +176,20 @@ function canAccessEntity(
     return !!row && row.assujetti_id === user.assujetti_id;
   }
 
-  const row = db.prepare('SELECT assujetti_id FROM contentieux WHERE id = ?').get(entiteId) as
+  if (entite === 'contentieux') {
+    const row = db.prepare('SELECT assujetti_id FROM contentieux WHERE id = ?').get(entiteId) as
+      | { assujetti_id: number }
+      | undefined;
+    return !!row && row.assujetti_id === user.assujetti_id;
+  }
+
+  const row = db.prepare('SELECT assujetti_id FROM titres WHERE id = ?').get(entiteId) as
     | { assujetti_id: number }
     | undefined;
   return !!row && row.assujetti_id === user.assujetti_id;
 }
 
-function getEntityTotalSize(entite: 'dispositif' | 'declaration' | 'contentieux', entiteId: number): number {
+function getEntityTotalSize(entite: 'dispositif' | 'declaration' | 'contentieux' | 'titre', entiteId: number): number {
   const row = db
     .prepare(
       `SELECT COALESCE(SUM(taille), 0) AS total
@@ -188,7 +200,7 @@ function getEntityTotalSize(entite: 'dispositif' | 'declaration' | 'contentieux'
   return Number(row.total || 0);
 }
 
-async function saveFile(cheminRelatif: string, buffer: Buffer, mimeType: string): Promise<void> {
+export async function saveFile(cheminRelatif: string, buffer: Buffer, mimeType: string): Promise<void> {
   if (!useS3) {
     const absolutePath = resolveUploadAbsolutePath(cheminRelatif);
     await fs.promises.mkdir(path.dirname(absolutePath), { recursive: true });
@@ -210,7 +222,7 @@ async function saveFile(cheminRelatif: string, buffer: Buffer, mimeType: string)
   );
 }
 
-async function deleteStoredFile(cheminRelatif: string): Promise<void> {
+export async function deleteStoredFile(cheminRelatif: string): Promise<void> {
   if (!useS3) {
     const absolutePath = resolveUploadAbsolutePath(cheminRelatif);
     if (fs.existsSync(absolutePath)) {
@@ -270,7 +282,7 @@ async function readStoredFile(cheminRelatif: string): Promise<{
   };
 }
 
-piecesJointesRouter.post('/', upload.single('fichier'), async (req, res) => {
+piecesJointesRouter.post('/', requireRole('admin', 'gestionnaire', 'contribuable'), upload.single('fichier'), async (req, res) => {
   try {
     const parsed = createSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -303,7 +315,7 @@ piecesJointesRouter.post('/', upload.single('fichier'), async (req, res) => {
 
     const insertPieceJointe = db.transaction(
       (params: {
-        entite: 'dispositif' | 'declaration' | 'contentieux';
+        entite: 'dispositif' | 'declaration' | 'contentieux' | 'titre';
         entite_id: number;
         nom: string;
         mime_type: string;
