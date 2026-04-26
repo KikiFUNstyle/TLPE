@@ -429,10 +429,10 @@ contentieuxRouter.post('/:id/decider', requireRole('admin', 'gestionnaire', 'fin
 });
 
 contentieuxRouter.get('/:id/timeline/pdf', async (req, res) => {
-  const contentieux = ensureContentieuxAccess(req, res);
-  if (!contentieux) return;
-
   try {
+    const contentieux = ensureContentieuxAccess(req, res);
+    if (!contentieux) return;
+
     const events = loadTimeline(contentieux.id);
     const generatedAt = new Date().toISOString();
     const hash = crypto

@@ -333,8 +333,8 @@ export default function ContentieuxPage() {
                 piece_jointe_id: '',
               };
               return (
-                <>
-                  <tr key={contentieux.id}>
+                <Fragment key={contentieux.id}>
+                  <tr>
                     <td>{contentieux.numero}</td>
                     <td>{contentieux.type}</td>
                     <td>{contentieux.raison_sociale}</td>
@@ -510,7 +510,7 @@ export default function ContentieuxPage() {
                       </td>
                     </tr>
                   )}
-                </>
+                </Fragment>
               );
             })}
           </tbody>
