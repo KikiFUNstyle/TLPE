@@ -182,6 +182,33 @@ Audit:
 
 - `logAudit()` à chaque upload / download / soft delete (entité `piece_jointe`)
 
+## Timeline contentieux (US6.1)
+
+Le module **Contentieux** embarque désormais une chronologie détaillée pour chaque dossier :
+
+- création automatique d'un événement `ouverture` lors de `POST /api/contentieux`,
+- ajout automatique d'événements `statut` et `decision` lors de `POST /api/contentieux/:id/decider`,
+- ajout manuel d'un événement métier via `POST /api/contentieux/:id/evenements`,
+- consultation chronologique via `GET /api/contentieux/:id/timeline`,
+- export PDF de la timeline via `GET /api/contentieux/:id/timeline/pdf`.
+
+Schéma SQL ajouté :
+
+- table `evenements_contentieux` (`contentieux_id`, `type`, `date`, `auteur`, `description`, `piece_jointe_id`, `created_at`),
+- index `idx_evenements_contentieux_contentieux` pour le tri chronologique.
+
+UI :
+
+- la page `client/src/pages/Contentieux.tsx` permet d'ouvrir la timeline d'un dossier,
+- consultation des événements en ordre chronologique,
+- saisie d'un événement manuel (type/date/auteur/description/ID de pièce jointe optionnel),
+- mise à jour du statut/décision sans prompt navigateur,
+- téléchargement direct du PDF de timeline.
+
+Audit :
+
+- `logAudit()` sur création de dossier, ajout manuel d'événement, décision et export PDF de timeline.
+
 ## Paiement en ligne PayFip / Tipi (US5.3)
 
 Le portail contribuable prend en charge un flux PayFip/Tipi simulé depuis l'écran **Titres** :

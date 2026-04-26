@@ -95,8 +95,13 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
   - ajout/reconstruction des `CHECK`/`UNIQUE` au runtime pour les bases legacy (pas seulement dans `schema.sql`),
   - ne pas ajouter d'index explicite qui duplique un index implicite déjà créé par une contrainte `UNIQUE` ou `PRIMARY KEY` identique,
   - nettoyage explicite des nouvelles tables dans les fixtures de tests qui purgent `campagnes`/tables parentes,
-  - ordre de purge compatible FK dans les fixtures (supprimer d'abord les tables enfants, ex. `contentieux` avant `titres`),
+  - ordre de purge compatible FK dans les fixtures (supprimer d'abord les tables enfants, ex. `evenements_contentieux` puis `contentieux`, puis `titres`),
   - non-régression sur une base locale préexistante (pas seulement sur une base de test vierge).
+- Pour toute US de timeline / chronologie métier (contentieux, workflow, notifications), vérifier explicitement:
+  - alimentation automatique des événements système (création, changement de statut, décision),
+  - ordre chronologique stable quand des événements manuels antérieurs sont saisis après coup (tri par date métier, pas seulement par date de création),
+  - export documentaire (PDF) cohérent avec la timeline affichée et journalisé dans `audit_log`,
+  - UI sans prompt navigateur bloquant si une saisie métier structurée est attendue.
 - Commandes minimales à exécuter:
   - `npm test`
   - `npm run build`
