@@ -101,7 +101,9 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
   - alimentation automatique des événements système (création, changement de statut, décision),
   - ordre chronologique stable quand des événements manuels antérieurs sont saisis après coup (tri par date métier, pas seulement par date de création),
   - export documentaire (PDF) cohérent avec la timeline affichée et journalisé dans `audit_log`,
-  - UI sans prompt navigateur bloquant si une saisie métier structurée est attendue.
+  - UI sans prompt navigateur bloquant si une saisie métier structurée est attendue,
+  - champs `input[type=date]` préremplis avec une date locale (pas `toISOString().slice(0, 10)` brut, sensible à l'UTC),
+  - validation calendrier stricte côté API pour toute date métier saisie manuellement (`YYYY-MM-DD` réel, pas seulement regex permissive type `2026-02-30`).
 - Commandes minimales à exécuter:
   - `npm test`
   - `npm run build`

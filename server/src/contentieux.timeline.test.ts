@@ -204,6 +204,39 @@ test('POST /api/contentieux alimente automatiquement la timeline d ouverture pui
   assert.equal((timeline.data as Array<{ type: string }>)[0].type, 'ouverture');
 });
 
+test('POST /api/contentieux/:id/evenements rejette une date calendrier invalide', async () => {
+  const fx = resetFixtures();
+
+  const created = await request({
+    method: 'POST',
+    path: '/api/contentieux',
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      assujetti_id: fx.assujettiId,
+      titre_id: fx.titreId,
+      type: 'contentieux',
+      montant_litige: 830,
+      description: 'Ouverture du dossier.',
+    },
+  });
+  assert.equal(created.status, 201);
+  const contentieuxId = (created.data as { id: number }).id;
+
+  const invalidDate = await request({
+    method: 'POST',
+    path: `/api/contentieux/${contentieuxId}/evenements`,
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      type: 'courrier',
+      date: '2026-02-30',
+      auteur: 'Service contentieux',
+      description: 'Courrier avec date invalide.',
+    },
+  });
+
+  assert.equal(invalidDate.status, 400);
+});
+
 test('POST /api/contentieux/:id/decider et POST /api/contentieux/:id/evenements enrichissent la timeline puis le PDF s exporte', async () => {
   const fx = resetFixtures();
 

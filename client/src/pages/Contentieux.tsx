@@ -1,6 +1,6 @@
 import { Fragment, FormEvent, useEffect, useState } from 'react';
 import { api, apiBlobWithMetadata } from '../api';
-import { formatDate, formatEuro } from '../format';
+import { formatDate, formatEuro, toLocalDateInputValue } from '../format';
 import { useAuth } from '../auth';
 
 interface Contentieux {
@@ -73,7 +73,7 @@ const statusLabels: Record<string, string> = {
 const defaultDecisionStatus = 'instruction';
 
 function todayInputValue() {
-  return new Date().toISOString().slice(0, 10);
+  return toLocalDateInputValue();
 }
 
 function normalizeStatusLabel(statut: string) {
