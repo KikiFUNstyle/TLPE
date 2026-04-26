@@ -92,6 +92,7 @@ function resetFixtures() {
   db.exec('DELETE FROM invitation_magic_links');
   db.exec('DELETE FROM campagne_jobs');
   db.exec('DELETE FROM mises_en_demeure');
+  db.exec('DELETE FROM recouvrement_actions');
   db.exec('DELETE FROM paiements');
   db.exec('DELETE FROM titres');
   db.exec('DELETE FROM pieces_jointes');

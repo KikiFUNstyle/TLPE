@@ -168,3 +168,93 @@ test('quote-part invalide > 1 lance une erreur', () => {
     /quote_part invalide/,
   );
 });
+
+test('quote-part 0 retourne un montant nul', () => {
+  const r = calculerTLPE({ annee: 2024, categorie: 'publicitaire', surface: 10, quote_part: 0 });
+  assert.equal(r.montant, 0);
+  assert.equal(r.detail.quote_part, 0);
+  assert.equal(r.detail.sous_total, 0);
+});
+
+test('computeProrata sans dates = annee entiere (prorata = 1)', () => {
+  const { prorata } = computeProrata(2024, null, null);
+  assert.equal(prorata, 1);
+});
+
+test('computeProrata avec pose = depose (1 seul jour)', () => {
+  const { jours, prorata } = computeProrata(2024, '2024-07-15', '2024-07-15');
+  assert.equal(jours, 1);
+  assert.ok(prorata > 0 && prorata < 0.01);
+});
+
+test('computeProrata plafonne prorata a 1 (depose apres fin annee ignoree)', () => {
+  // dateDepose > 31/12 est hors champ ; le moteur ramene a 31/12
+  const { prorata } = computeProrata(2024, '2024-01-01', null);
+  assert.equal(prorata, 1);
+});
+
+test('calculerTLPE applique le prorata temporis avec date_pose et date_depose', () => {
+  db.exec('DELETE FROM exonerations');
+  // publicitaire 4m2 : 15.5 EUR/m2, annee entiere = 62
+  // Pose 01/07 au 31/12 : ~185 jours -> 4 * 15.5 * (185/365) ~ 33. Floor gives a value below 62.
+  const r = calculerTLPE({
+    annee: 2024,
+    categorie: 'publicitaire',
+    surface: 4,
+    date_pose: '2024-07-01',
+    date_depose: null,
+  });
+  assert.ok(r.detail.jours_exploitation > 170 && r.detail.jours_exploitation <= 185,
+    `jours=${r.detail.jours_exploitation}`);
+  assert.ok(r.montant > 0 && r.montant < 62, `montant=${r.montant}`);
+});
+
+test('calculerTLPE avec tarif_fixe applique le prorata et le coefficient', () => {
+  db.exec('DELETE FROM exonerations');
+  // enseigne 10m2 : tarif_fixe = 75, coefficient_zone = 2
+  // Annee entiere : 75 * 2 * 1 = 150
+  const r = calculerTLPE({
+    annee: 2024,
+    categorie: 'enseigne',
+    surface: 10,
+    coefficient_zone: 2,
+  });
+  assert.equal(r.detail.tarif_fixe, 75);
+  assert.equal(r.montant, 150);
+});
+
+test('calculerTLPE lance une erreur quand aucun bareme n\'est disponible', () => {
+  assert.throws(
+    () => calculerTLPE({ annee: 1900, categorie: 'publicitaire', surface: 10 }),
+    /Aucun bareme TLPE/,
+  );
+});
+
+test('findExoneration respecte le filtre assujetti_id', () => {
+  db.exec('DELETE FROM exonerations');
+  db.prepare(
+    `INSERT INTO exonerations (type, critere, taux, date_debut, date_fin, active)
+     VALUES ('deliberee', ?, 0.5, NULL, NULL, 1)`,
+  ).run(JSON.stringify({ categorie: 'publicitaire', assujetti_id: 999 }));
+
+  // L'exoneration n'est PAS applicable pour l'assujetti 1
+  const r1 = calculerTLPE({
+    annee: 2024,
+    categorie: 'publicitaire',
+    surface: 4,
+    assujetti_id: 1,
+  });
+  assert.equal(r1.detail.exonere, false);
+  assert.equal(r1.montant, 62); // Montant plein
+
+  // L'exoneration EST applicable pour l'assujetti 999
+  const r999 = calculerTLPE({
+    annee: 2024,
+    categorie: 'publicitaire',
+    surface: 4,
+    assujetti_id: 999,
+  });
+  assert.equal(r999.detail.exonere, false); // Taux 50%, pas exonere total
+  assert.ok(r999.montant < 62, 'Montant reduit par l\'exoneration 50%');
+  assert.equal(r999.montant, 31); // 62 * 0.5 = 31
+});

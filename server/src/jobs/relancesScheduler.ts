@@ -1,3 +1,4 @@
+import { runEscaladeImpayes } from '../impayes';
 import { runRelancesDeclarations } from '../relances';
 
 let timer: NodeJS.Timeout | null = null;
@@ -15,16 +16,30 @@ function msUntilNextDailyRun(hour = 5, minute = 0): number {
 function scheduleNextDailyTick() {
   const delay = msUntilNextDailyRun();
   timer = setTimeout(() => {
+    let relancesResult: ReturnType<typeof runRelancesDeclarations> | null = null;
+    let impayesResult: ReturnType<typeof runEscaladeImpayes> | null = null;
+
     try {
-      const result = runRelancesDeclarations();
-      // eslint-disable-next-line no-console
-      console.log('[TLPE] Relances quotidiennes executees', result);
+      relancesResult = runRelancesDeclarations();
     } catch (error) {
       // eslint-disable-next-line no-console
-      console.error('[TLPE] Erreur job relances quotidiennes', error);
-    } finally {
-      scheduleNextDailyTick();
+      console.error('[TLPE] Erreur job quotidien relances declarations', error);
     }
+
+    try {
+      impayesResult = runEscaladeImpayes();
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('[TLPE] Erreur job quotidien escalade impayes', error);
+    }
+
+    // eslint-disable-next-line no-console
+    console.log('[TLPE] Jobs quotidiens executes', {
+      relances: relancesResult,
+      impayes: impayesResult,
+    });
+
+    scheduleNextDailyTick();
   }, delay);
 }
 
