@@ -551,6 +551,20 @@ CREATE TABLE IF NOT EXISTS contentieux (
   FOREIGN KEY (titre_id) REFERENCES titres(id)
 );
 
+CREATE TABLE IF NOT EXISTS evenements_contentieux (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  contentieux_id   INTEGER NOT NULL,
+  type             TEXT NOT NULL CHECK (type IN ('ouverture','courrier','statut','decision','jugement','relance','commentaire')),
+  date             TEXT NOT NULL,
+  auteur           TEXT,
+  description      TEXT NOT NULL,
+  piece_jointe_id  INTEGER,
+  created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (contentieux_id) REFERENCES contentieux(id) ON DELETE CASCADE,
+  FOREIGN KEY (piece_jointe_id) REFERENCES pieces_jointes(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_evenements_contentieux_contentieux ON evenements_contentieux(contentieux_id, date, created_at);
+
 -- =====================================================================
 -- Pieces jointes
 -- =====================================================================
