@@ -2,8 +2,9 @@ import { Fragment, FormEvent, useEffect, useState } from 'react';
 import { api, apiBlobWithMetadata } from '../api';
 import { formatDate, formatEuro, toLocalDateInputValue } from '../format';
 import { useAuth } from '../auth';
+import { classifyContentieuxDeadline, describeContentieuxDeadline, type ContentieuxDeadlineSummary } from './contentieuxDeadlineUtils';
 
-interface Contentieux {
+interface Contentieux extends ContentieuxDeadlineSummary {
   id: number;
   numero: string;
   type: string;
@@ -16,6 +17,8 @@ interface Contentieux {
   raison_sociale: string;
   assujetti_id: number;
   titre_id: number | null;
+  delai_prolonge_par: number | null;
+  delai_prolonge_at: string | null;
 }
 
 interface TimelineEvent {
@@ -40,6 +43,11 @@ interface TimelineDraft {
   auteur: string;
   description: string;
   piece_jointe_id: string;
+}
+
+interface DeadlineExtensionDraft {
+  date_limite_reponse: string;
+  justification: string;
 }
 
 const timelineTypeOptions: Array<{ value: TimelineDraft['type']; label: string }> = [
@@ -95,6 +103,14 @@ function statusBadgeClass(statut: string) {
   return 'info';
 }
 
+function isDeadlineVisible(contentieux: Contentieux) {
+  return Boolean(contentieux.date_limite_reponse);
+}
+
+function deadlineCellClass(contentieux: Contentieux) {
+  return classifyContentieuxDeadline(contentieux);
+}
+
 function sortTimeline(events: TimelineEvent[]) {
   return [...events].sort((left, right) => {
     if (left.date !== right.date) return left.date.localeCompare(right.date);
@@ -123,6 +139,7 @@ export default function ContentieuxPage() {
   const [showModal, setShowModal] = useState(false);
   const [decisionDrafts, setDecisionDrafts] = useState<Record<number, { statut: string; decision: string }>>({});
   const [timelineDrafts, setTimelineDrafts] = useState<Record<number, TimelineDraft>>({});
+  const [deadlineDrafts, setDeadlineDrafts] = useState<Record<number, DeadlineExtensionDraft>>({});
 
   const canCreate = hasRole('admin', 'gestionnaire') || (user?.role === 'contribuable' && user.assujetti_id);
   const canManage = hasRole('admin', 'gestionnaire', 'financier');
@@ -166,6 +183,19 @@ export default function ContentieuxPage() {
     });
   };
 
+  const ensureDeadlineDraft = (contentieux: Contentieux) => {
+    setDeadlineDrafts((prev) => {
+      if (prev[contentieux.id]) return prev;
+      return {
+        ...prev,
+        [contentieux.id]: {
+          date_limite_reponse: contentieux.date_limite_reponse ?? '',
+          justification: contentieux.delai_prolonge_justification ?? '',
+        },
+      };
+    });
+  };
+
   const loadTimeline = async (contentieuxId: number) => {
     setLoadingTimelineId(contentieuxId);
     try {
@@ -187,6 +217,7 @@ export default function ContentieuxPage() {
     }
     setOpenRowId(contentieux.id);
     ensureDecisionDraft(contentieux);
+    ensureDeadlineDraft(contentieux);
     if (!timelines[contentieux.id]) {
       await loadTimeline(contentieux.id);
     }
@@ -245,6 +276,17 @@ export default function ContentieuxPage() {
     });
   };
 
+  const updateDeadlineDraft = (contentieuxId: number, patch: Partial<DeadlineExtensionDraft>) => {
+    setDeadlineDrafts((prev) => ({
+      ...prev,
+      [contentieuxId]: {
+        date_limite_reponse: prev[contentieuxId]?.date_limite_reponse ?? '',
+        justification: prev[contentieuxId]?.justification ?? '',
+        ...patch,
+      },
+    }));
+  };
+
   const submitTimelineEvent = async (contentieuxId: number) => {
     const draft = timelineDrafts[contentieuxId];
     if (!draft) return;
@@ -297,6 +339,27 @@ export default function ContentieuxPage() {
     }
   };
 
+  const submitDeadlineExtension = async (contentieux: Contentieux) => {
+    const draft = deadlineDrafts[contentieux.id];
+    if (!draft) return;
+    setDecisioningId(contentieux.id);
+    try {
+      await api(`/api/contentieux/${contentieux.id}/prolonger-delai`, {
+        method: 'POST',
+        body: JSON.stringify({
+          date_limite_reponse: draft.date_limite_reponse,
+          justification: draft.justification,
+        }),
+      });
+      await Promise.all([load(), loadTimeline(contentieux.id)]);
+      setErr(null);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setDecisioningId((current) => clearContentieuxActionState(current, contentieux.id));
+    }
+  };
+
   return (
     <>
       <div className="page-header">
@@ -340,9 +403,16 @@ export default function ContentieuxPage() {
                 description: '',
                 piece_jointe_id: '',
               };
+              const deadlineDraft = deadlineDrafts[contentieux.id] ?? {
+                date_limite_reponse: contentieux.date_limite_reponse ?? '',
+                justification: contentieux.delai_prolonge_justification ?? '',
+              };
+              const deadlineSummary = isDeadlineVisible(contentieux)
+                ? describeContentieuxDeadline(contentieux)
+                : 'Aucune échéance renseignée';
               return (
                 <Fragment key={contentieux.id}>
-                  <tr>
+                  <tr className={contentieux.overdue ? 'table-row-danger' : undefined}>
                     <td>{contentieux.numero}</td>
                     <td>{contentieux.type}</td>
                     <td>{contentieux.raison_sociale}</td>
@@ -353,7 +423,14 @@ export default function ContentieuxPage() {
                         {normalizeStatusLabel(contentieux.statut)}
                       </span>
                     </td>
-                    <td style={{ fontSize: 12, maxWidth: 300 }}>{contentieux.description}</td>
+                    <td>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        <div style={{ fontSize: 12, maxWidth: 300 }}>{contentieux.description}</div>
+                        {isDeadlineVisible(contentieux) && (
+                          <span className={`badge ${deadlineCellClass(contentieux)}`}>{deadlineSummary}</span>
+                        )}
+                      </div>
+                    </td>
                     <td>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                         <button className="btn small secondary" onClick={() => { void toggleTimeline(contentieux); }}>
@@ -439,6 +516,52 @@ export default function ContentieuxPage() {
                                         disabled={decisioningId === contentieux.id}
                                       >
                                         {decisioningId === contentieux.id ? 'Enregistrement...' : 'Enregistrer la décision'}
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+
+                              {canManage && isDeadlineVisible(contentieux) && (
+                                <div className="card">
+                                  <h3 style={{ marginTop: 0 }}>Prolonger le délai légal</h3>
+                                  <div className="form">
+                                    <div className="timeline-muted" style={{ marginBottom: 8 }}>
+                                      Échéance actuelle : {formatDate(contentieux.date_limite_reponse)}
+                                      {contentieux.date_limite_reponse_initiale && contentieux.date_limite_reponse_initiale !== contentieux.date_limite_reponse
+                                        ? ` • initiale ${formatDate(contentieux.date_limite_reponse_initiale)}`
+                                        : ''}
+                                      {contentieux.delai_prolonge_at ? ` • dernière prolongation ${formatDate(contentieux.delai_prolonge_at)}` : ''}
+                                    </div>
+                                    <div>
+                                      <label>Nouvelle date limite</label>
+                                      <input
+                                        type="date"
+                                        value={deadlineDraft.date_limite_reponse}
+                                        onChange={(e) => updateDeadlineDraft(contentieux.id, { date_limite_reponse: e.target.value })}
+                                      />
+                                    </div>
+                                    <div>
+                                      <label>Justification</label>
+                                      <textarea
+                                        rows={3}
+                                        value={deadlineDraft.justification}
+                                        onChange={(e) => updateDeadlineDraft(contentieux.id, { justification: e.target.value })}
+                                        placeholder="Expliquer la base légale ou le motif de prolongation"
+                                      />
+                                    </div>
+                                    <div className="actions">
+                                      <button
+                                        className="btn secondary"
+                                        onClick={() => { void submitDeadlineExtension(contentieux); }}
+                                        disabled={
+                                          decisioningId === contentieux.id ||
+                                          !deadlineDraft.date_limite_reponse ||
+                                          deadlineDraft.date_limite_reponse <= (contentieux.date_limite_reponse ?? '') ||
+                                          deadlineDraft.justification.trim().length < 5
+                                        }
+                                      >
+                                        {decisioningId === contentieux.id ? 'Prolongation...' : 'Enregistrer la prolongation'}
                                       </button>
                                     </div>
                                   </div>

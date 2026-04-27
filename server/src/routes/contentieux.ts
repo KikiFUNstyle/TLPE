@@ -3,6 +3,11 @@ import { type Request, type Response, Router } from 'express';
 import PDFDocument from 'pdfkit';
 import { z } from 'zod';
 import { authMiddleware, requireRole } from '../auth';
+import {
+  computeContentieuxResponseDeadline,
+  summarizeContentieuxDeadline,
+  todayIsoDate,
+} from '../contentieuxDeadline';
 import { db, logAudit } from '../db';
 
 export const contentieuxRouter = Router();
@@ -42,6 +47,12 @@ const createSchema = z.object({
   type: z.enum(['gracieux', 'contentieux', 'moratoire', 'controle']),
   montant_litige: z.number().min(0).nullable().optional(),
   description: z.string().trim().min(1),
+  date_ouverture: z.string().refine(isValidIsoCalendarDate, 'Date invalide (format calendrier attendu YYYY-MM-DD)').optional(),
+});
+
+const extendDeadlineSchema = z.object({
+  date_limite_reponse: z.string().refine(isValidIsoCalendarDate, 'Date limite invalide (format calendrier attendu YYYY-MM-DD)'),
+  justification: z.string().trim().min(5, 'Justification obligatoire (min. 5 caractères)'),
 });
 
 const decideSchema = z.object({
@@ -65,6 +76,11 @@ type ContentieuxRow = {
   type: string;
   montant_litige: number | null;
   date_ouverture: string;
+  date_limite_reponse: string | null;
+  date_limite_reponse_initiale: string | null;
+  delai_prolonge_justification: string | null;
+  delai_prolonge_par: number | null;
+  delai_prolonge_at: string | null;
   date_cloture: string | null;
   statut: string;
   description: string;
@@ -105,9 +121,6 @@ const statusLabels: Record<string, string> = {
   non_lieu: 'Non-lieu',
 };
 
-function todayIsoDate(): string {
-  return new Date().toISOString().slice(0, 10);
-}
 
 function genNumero(): string {
   const year = new Date().getFullYear();
@@ -306,8 +319,20 @@ contentieuxRouter.get('/', (req, res) => {
        ${where}
        ORDER BY c.date_ouverture DESC, c.id DESC`,
     )
-    .all(...params);
-  res.json(rows);
+    .all(...params) as Array<ContentieuxRow>;
+  res.json(
+    rows.map((row) => ({
+      ...row,
+      ...summarizeContentieuxDeadline(
+        {
+          date_limite_reponse: row.date_limite_reponse,
+          date_limite_reponse_initiale: row.date_limite_reponse_initiale,
+          delai_prolonge_justification: row.delai_prolonge_justification,
+        },
+        todayIsoDate(),
+      ),
+    })),
+  );
 });
 
 contentieuxRouter.post('/', requireRole('admin', 'gestionnaire', 'contribuable'), (req, res) => {
@@ -320,14 +345,18 @@ contentieuxRouter.post('/', requireRole('admin', 'gestionnaire', 'contribuable')
   }
 
   const numero = genNumero();
-  const openedAt = todayIsoDate();
+  const openedAt = payload.date_ouverture ?? todayIsoDate();
+  const responseDeadline = computeContentieuxResponseDeadline(openedAt);
   const actor = displayUser(req.user);
 
   const created = db.transaction(() => {
     const info = db
       .prepare(
-        `INSERT INTO contentieux (numero, assujetti_id, titre_id, type, montant_litige, description, date_ouverture)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO contentieux (
+          numero, assujetti_id, titre_id, type, montant_litige, description,
+          date_ouverture, date_limite_reponse, date_limite_reponse_initiale
+        )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         numero,
@@ -337,6 +366,8 @@ contentieuxRouter.post('/', requireRole('admin', 'gestionnaire', 'contribuable')
         payload.montant_litige ?? null,
         payload.description,
         openedAt,
+        responseDeadline,
+        responseDeadline,
       );
 
     const contentieuxId = Number(info.lastInsertRowid);
@@ -353,11 +384,11 @@ contentieuxRouter.post('/', requireRole('admin', 'gestionnaire', 'contribuable')
       action: 'create',
       entite: 'contentieux',
       entiteId: contentieuxId,
-      details: { numero, type: payload.type, opened_at: openedAt },
+      details: { numero, type: payload.type, opened_at: openedAt, date_limite_reponse: responseDeadline },
       ip: req.ip ?? null,
     });
 
-    return { id: contentieuxId, numero };
+    return { id: contentieuxId, numero, date_limite_reponse: responseDeadline };
   })();
 
   res.status(201).json(created);
@@ -410,6 +441,69 @@ contentieuxRouter.post('/:id/evenements', requireRole('admin', 'gestionnaire', '
   })();
 
   res.status(201).json({ id: eventId });
+});
+
+contentieuxRouter.post('/:id/prolonger-delai', requireRole('admin', 'gestionnaire', 'financier'), (req, res) => {
+  const contentieux = ensureContentieuxAccess(req, res);
+  if (!contentieux) return;
+
+  const parsed = extendDeadlineSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  if (!contentieux.date_limite_reponse) {
+    return res.status(400).json({ error: 'Aucune échéance existante à prolonger' });
+  }
+
+  const nextDeadline = parsed.data.date_limite_reponse;
+  if (nextDeadline <= contentieux.date_limite_reponse) {
+    return res.status(400).json({ error: 'La nouvelle date limite doit être postérieure à la date actuelle' });
+  }
+
+  const justification = parsed.data.justification.trim();
+  const actor = displayUser(req.user);
+  const changedAt = new Date().toISOString();
+  const eventDate = changedAt.slice(0, 10);
+  const initialDeadline = contentieux.date_limite_reponse_initiale ?? contentieux.date_limite_reponse;
+
+  db.transaction(() => {
+    db.prepare(
+      `UPDATE contentieux
+       SET date_limite_reponse = ?,
+           date_limite_reponse_initiale = ?,
+           delai_prolonge_justification = ?,
+           delai_prolonge_par = ?,
+           delai_prolonge_at = ?
+       WHERE id = ?`,
+    ).run(nextDeadline, initialDeadline, justification, req.user!.id, changedAt, contentieux.id);
+
+    insertTimelineEvent({
+      contentieuxId: contentieux.id,
+      type: 'relance',
+      date: eventDate,
+      auteur: actor,
+      description: `Délai prolongé du ${contentieux.date_limite_reponse} au ${nextDeadline} — ${justification}`,
+    });
+
+    logAudit({
+      userId: req.user!.id,
+      action: 'extend-deadline',
+      entite: 'contentieux',
+      entiteId: contentieux.id,
+      details: {
+        previous_deadline: contentieux.date_limite_reponse,
+        new_deadline: nextDeadline,
+        justification,
+      },
+      ip: req.ip ?? null,
+    });
+  })();
+
+  res.json({
+    ok: true,
+    date_limite_reponse: nextDeadline,
+    date_limite_reponse_initiale: initialDeadline,
+    delai_prolonge_justification: justification,
+    delai_prolonge_at: changedAt,
+  });
 });
 
 contentieuxRouter.post('/:id/decider', requireRole('admin', 'gestionnaire', 'financier'), (req, res) => {

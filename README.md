@@ -29,8 +29,8 @@ basée sur les articles L2333-6 à L2333-16 du CGCT.
 | Mandats SEPA + export pain.008.001.02 avec validation IBAN/BIC, séquencement FRST/RCUR et validation XSD locale | §7.2 / US5.4 | OK + tests |
 | Import de relevés bancaires (CSV paramétrable / OFX / MT940), dédoublonnage par transaction, page Rapprochement réservée admin/financier | §7.3 / US5.5 | OK + tests |
 | Paiements (5 modalités) + recouvrement | §7.2 | OK |
-| Contentieux / réclamations | §8 | OK |
-| Tableau de bord exécutif + KPI déclaratifs temps réel (US3.7: attendus/soumises/validées/rejetées, drilldown zone/type, évolution journalière, auto-refresh 5 min) | §10.1 / §5.4 | OK |
+| Contentieux / réclamations + timeline + alertes de délais légaux (US6.1/US6.2) | §8 | OK + tests |
+| Tableau de bord exécutif + KPI déclaratifs temps réel (US3.7: attendus/soumises/validées/rejetées, drilldown zone/type, évolution journalière, auto-refresh 5 min) + alertes contentieux J-30/J-7/dépassement | §10.1 / §5.4 | OK |
 | Authentification + RBAC (5 rôles) | §2 | OK |
 | Simulateur | §6.3 | OK |
 | Audit log (traçabilité) | §12.2 | OK |
@@ -119,6 +119,13 @@ Ouvrir ensuite http://localhost:5173.
   - `GET /api/titres/:id/executoire/xml` restitue le flux persistant avec ACL contribuable stricte
   - `POST /api/titres/:id/admettre-non-valeur` n'est autorisé que pour les titres `transmis_comptable`, journalise le retour comptable et bascule le statut vers `admis_en_non_valeur`
   - l'historique de recouvrement affiche la transmission comptable et le commentaire d'admission en non-valeur
+- Smoke test US6.2:
+  - `POST /api/contentieux` calcule automatiquement `date_limite_reponse = date_ouverture + 6 mois` ; le résumé d'alerte (`days_remaining`, `niveau_alerte`, `overdue`, `extended`) est visible dans `GET /api/contentieux`
+  - le scheduler quotidien exécute aussi `createContentieuxDeadlineAlerts()` avec idempotence par couple `(contentieux_id, niveau_alerte, date_echeance)`
+  - `contentieux_alerts` journalise les alertes J-30 / J-7 / dépassement et `notifications_email` trace l'email gestionnaire associé (`template_code=alerte_contentieux`)
+  - le dashboard affiche le volume d'alertes contentieux à <= J-30 et le nombre de dossiers en dépassement
+  - la liste `Contentieux` surligne en rouge les dossiers en dépassement et affiche le badge d'échéance/prolongation
+  - `POST /api/contentieux/:id/prolonger-delai` exige une date strictement postérieure et une justification, journalise l'audit et ajoute un événement timeline `relance`
 
 ## Transmission comptable public / titre exécutoire (US5.9)
 
@@ -181,6 +188,17 @@ Stockage:
 Audit:
 
 - `logAudit()` à chaque upload / download / soft delete (entité `piece_jointe`)
+
+## Alertes de délais contentieux (US6.2)
+
+Le module **Contentieux** couvre désormais aussi les échéances légales d'instruction et leur restitution transverse :
+
+- calcul automatique de `date_limite_reponse` à l'ouverture d'un dossier (`date_ouverture + 6 mois`, avec clamp calendrier),
+- persistance des champs `date_limite_reponse`, `date_limite_reponse_initiale`, `delai_prolonge_justification`, `delai_prolonge_par`, `delai_prolonge_at`,
+- endpoint `POST /api/contentieux/:id/prolonger-delai` réservé à `admin|gestionnaire|financier`, avec validation stricte de la nouvelle échéance et justification obligatoire,
+- table `contentieux_alerts` + job quotidien `createContentieuxDeadlineAlerts()` pour générer les alertes J-30, J-7 et dépassement sans doublons,
+- traçabilité des emails gestionnaire dans `notifications_email` (`template_code=alerte_contentieux`) et des mutations dans `audit_log`,
+- restitution des alertes dans le dashboard (`contentieux_alertes_total`, `contentieux_alertes_overdue`) et dans la liste UI des contentieux (badge d'échéance + surlignage rouge en cas de dépassement).
 
 ## Timeline contentieux (US6.1)
 

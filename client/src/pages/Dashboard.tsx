@@ -3,6 +3,13 @@ import { api } from '../api';
 import { formatEuro, formatPct } from '../format';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
+export function formatContentieuxAlertMeta(total: number, overdue: number) {
+  return {
+    upcoming: `${total} alerte(s) <= J-30`,
+    overdue: `${overdue} dossier(s) en dépassement`,
+  };
+}
+
 interface DashboardData {
   annee: number;
   campagne: {
@@ -30,6 +37,8 @@ interface DashboardData {
     taux_declaration: number;
     evolution_taux_vs_nm1: number | null;
     contentieux_ouverts: number;
+    contentieux_alertes_total: number;
+    contentieux_alertes_overdue: number;
   };
   drilldown: {
     by_zone: Array<{
@@ -95,6 +104,10 @@ export default function Dashboard() {
 
   const { financier, operationnel } = data;
   const totalCategories = data.repartition_categories.reduce((s, r) => s + r.nb, 0);
+  const contentieuxAlertMeta = formatContentieuxAlertMeta(
+    operationnel.contentieux_alertes_total,
+    operationnel.contentieux_alertes_overdue,
+  );
   const evolutionTauxLabel =
     operationnel.evolution_taux_vs_nm1 === null
       ? 'Evolution N-1 indisponible'
@@ -151,6 +164,8 @@ export default function Dashboard() {
           <div className="label">Montant en litige</div>
           <div className="value">{formatEuro(financier.montant_litige)}</div>
           <div className="meta">{operationnel.contentieux_ouverts} dossier(s) ouvert(s)</div>
+          <div className="meta">{contentieuxAlertMeta.upcoming}</div>
+          <div className="meta">{contentieuxAlertMeta.overdue}</div>
         </div>
       </div>
 
