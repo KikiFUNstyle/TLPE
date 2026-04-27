@@ -527,3 +527,51 @@ test('GET /api/contentieux/:id/timeline masque les métadonnées de pièce joint
   assert.equal(eventWithAttachment?.piece_jointe_id ?? null, null);
   assert.equal(eventWithAttachment?.piece_jointe_nom ?? null, null);
 });
+
+test('GET /api/contentieux/:id/timeline/pdf masque aussi les métadonnées de pièce jointe pour un financier', async () => {
+  const fx = resetFixtures();
+
+  const created = await request({
+    method: 'POST',
+    path: '/api/contentieux',
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      assujetti_id: fx.assujettiId,
+      titre_id: fx.titreId,
+      type: 'contentieux',
+      montant_litige: 830,
+      description: 'Ouverture du dossier.',
+    },
+  });
+  assert.equal(created.status, 201);
+  const contentieuxId = (created.data as { id: number }).id;
+  const pieceJointeId = createPieceJointe({
+    entite: 'contentieux',
+    entiteId: contentieuxId,
+    uploadedBy: fx.gestionnaire.id,
+    nom: 'secret-contentieux.pdf',
+  });
+
+  const manual = await request({
+    method: 'POST',
+    path: `/api/contentieux/${contentieuxId}/evenements`,
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      type: 'courrier',
+      date: '2026-06-15',
+      auteur: 'Service contentieux',
+      description: 'Courrier avec pièce.',
+      piece_jointe_id: pieceJointeId,
+    },
+  });
+  assert.equal(manual.status, 201);
+
+  const pdf = await requestBinary({
+    method: 'GET',
+    path: `/api/contentieux/${contentieuxId}/timeline/pdf`,
+    headers: makeAuthHeader(fx.financier),
+  });
+  assert.equal(pdf.status, 200);
+  assert.match(pdf.headers.contentType, /application\/pdf/);
+  assert.equal(pdf.buffer.includes(Buffer.from('secret-contentieux.pdf')), false);
+});

@@ -466,7 +466,7 @@ contentieuxRouter.get('/:id/timeline/pdf', async (req, res) => {
     const contentieux = ensureContentieuxAccess(req, res);
     if (!contentieux) return;
 
-    const events = loadTimeline(contentieux.id);
+    const events = redactTimelineForUser(req.user, loadTimeline(contentieux.id));
     const generatedAt = new Date().toISOString();
     const hash = crypto
       .createHash('sha256')

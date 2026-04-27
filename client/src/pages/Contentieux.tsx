@@ -102,6 +102,10 @@ function sortTimeline(events: TimelineEvent[]) {
   });
 }
 
+export function clearTimelineLoadingState(currentLoadingId: number | null, completedContentieuxId: number): number | null {
+  return currentLoadingId === completedContentieuxId ? null : currentLoadingId;
+}
+
 export default function ContentieuxPage() {
   const { hasRole, user } = useAuth();
   const [rows, setRows] = useState<Contentieux[]>([]);
@@ -168,7 +172,7 @@ export default function ContentieuxPage() {
     } catch (e) {
       setErr((e as Error).message);
     } finally {
-      setLoadingTimelineId(null);
+      setLoadingTimelineId((current) => clearTimelineLoadingState(current, contentieuxId));
     }
   };
 

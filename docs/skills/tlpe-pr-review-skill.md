@@ -103,6 +103,7 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
   - ordre chronologique stable quand des événements manuels antérieurs ou futurs sont saisis après coup (tri par date métier, pas seulement par date de création),
   - export documentaire (PDF) cohérent avec la timeline affichée et journalisé dans `audit_log`,
   - UI sans prompt navigateur bloquant si une saisie métier structurée est attendue,
+  - pour tout chargement asynchrone UI par ligne/dossier, vérifier qu'un retour tardif d'une requête précédente ne réinitialise pas l'état de chargement du dossier actuellement ouvert (loading state clé par id, ou nettoyage conditionnel),
   - champs `input[type=date]` préremplis avec une date locale (pas `toISOString().slice(0, 10)` brut, sensible à l'UTC),
   - validation calendrier stricte côté API pour toute date métier saisie manuellement (`YYYY-MM-DD` réel, pas seulement regex permissive type `2026-02-30`),
   - si un événement référence une `piece_jointe_id`, vérifier que la pièce jointe appartient bien à la même entité métier (ici le même `contentieux`) avant persistance,
