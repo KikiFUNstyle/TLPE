@@ -191,13 +191,13 @@ CREATE INDEX IF NOT EXISTS idx_magic_links_campaign_assujetti ON invitation_magi
 
 CREATE TABLE IF NOT EXISTS notifications_email (
   id                 INTEGER PRIMARY KEY AUTOINCREMENT,
-  campagne_id         INTEGER NOT NULL,
+  campagne_id         INTEGER,
   assujetti_id        INTEGER NOT NULL,
   email_destinataire  TEXT NOT NULL,
   objet               TEXT NOT NULL,
   corps               TEXT NOT NULL,
   template_code       TEXT NOT NULL DEFAULT 'invitation_campagne',
-  relance_niveau      TEXT CHECK (relance_niveau IN ('J-30','J-15','J-7')),
+  relance_niveau      TEXT CHECK (relance_niveau IN ('J-30','J-15','J-7','depasse')),
   piece_jointe_path   TEXT,
   magic_link          TEXT,
   mode                TEXT NOT NULL DEFAULT 'auto' CHECK (mode IN ('auto','manual')),
@@ -543,13 +543,43 @@ CREATE TABLE IF NOT EXISTS contentieux (
   type            TEXT NOT NULL CHECK (type IN ('gracieux','contentieux','moratoire','controle')),
   montant_litige  REAL,
   date_ouverture  TEXT NOT NULL DEFAULT (date('now')),
+  date_limite_reponse TEXT,
+  date_limite_reponse_initiale TEXT,
+  delai_prolonge_justification TEXT,
+  delai_prolonge_par INTEGER,
+  delai_prolonge_at TEXT,
   date_cloture    TEXT,
   statut          TEXT NOT NULL DEFAULT 'ouvert' CHECK (statut IN ('ouvert','instruction','clos_maintenu','degrevement_partiel','degrevement_total','non_lieu')),
   description     TEXT,
   decision        TEXT,
   FOREIGN KEY (assujetti_id) REFERENCES assujettis(id),
-  FOREIGN KEY (titre_id) REFERENCES titres(id)
+  FOREIGN KEY (titre_id) REFERENCES titres(id),
+  FOREIGN KEY (delai_prolonge_par) REFERENCES users(id) ON DELETE SET NULL
 );
+
+CREATE TABLE IF NOT EXISTS contentieux_alerts (
+  id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+  contentieux_id           INTEGER NOT NULL,
+  assujetti_id             INTEGER NOT NULL,
+  niveau_alerte            TEXT NOT NULL CHECK (niveau_alerte IN ('J-30','J-7','depasse')),
+  date_reference           TEXT NOT NULL,
+  date_echeance            TEXT NOT NULL,
+  days_remaining           INTEGER NOT NULL,
+  overdue                  INTEGER NOT NULL DEFAULT 0 CHECK (overdue IN (0,1)),
+  email_status             TEXT NOT NULL DEFAULT 'pending' CHECK (email_status IN ('pending','envoye','echec')),
+  email_error              TEXT,
+  email_sent_at            TEXT,
+  email_notification_id    INTEGER,
+  created_by               INTEGER,
+  created_at               TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (contentieux_id) REFERENCES contentieux(id) ON DELETE CASCADE,
+  FOREIGN KEY (assujetti_id) REFERENCES assujettis(id) ON DELETE CASCADE,
+  FOREIGN KEY (email_notification_id) REFERENCES notifications_email(id) ON DELETE SET NULL,
+  FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+  UNIQUE (contentieux_id, niveau_alerte, date_echeance)
+);
+CREATE INDEX IF NOT EXISTS idx_contentieux_alerts_contentieux ON contentieux_alerts(contentieux_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_contentieux_alerts_echeance ON contentieux_alerts(date_echeance, niveau_alerte);
 
 CREATE TABLE IF NOT EXISTS evenements_contentieux (
   id               INTEGER PRIMARY KEY AUTOINCREMENT,

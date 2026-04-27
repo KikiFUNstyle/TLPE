@@ -169,6 +169,14 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
 - Vérifier que le bouton/accès `Historique` reste visible pour les statuts terminaux de recouvrement (`transmis_comptable`, `admis_en_non_valeur`) afin d'éviter de masquer la traçabilité après action utilisateur.
 - Vérifier l'idempotence métier/technique de la transmission comptable et du retour négatif (contrainte DB ou garde explicite) pour éviter les doublons de flux ou d'actions de recouvrement.
 
+### 16) Délais légaux contentieux & alertes (appris sur US6.2)
+- Vérifier que `POST /api/contentieux` calcule automatiquement `date_limite_reponse` depuis `date_ouverture` (+6 mois, clamp calendrier) et expose le résumé d'échéance (`days_remaining`, `niveau_alerte`, `overdue`, `extended`) dans `GET /api/contentieux`.
+- Vérifier la cohérence schéma SQL + migration runtime + types UI pour les nouveaux champs `date_limite_reponse`, `date_limite_reponse_initiale`, `delai_prolonge_*` ainsi que pour la table `contentieux_alerts`.
+- Vérifier que `POST /api/contentieux/:id/prolonger-delai` est protégé, refuse toute date <= échéance courante, exige une justification métier, écrit un `audit_log` et ajoute un événement timeline explicite.
+- Vérifier l'idempotence du job quotidien d'alertes contentieux (unicité par `contentieux_id + niveau_alerte + date_echeance`) et la traçabilité complète dans `contentieux_alerts`, `notifications_email` et `audit_log`.
+- Vérifier que les emails d'alerte contentieux ciblent bien un gestionnaire si disponible, sinon un fallback explicite, avec statuts `pending|envoye|echec` sans doublons silencieux.
+- Vérifier la restitution UX: badge d'échéance lisible, surlignage rouge des dossiers en dépassement, KPI dashboard distincts pour `<= J-30` et `dépassement`, couverture de tests front + back.
+
 ## Format de sortie review
 
 1. **Résumé**

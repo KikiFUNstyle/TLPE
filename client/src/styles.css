@@ -385,6 +385,10 @@ a:hover { text-decoration: underline; }
   gap: 16px;
 }
 
+.table-row-danger td {
+  background: rgba(204, 65, 83, 0.08);
+}
+
 @media (max-width: 1180px) {
   .contentieux-detail-grid {
     grid-template-columns: 1fr;

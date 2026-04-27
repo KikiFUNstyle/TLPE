@@ -4,6 +4,7 @@ import * as zlib from 'node:zlib';
 import express from 'express';
 import { db, initSchema } from './db';
 import { hashPassword, signToken, type AuthUser } from './auth';
+import { computeContentieuxResponseDeadline, summarizeContentieuxDeadline } from './contentieuxDeadline';
 import { contentieuxRouter } from './routes/contentieux';
 
 function createApp() {
@@ -256,6 +257,136 @@ test('schema contentieux inclut la table evenements_contentieux attendue', () =>
     columns.map((column) => column.name),
     ['id', 'contentieux_id', 'type', 'date', 'auteur', 'description', 'piece_jointe_id', 'created_at'],
   );
+});
+
+test('POST /api/contentieux calcule automatiquement une échéance à 6 mois et expose le résumé d’alerte dans la liste', async () => {
+  const fx = resetFixtures();
+
+  const created = await request({
+    method: 'POST',
+    path: '/api/contentieux',
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      assujetti_id: fx.assujettiId,
+      titre_id: fx.titreId,
+      type: 'contentieux',
+      montant_litige: 830,
+      date_ouverture: '2026-01-31',
+      description: 'Réclamation avec échéance calculée.',
+    },
+  });
+  assert.equal(created.status, 201);
+  assert.equal((created.data as { date_limite_reponse: string }).date_limite_reponse, '2026-07-31');
+
+  const list = await request({
+    method: 'GET',
+    path: '/api/contentieux',
+    headers: makeAuthHeader(fx.gestionnaire),
+  });
+  assert.equal(list.status, 200);
+
+  const createdId = (created.data as { id: number }).id;
+  const row = (list.data as Array<{
+    id: number;
+    date_limite_reponse: string | null;
+    date_limite_reponse_initiale: string | null;
+    days_remaining: number | null;
+    overdue: boolean;
+    niveau_alerte: string | null;
+    extended: boolean;
+  }>).find((entry) => entry.id === createdId);
+  assert.ok(row);
+  assert.equal(row?.date_limite_reponse, '2026-07-31');
+  assert.equal(row?.date_limite_reponse_initiale, '2026-07-31');
+  assert.equal(row?.extended, false);
+
+  const expectedSummary = summarizeContentieuxDeadline(
+    {
+      date_limite_reponse: '2026-07-31',
+      date_limite_reponse_initiale: '2026-07-31',
+      delai_prolonge_justification: null,
+    },
+    new Date().toISOString().slice(0, 10),
+  );
+  assert.equal(row?.days_remaining, expectedSummary.days_remaining);
+  assert.equal(row?.overdue, expectedSummary.overdue);
+  assert.equal(row?.niveau_alerte, expectedSummary.niveau_alerte);
+});
+
+test('POST /api/contentieux/:id/prolonger-delai journalise la prolongation et met à jour le résumé dans la liste', async () => {
+  const fx = resetFixtures();
+
+  const openedAt = '2026-01-15';
+  const initialDeadline = computeContentieuxResponseDeadline(openedAt);
+  const created = await request({
+    method: 'POST',
+    path: '/api/contentieux',
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      assujetti_id: fx.assujettiId,
+      titre_id: fx.titreId,
+      type: 'contentieux',
+      montant_litige: 830,
+      date_ouverture: openedAt,
+      description: 'Dossier à prolonger.',
+    },
+  });
+  assert.equal(created.status, 201);
+  const contentieuxId = (created.data as { id: number }).id;
+
+  const extended = await request({
+    method: 'POST',
+    path: `/api/contentieux/${contentieuxId}/prolonger-delai`,
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      date_limite_reponse: '2026-08-22',
+      justification: 'Attente du mémoire en défense',
+    },
+  });
+  assert.equal(extended.status, 200);
+  assert.equal((extended.data as { date_limite_reponse: string }).date_limite_reponse, '2026-08-22');
+  assert.equal((extended.data as { date_limite_reponse_initiale: string }).date_limite_reponse_initiale, initialDeadline);
+
+  const timeline = await request({
+    method: 'GET',
+    path: `/api/contentieux/${contentieuxId}/timeline`,
+    headers: makeAuthHeader(fx.gestionnaire),
+  });
+  assert.equal(timeline.status, 200);
+  const relanceEvent = (timeline.data as Array<{ type: string; description: string }>).find((event) => event.type === 'relance');
+  assert.ok(relanceEvent);
+  assert.match(relanceEvent?.description ?? '', /Délai prolongé du 2026-07-15 au 2026-08-22/);
+  assert.match(relanceEvent?.description ?? '', /Attente du mémoire en défense/);
+
+  const auditRow = db.prepare(
+    `SELECT action, details
+     FROM audit_log
+     WHERE entite = 'contentieux' AND entite_id = ? AND action = 'extend-deadline'
+     ORDER BY id DESC
+     LIMIT 1`,
+  ).get(contentieuxId) as { action: string; details: string | null } | undefined;
+  assert.ok(auditRow);
+  assert.equal(auditRow?.action, 'extend-deadline');
+  assert.match(auditRow?.details ?? '', /2026-08-22/);
+
+  const list = await request({
+    method: 'GET',
+    path: '/api/contentieux',
+    headers: makeAuthHeader(fx.gestionnaire),
+  });
+  assert.equal(list.status, 200);
+  const row = (list.data as Array<{
+    id: number;
+    date_limite_reponse: string | null;
+    date_limite_reponse_initiale: string | null;
+    delai_prolonge_justification: string | null;
+    extended: boolean;
+  }>).find((entry) => entry.id === contentieuxId);
+  assert.ok(row);
+  assert.equal(row?.date_limite_reponse, '2026-08-22');
+  assert.equal(row?.date_limite_reponse_initiale, initialDeadline);
+  assert.equal(row?.delai_prolonge_justification, 'Attente du mémoire en défense');
+  assert.equal(row?.extended, true);
 });
 
 test('POST /api/contentieux alimente automatiquement la timeline d ouverture puis GET /:id/timeline retourne les événements chronologiques', async () => {

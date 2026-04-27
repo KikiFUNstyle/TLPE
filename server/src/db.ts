@@ -162,6 +162,128 @@ export function initSchema() {
     }
   }
 
+  const contentieuxSql = (
+    db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'contentieux'").get() as
+      | { sql: string }
+      | undefined
+  )?.sql;
+  if (contentieuxSql) {
+    const contentieuxColumns = db.prepare("PRAGMA table_info('contentieux')").all() as Array<{ name: string }>;
+    const hasDateLimiteReponse = contentieuxColumns.some((col) => col.name === 'date_limite_reponse');
+    const hasDateLimiteReponseInitiale = contentieuxColumns.some((col) => col.name === 'date_limite_reponse_initiale');
+    const hasDelaiProlongeJustification = contentieuxColumns.some((col) => col.name === 'delai_prolonge_justification');
+    const hasDelaiProlongePar = contentieuxColumns.some((col) => col.name === 'delai_prolonge_par');
+    const hasDelaiProlongeAt = contentieuxColumns.some((col) => col.name === 'delai_prolonge_at');
+    const hasDelaiProlongeParFk = (
+      db.prepare("PRAGMA foreign_key_list('contentieux')").all() as Array<{ from: string; table: string }>
+    ).some((fk) => fk.from === 'delai_prolonge_par' && fk.table === 'users');
+
+    if (
+      !hasDateLimiteReponse ||
+      !hasDateLimiteReponseInitiale ||
+      !hasDelaiProlongeJustification ||
+      !hasDelaiProlongePar ||
+      !hasDelaiProlongeAt ||
+      !hasDelaiProlongeParFk
+    ) {
+      db.pragma('foreign_keys = OFF');
+      try {
+        db.exec('BEGIN TRANSACTION');
+        try {
+          db.exec(`
+            CREATE TABLE contentieux_new (
+              id              INTEGER PRIMARY KEY AUTOINCREMENT,
+              numero          TEXT NOT NULL UNIQUE,
+              assujetti_id    INTEGER NOT NULL,
+              titre_id        INTEGER,
+              type            TEXT NOT NULL CHECK (type IN ('gracieux','contentieux','moratoire','controle')),
+              montant_litige  REAL,
+              date_ouverture  TEXT NOT NULL DEFAULT (date('now')),
+              date_limite_reponse TEXT,
+              date_limite_reponse_initiale TEXT,
+              delai_prolonge_justification TEXT,
+              delai_prolonge_par INTEGER,
+              delai_prolonge_at TEXT,
+              date_cloture    TEXT,
+              statut          TEXT NOT NULL DEFAULT 'ouvert' CHECK (statut IN ('ouvert','instruction','clos_maintenu','degrevement_partiel','degrevement_total','non_lieu')),
+              description     TEXT,
+              decision        TEXT,
+              FOREIGN KEY (assujetti_id) REFERENCES assujettis(id),
+              FOREIGN KEY (titre_id) REFERENCES titres(id),
+              FOREIGN KEY (delai_prolonge_par) REFERENCES users(id) ON DELETE SET NULL
+            );
+
+            INSERT INTO contentieux_new (
+              id, numero, assujetti_id, titre_id, type, montant_litige, date_ouverture,
+              date_limite_reponse, date_limite_reponse_initiale, delai_prolonge_justification,
+              delai_prolonge_par, delai_prolonge_at, date_cloture, statut, description, decision
+            )
+            SELECT
+              id,
+              numero,
+              assujetti_id,
+              titre_id,
+              type,
+              montant_litige,
+              date_ouverture,
+              ${hasDateLimiteReponse ? 'date_limite_reponse' : 'NULL'},
+              ${hasDateLimiteReponseInitiale ? 'date_limite_reponse_initiale' : 'NULL'},
+              ${hasDelaiProlongeJustification ? 'delai_prolonge_justification' : 'NULL'},
+              ${hasDelaiProlongePar ? 'delai_prolonge_par' : 'NULL'},
+              ${hasDelaiProlongeAt ? 'delai_prolonge_at' : 'NULL'},
+              date_cloture,
+              statut,
+              description,
+              decision
+            FROM contentieux;
+
+            DROP TABLE contentieux;
+            ALTER TABLE contentieux_new RENAME TO contentieux;
+          `);
+          db.exec('COMMIT');
+        } catch (error) {
+          db.exec('ROLLBACK');
+          throw error;
+        }
+      } finally {
+        db.pragma('foreign_keys = ON');
+      }
+    }
+  }
+
+  const hasContentieuxAlerts = (
+    db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'contentieux_alerts'").get() as
+      | { name: string }
+      | undefined
+  )?.name === 'contentieux_alerts';
+  if (!hasContentieuxAlerts) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS contentieux_alerts (
+        id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+        contentieux_id           INTEGER NOT NULL,
+        assujetti_id             INTEGER NOT NULL,
+        niveau_alerte            TEXT NOT NULL CHECK (niveau_alerte IN ('J-30','J-7','depasse')),
+        date_reference           TEXT NOT NULL,
+        date_echeance            TEXT NOT NULL,
+        days_remaining           INTEGER NOT NULL,
+        overdue                  INTEGER NOT NULL DEFAULT 0 CHECK (overdue IN (0,1)),
+        email_status             TEXT NOT NULL DEFAULT 'pending' CHECK (email_status IN ('pending','envoye','echec')),
+        email_error              TEXT,
+        email_sent_at            TEXT,
+        email_notification_id    INTEGER,
+        created_by               INTEGER,
+        created_at               TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (contentieux_id) REFERENCES contentieux(id) ON DELETE CASCADE,
+        FOREIGN KEY (assujetti_id) REFERENCES assujettis(id) ON DELETE CASCADE,
+        FOREIGN KEY (email_notification_id) REFERENCES notifications_email(id) ON DELETE SET NULL,
+        FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+        UNIQUE (contentieux_id, niveau_alerte, date_echeance)
+      );
+    `);
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS idx_contentieux_alerts_contentieux ON contentieux_alerts(contentieux_id, created_at DESC)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_contentieux_alerts_echeance ON contentieux_alerts(date_echeance, niveau_alerte)');
+
   const hasEvenementsContentieux = (
     db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'evenements_contentieux'").get() as
       | { name: string }
@@ -185,21 +307,95 @@ export function initSchema() {
   }
   db.exec('CREATE INDEX IF NOT EXISTS idx_evenements_contentieux_contentieux ON evenements_contentieux(contentieux_id, date, created_at)');
 
-  // migration legacy -> ajoute relance_niveau et piece_jointe_path sur notifications_email
+  // migration legacy -> aligne notifications_email avec le schéma courant
   const hasNotificationsEmail = (
     db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'notifications_email'").get() as
       | { name: string }
       | undefined
   )?.name === 'notifications_email';
   if (hasNotificationsEmail) {
-    const notifColumns = db.prepare("PRAGMA table_info('notifications_email')").all() as Array<{ name: string }>;
+    const notifColumns = db.prepare("PRAGMA table_info('notifications_email')").all() as Array<{
+      name: string;
+      notnull: number;
+    }>;
+    const notificationsEmailSql = (
+      db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'notifications_email'").get() as
+        | { sql: string }
+        | undefined
+    )?.sql;
     const hasRelanceNiveau = notifColumns.some((col) => col.name === 'relance_niveau');
     const hasPieceJointePath = notifColumns.some((col) => col.name === 'piece_jointe_path');
-    if (!hasRelanceNiveau) {
-      db.exec('ALTER TABLE notifications_email ADD COLUMN relance_niveau TEXT');
-    }
-    if (!hasPieceJointePath) {
-      db.exec('ALTER TABLE notifications_email ADD COLUMN piece_jointe_path TEXT');
+    const campagneIdColumn = notifColumns.find((col) => col.name === 'campagne_id');
+    const campagneIdNullable = (campagneIdColumn?.notnull ?? 0) === 0;
+    const hasDepasseRelanceLevel = /relance_niveau\s+TEXT\s+CHECK\s*\(\s*relance_niveau\s+IN\s*\('J-30','J-15','J-7','depasse'\)\s*\)/i.test(
+      notificationsEmailSql ?? '',
+    );
+
+    if (!hasRelanceNiveau || !hasPieceJointePath || !campagneIdNullable || !hasDepasseRelanceLevel) {
+      db.pragma('foreign_keys = OFF');
+      try {
+        db.exec('BEGIN TRANSACTION');
+        try {
+          db.exec(`
+            CREATE TABLE notifications_email_new (
+              id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+              campagne_id         INTEGER,
+              assujetti_id        INTEGER NOT NULL,
+              email_destinataire  TEXT NOT NULL,
+              objet               TEXT NOT NULL,
+              corps               TEXT NOT NULL,
+              template_code       TEXT NOT NULL DEFAULT 'invitation_campagne',
+              relance_niveau      TEXT CHECK (relance_niveau IN ('J-30','J-15','J-7','depasse')),
+              piece_jointe_path   TEXT,
+              magic_link          TEXT,
+              mode                TEXT NOT NULL DEFAULT 'auto' CHECK (mode IN ('auto','manual')),
+              statut              TEXT NOT NULL DEFAULT 'envoye' CHECK (statut IN ('pending','envoye','echec')),
+              erreur              TEXT,
+              sent_at             TEXT,
+              created_by          INTEGER,
+              created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+              FOREIGN KEY (campagne_id) REFERENCES campagnes(id) ON DELETE CASCADE,
+              FOREIGN KEY (assujetti_id) REFERENCES assujettis(id) ON DELETE CASCADE,
+              FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+            );
+
+            INSERT INTO notifications_email_new (
+              id, campagne_id, assujetti_id, email_destinataire, objet, corps,
+              template_code, relance_niveau, piece_jointe_path, magic_link, mode,
+              statut, erreur, sent_at, created_by, created_at
+            )
+            SELECT
+              id,
+              campagne_id,
+              assujetti_id,
+              email_destinataire,
+              objet,
+              corps,
+              template_code,
+              ${hasRelanceNiveau ? 'relance_niveau' : 'NULL'},
+              ${hasPieceJointePath ? 'piece_jointe_path' : 'NULL'},
+              magic_link,
+              mode,
+              statut,
+              erreur,
+              sent_at,
+              created_by,
+              created_at
+            FROM notifications_email;
+
+            DROP TABLE notifications_email;
+            ALTER TABLE notifications_email_new RENAME TO notifications_email;
+            CREATE INDEX IF NOT EXISTS idx_notifications_email_campagne ON notifications_email(campagne_id, assujetti_id);
+            CREATE INDEX IF NOT EXISTS idx_notifications_email_statut ON notifications_email(statut, sent_at);
+          `);
+          db.exec('COMMIT');
+        } catch (error) {
+          db.exec('ROLLBACK');
+          throw error;
+        }
+      } finally {
+        db.pragma('foreign_keys = ON');
+      }
     }
   }
 

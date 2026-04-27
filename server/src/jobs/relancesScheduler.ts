@@ -1,5 +1,6 @@
 import { runEscaladeImpayes } from '../impayes';
 import { runRelancesDeclarations } from '../relances';
+import { createContentieuxDeadlineAlerts } from '../contentieuxAlerts';
 
 let timer: NodeJS.Timeout | null = null;
 
@@ -18,6 +19,7 @@ function scheduleNextDailyTick() {
   timer = setTimeout(() => {
     let relancesResult: ReturnType<typeof runRelancesDeclarations> | null = null;
     let impayesResult: ReturnType<typeof runEscaladeImpayes> | null = null;
+    let contentieuxAlertsResult: ReturnType<typeof createContentieuxDeadlineAlerts> | null = null;
 
     try {
       relancesResult = runRelancesDeclarations();
@@ -33,10 +35,18 @@ function scheduleNextDailyTick() {
       console.error('[TLPE] Erreur job quotidien escalade impayes', error);
     }
 
+    try {
+      contentieuxAlertsResult = createContentieuxDeadlineAlerts();
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('[TLPE] Erreur job quotidien alertes contentieux', error);
+    }
+
     // eslint-disable-next-line no-console
     console.log('[TLPE] Jobs quotidiens executes', {
       relances: relancesResult,
       impayes: impayesResult,
+      contentieux_alerts: contentieuxAlertsResult,
     });
 
     scheduleNextDailyTick();
