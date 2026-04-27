@@ -205,6 +205,8 @@ function redactTimelineForUser(user: Request['user'], timeline: TimelineEventRow
         ...event,
         piece_jointe_id: null,
         piece_jointe_nom: null,
+        piece_jointe_entite: null,
+        piece_jointe_entite_id: null,
       };
     }
     return event;

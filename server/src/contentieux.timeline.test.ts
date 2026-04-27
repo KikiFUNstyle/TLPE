@@ -577,11 +577,21 @@ test('GET /api/contentieux/:id/timeline masque les métadonnées de pièce joint
     headers: makeAuthHeader(fx.financier),
   });
   assert.equal(timeline.status, 200);
-  const eventWithAttachment = (timeline.data as Array<{ type: string; piece_jointe_id: number | null; piece_jointe_nom?: string | null }>).find(
+  const eventWithAttachment = (
+    timeline.data as Array<{
+      type: string;
+      piece_jointe_id: number | null;
+      piece_jointe_nom?: string | null;
+      piece_jointe_entite?: string | null;
+      piece_jointe_entite_id?: number | null;
+    }>
+  ).find(
     (event) => event.type === 'courrier',
   );
   assert.equal(eventWithAttachment?.piece_jointe_id ?? null, null);
   assert.equal(eventWithAttachment?.piece_jointe_nom ?? null, null);
+  assert.equal(eventWithAttachment?.piece_jointe_entite ?? null, null);
+  assert.equal(eventWithAttachment?.piece_jointe_entite_id ?? null, null);
 });
 
 test('GET /api/contentieux/:id/timeline/pdf masque aussi les métadonnées de pièce jointe pour un financier', async () => {

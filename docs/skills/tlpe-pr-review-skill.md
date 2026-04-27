@@ -108,7 +108,7 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
   - champs `input[type=date]` préremplis avec une date locale (pas `toISOString().slice(0, 10)` brut, sensible à l'UTC),
   - validation calendrier stricte côté API pour toute date métier saisie manuellement (`YYYY-MM-DD` réel, pas seulement regex permissive type `2026-02-30`),
   - si un événement référence une `piece_jointe_id`, vérifier que la pièce jointe appartient bien à la même entité métier (ici le même `contentieux`) avant persistance,
-  - ne jamais exposer dans l'API/PDF des métadonnées de pièce jointe (`piece_jointe_id`, nom) à un rôle qui ne pourrait pas télécharger effectivement cette pièce via `piecesJointesRouter`.
+  - ne jamais exposer dans l'API/PDF des métadonnées de pièce jointe (`piece_jointe_id`, nom, entité liée, `entite_id`) à un rôle qui ne pourrait pas télécharger effectivement cette pièce via `piecesJointesRouter`.
 - Commandes minimales à exécuter:
   - `npm test`
   - `npm run build`
