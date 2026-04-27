@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import * as zlib from 'node:zlib';
 import express from 'express';
 import { db, initSchema } from './db';
 import { hashPassword, signToken, type AuthUser } from './auth';
@@ -86,6 +87,61 @@ async function requestBinary(params: {
   } finally {
     server.close();
   }
+}
+
+function extractPdfText(buffer: Buffer): string {
+  const pdfSource = buffer.toString('latin1');
+  const streamRegex = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
+  const parts: string[] = [];
+
+  const decodeHexString = (hex: string) => Buffer.from(hex, 'hex').toString('latin1');
+  const decodeTextOperator = (payload: string) => {
+    const tokens = payload.match(/<([0-9A-Fa-f]+)>|\((?:\\.|[^\\)])*\)/g) ?? [];
+    return tokens
+      .map((token) => {
+        if (token.startsWith('<')) return decodeHexString(token.slice(1, -1));
+        return token.slice(1, -1).replace(/\\([\\()])/g, '$1');
+      })
+      .join('');
+  };
+
+  let match: RegExpExecArray | null;
+  while ((match = streamRegex.exec(pdfSource)) !== null) {
+    const streamBuffer = Buffer.from(match[1], 'latin1');
+    const decodedCandidates = [
+      () => zlib.inflateSync(streamBuffer),
+      () => zlib.inflateRawSync(streamBuffer),
+      () => streamBuffer,
+    ];
+
+    for (const decode of decodedCandidates) {
+      try {
+        const text = decode().toString('latin1');
+        if (!text.includes('BT') && !text.includes('Tj') && !text.includes('TJ')) continue;
+
+        const lineTexts = text
+          .split(/\r?\n/)
+          .flatMap((line) => {
+            const chunks: string[] = [];
+            const tjMatch = line.match(/\[(.*)\]\s*TJ/);
+            if (tjMatch) chunks.push(decodeTextOperator(tjMatch[1]));
+            const tjSingleMatch = line.match(/(<[0-9A-Fa-f]+>|\((?:\\.|[^\\)])*\))\s*Tj/);
+            if (tjSingleMatch) chunks.push(decodeTextOperator(tjSingleMatch[1]));
+            return chunks;
+          })
+          .filter(Boolean);
+
+        if (lineTexts.length > 0) {
+          parts.push(lineTexts.join('\n'));
+          break;
+        }
+      } catch {
+        // ignore decode strategy mismatch
+      }
+    }
+  }
+
+  return parts.join('\n');
 }
 
 function resetFixtures() {
@@ -573,5 +629,8 @@ test('GET /api/contentieux/:id/timeline/pdf masque aussi les métadonnées de pi
   });
   assert.equal(pdf.status, 200);
   assert.match(pdf.headers.contentType, /application\/pdf/);
-  assert.equal(pdf.buffer.includes(Buffer.from('secret-contentieux.pdf')), false);
+
+  const extractedText = extractPdfText(pdf.buffer);
+  assert.match(extractedText, /Courrier avec pièce\./);
+  assert.equal(extractedText.includes('secret-contentieux.pdf'), false);
 });

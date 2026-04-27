@@ -187,7 +187,7 @@ Audit:
 Le module **Contentieux** embarque désormais une chronologie détaillée pour chaque dossier :
 
 - création automatique d'un événement `ouverture` lors de `POST /api/contentieux`,
-- ajout automatique d'événements `statut` et `decision` lors de `POST /api/contentieux/:id/decider`,
+- ajout automatique d'un événement `statut` et, si une motivation est fournie, d'un événement `decision` lors de `POST /api/contentieux/:id/decider`,
 - ajout manuel d'un événement métier via `POST /api/contentieux/:id/evenements`,
 - consultation chronologique via `GET /api/contentieux/:id/timeline`,
 - export PDF de la timeline via `GET /api/contentieux/:id/timeline/pdf`.
