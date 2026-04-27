@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { computeContentieuxResponseDeadline } from './contentieuxDeadline';
 
 const DATA_DIR = path.resolve(__dirname, '..', 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -240,6 +241,37 @@ export function initSchema() {
             DROP TABLE contentieux;
             ALTER TABLE contentieux_new RENAME TO contentieux;
           `);
+
+          if (!hasDateLimiteReponse || !hasDateLimiteReponseInitiale) {
+            const legacyRows = db
+              .prepare(
+                `SELECT id, date_ouverture, date_limite_reponse, date_limite_reponse_initiale
+                 FROM contentieux
+                 WHERE date_limite_reponse IS NULL OR date_limite_reponse_initiale IS NULL`,
+              )
+              .all() as Array<{
+              id: number;
+              date_ouverture: string;
+              date_limite_reponse: string | null;
+              date_limite_reponse_initiale: string | null;
+            }>;
+
+            const updateLegacyDeadline = db.prepare(
+              `UPDATE contentieux
+               SET date_limite_reponse = ?,
+                   date_limite_reponse_initiale = ?
+               WHERE id = ?`,
+            );
+
+            for (const row of legacyRows) {
+              const computedDeadline = computeContentieuxResponseDeadline(row.date_ouverture);
+              updateLegacyDeadline.run(
+                row.date_limite_reponse ?? computedDeadline,
+                row.date_limite_reponse_initiale ?? row.date_limite_reponse ?? computedDeadline,
+                row.id,
+              );
+            }
+          }
           db.exec('COMMIT');
         } catch (error) {
           db.exec('ROLLBACK');

@@ -8,6 +8,7 @@ function resetTables() {
   initSchema();
   db.pragma('foreign_keys = OFF');
   try {
+    db.exec('DELETE FROM contentieux_alerts');
     db.exec('DELETE FROM notifications_email');
     db.exec('DELETE FROM invitation_magic_links');
     db.exec('DELETE FROM campagne_jobs');
@@ -52,6 +53,36 @@ function seedAssujetti(code: string, email = `${code.toLowerCase()}@example.test
 
 test.afterEach(() => {
   resetTables();
+});
+
+test('resetTables purge aussi contentieux_alerts pour eviter les alertes orphelines entre tests', () => {
+  resetTables();
+  const gestionnaireId = seedUser('gest-reset@example.test', 'gestionnaire');
+  const assujettiId = seedAssujetti('TLPE-CTX-RESET');
+
+  const contentieuxId = Number(
+    db
+      .prepare(
+        `INSERT INTO contentieux (
+          numero, assujetti_id, type, montant_litige, description,
+          date_ouverture, date_limite_reponse, statut
+        ) VALUES ('CTX-RESET-1', ?, 'contentieux', 1200, 'Recours reset', '2026-01-15', '2026-07-15', 'ouvert')`,
+      )
+      .run(assujettiId).lastInsertRowid,
+  );
+
+  db.prepare(
+    `INSERT INTO contentieux_alerts (
+      contentieux_id, assujetti_id, niveau_alerte, date_reference, date_echeance,
+      days_remaining, overdue, email_status, created_by
+    ) VALUES (?, ?, 'J-30', '2026-06-15', '2026-07-15', 30, 0, 'envoye', ?)`,
+  ).run(contentieuxId, assujettiId, gestionnaireId);
+
+  assert.equal((db.prepare('SELECT COUNT(*) AS c FROM contentieux_alerts').get() as { c: number }).c, 1);
+
+  resetTables();
+
+  assert.equal((db.prepare('SELECT COUNT(*) AS c FROM contentieux_alerts').get() as { c: number }).c, 0);
 });
 
 test('createContentieuxDeadlineAlerts génère les alertes J-30/J-7, journalise l’email et ignore les doublons', () => {

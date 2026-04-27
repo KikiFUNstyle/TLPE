@@ -4,7 +4,7 @@ import * as zlib from 'node:zlib';
 import express from 'express';
 import { db, initSchema } from './db';
 import { hashPassword, signToken, type AuthUser } from './auth';
-import { computeContentieuxResponseDeadline, summarizeContentieuxDeadline } from './contentieuxDeadline';
+import { computeContentieuxResponseDeadline, normalizeIsoDate, summarizeContentieuxDeadline } from './contentieuxDeadline';
 import { contentieuxRouter } from './routes/contentieux';
 
 function createApp() {
@@ -257,6 +257,64 @@ test('schema contentieux inclut la table evenements_contentieux attendue', () =>
     columns.map((column) => column.name),
     ['id', 'contentieux_id', 'type', 'date', 'auteur', 'description', 'piece_jointe_id', 'created_at'],
   );
+});
+
+test('normalizeIsoDate rejette les dates calendrier impossibles', () => {
+  assert.throws(() => normalizeIsoDate('2026-02-30'), /Date invalide: 2026-02-30/);
+  assert.throws(() => computeContentieuxResponseDeadline('2026-13-01'), /Date invalide: 2026-13-01/);
+});
+
+test('initSchema backfill les echeances des contentieux legacy pour les alertes sur dossiers deja ouverts', () => {
+  const fx = resetFixtures();
+
+  db.pragma('foreign_keys = OFF');
+  db.exec('BEGIN TRANSACTION');
+  try {
+    db.exec(`
+      CREATE TABLE contentieux_legacy (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        numero          TEXT NOT NULL UNIQUE,
+        assujetti_id    INTEGER NOT NULL,
+        titre_id        INTEGER,
+        type            TEXT NOT NULL CHECK (type IN ('gracieux','contentieux','moratoire','controle')),
+        montant_litige  REAL,
+        date_ouverture  TEXT NOT NULL DEFAULT (date('now')),
+        date_cloture    TEXT,
+        statut          TEXT NOT NULL DEFAULT 'ouvert' CHECK (statut IN ('ouvert','instruction','clos_maintenu','degrevement_partiel','degrevement_total','non_lieu')),
+        description     TEXT,
+        decision        TEXT,
+        FOREIGN KEY (assujetti_id) REFERENCES assujettis(id),
+        FOREIGN KEY (titre_id) REFERENCES titres(id)
+      );
+
+      INSERT INTO contentieux_legacy (
+        id, numero, assujetti_id, titre_id, type, montant_litige, date_ouverture, date_cloture, statut, description, decision
+      ) VALUES (
+        999, 'CTX-LEGACY-1', ${fx.assujettiId}, ${fx.titreId}, 'contentieux', 830, '2026-01-15', NULL, 'ouvert', 'Legacy sans echeance calculee', NULL
+      );
+
+      DROP TABLE contentieux;
+      ALTER TABLE contentieux_legacy RENAME TO contentieux;
+    `);
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  } finally {
+    db.pragma('foreign_keys = ON');
+  }
+
+  initSchema();
+
+  const migrated = db.prepare(
+    `SELECT date_limite_reponse, date_limite_reponse_initiale
+     FROM contentieux
+     WHERE id = 999`,
+  ).get() as { date_limite_reponse: string | null; date_limite_reponse_initiale: string | null };
+  assert.deepEqual(migrated, {
+    date_limite_reponse: '2026-07-15',
+    date_limite_reponse_initiale: '2026-07-15',
+  });
 });
 
 test('POST /api/contentieux calcule automatiquement une échéance à 6 mois et expose le résumé d’alerte dans la liste', async () => {

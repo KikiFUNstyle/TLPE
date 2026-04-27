@@ -120,7 +120,7 @@ Ouvrir ensuite http://localhost:5173.
   - `POST /api/titres/:id/admettre-non-valeur` n'est autorisé que pour les titres `transmis_comptable`, journalise le retour comptable et bascule le statut vers `admis_en_non_valeur`
   - l'historique de recouvrement affiche la transmission comptable et le commentaire d'admission en non-valeur
 - Smoke test US6.2:
-  - `POST /api/contentieux` calcule automatiquement `date_limite_reponse = date_ouverture + 6 mois` et renvoie le résumé (`days_remaining`, `niveau_alerte`, `overdue`, `extended`)
+  - `POST /api/contentieux` calcule automatiquement `date_limite_reponse = date_ouverture + 6 mois` ; le résumé d'alerte (`days_remaining`, `niveau_alerte`, `overdue`, `extended`) est visible dans `GET /api/contentieux`
   - le scheduler quotidien exécute aussi `createContentieuxDeadlineAlerts()` avec idempotence par couple `(contentieux_id, niveau_alerte, date_echeance)`
   - `contentieux_alerts` journalise les alertes J-30 / J-7 / dépassement et `notifications_email` trace l'email gestionnaire associé (`template_code=alerte_contentieux`)
   - le dashboard affiche le volume d'alertes contentieux à <= J-30 et le nombre de dossiers en dépassement
