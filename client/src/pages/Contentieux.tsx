@@ -102,8 +102,12 @@ function sortTimeline(events: TimelineEvent[]) {
   });
 }
 
+export function clearContentieuxActionState(currentId: number | null, completedContentieuxId: number): number | null {
+  return currentId === completedContentieuxId ? null : currentId;
+}
+
 export function clearTimelineLoadingState(currentLoadingId: number | null, completedContentieuxId: number): number | null {
-  return currentLoadingId === completedContentieuxId ? null : currentLoadingId;
+  return clearContentieuxActionState(currentLoadingId, completedContentieuxId);
 }
 
 export default function ContentieuxPage() {
@@ -218,7 +222,7 @@ export default function ContentieuxPage() {
     } catch (e) {
       setErr((e as Error).message);
     } finally {
-      setDecisioningId(null);
+      setDecisioningId((current) => clearContentieuxActionState(current, contentieux.id));
     }
   };
 
@@ -269,7 +273,7 @@ export default function ContentieuxPage() {
     } catch (e) {
       setErr((e as Error).message);
     } finally {
-      setSavingTimelineId(null);
+      setSavingTimelineId((current) => clearContentieuxActionState(current, contentieuxId));
     }
   };
 
