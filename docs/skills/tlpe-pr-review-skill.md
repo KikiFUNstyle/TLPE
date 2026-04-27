@@ -99,11 +99,14 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
   - non-régression sur une base locale préexistante (pas seulement sur une base de test vierge).
 - Pour toute US de timeline / chronologie métier (contentieux, workflow, notifications), vérifier explicitement:
   - alimentation automatique des événements système (création, changement de statut, décision),
-  - ordre chronologique stable quand des événements manuels antérieurs sont saisis après coup (tri par date métier, pas seulement par date de création),
+  - les événements système utilisent leur **date métier réelle** (ex. décision/statut = date du jour ou date explicitement fournie), sans se décaler artificiellement sur la date d'un événement futur déjà saisi dans la timeline,
+  - ordre chronologique stable quand des événements manuels antérieurs ou futurs sont saisis après coup (tri par date métier, pas seulement par date de création),
   - export documentaire (PDF) cohérent avec la timeline affichée et journalisé dans `audit_log`,
   - UI sans prompt navigateur bloquant si une saisie métier structurée est attendue,
   - champs `input[type=date]` préremplis avec une date locale (pas `toISOString().slice(0, 10)` brut, sensible à l'UTC),
-  - validation calendrier stricte côté API pour toute date métier saisie manuellement (`YYYY-MM-DD` réel, pas seulement regex permissive type `2026-02-30`).
+  - validation calendrier stricte côté API pour toute date métier saisie manuellement (`YYYY-MM-DD` réel, pas seulement regex permissive type `2026-02-30`),
+  - si un événement référence une `piece_jointe_id`, vérifier que la pièce jointe appartient bien à la même entité métier (ici le même `contentieux`) avant persistance,
+  - ne jamais exposer dans l'API/PDF des métadonnées de pièce jointe (`piece_jointe_id`, nom) à un rôle qui ne pourrait pas télécharger effectivement cette pièce via `piecesJointesRouter`.
 - Commandes minimales à exécuter:
   - `npm test`
   - `npm run build`
