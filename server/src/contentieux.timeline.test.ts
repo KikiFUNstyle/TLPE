@@ -115,6 +115,13 @@ function resetFixtures() {
     ).run(hashPassword('x')).lastInsertRowid,
   );
 
+  const financierId = Number(
+    db.prepare(
+      `INSERT INTO users (email, password_hash, nom, prenom, role, actif)
+       VALUES ('financier-contentieux@tlpe.local', ?, 'Fin', 'Contentieux', 'financier', 1)`,
+    ).run(hashPassword('x')).lastInsertRowid,
+  );
+
   const contribuableId = Number(
     db.prepare(
       `INSERT INTO users (email, password_hash, nom, prenom, role, assujetti_id, actif)
@@ -136,19 +143,20 @@ function resetFixtures() {
     ).run(declarationId, assujettiId).lastInsertRowid,
   );
 
-  const pieceJointeId = Number(
-    db.prepare(
-      `INSERT INTO pieces_jointes (entite, entite_id, nom, mime_type, taille, chemin, uploaded_by)
-       VALUES ('contentieux', 9999, 'courrier.pdf', 'application/pdf', 512, 'contentieux/9999/courrier.pdf', ?)`,
-    ).run(gestionnaireId).lastInsertRowid,
-  );
-
   return {
     gestionnaire: {
       id: gestionnaireId,
       email: 'gestionnaire-contentieux@tlpe.local',
       role: 'gestionnaire' as const,
       nom: 'Gest',
+      prenom: 'Contentieux',
+      assujetti_id: null,
+    },
+    financier: {
+      id: financierId,
+      email: 'financier-contentieux@tlpe.local',
+      role: 'financier' as const,
+      nom: 'Fin',
       prenom: 'Contentieux',
       assujetti_id: null,
     },
@@ -162,8 +170,27 @@ function resetFixtures() {
     },
     assujettiId,
     titreId,
-    pieceJointeId,
   };
+}
+
+function createPieceJointe(params: {
+  entite: 'contentieux' | 'titre';
+  entiteId: number;
+  uploadedBy: number;
+  nom?: string;
+}): number {
+  return Number(
+    db.prepare(
+      `INSERT INTO pieces_jointes (entite, entite_id, nom, mime_type, taille, chemin, uploaded_by)
+       VALUES (?, ?, ?, 'application/pdf', 512, ?, ?)`,
+    ).run(
+      params.entite,
+      params.entiteId,
+      params.nom ?? 'courrier.pdf',
+      `${params.entite}/${params.entiteId}/${params.nom ?? 'courrier.pdf'}`,
+      params.uploadedBy,
+    ).lastInsertRowid,
+  );
 }
 
 test('schema contentieux inclut la table evenements_contentieux attendue', () => {
@@ -254,6 +281,11 @@ test('POST /api/contentieux/:id/decider et POST /api/contentieux/:id/evenements 
   });
   assert.equal(created.status, 201);
   const contentieuxId = (created.data as { id: number }).id;
+  const pieceJointeId = createPieceJointe({
+    entite: 'contentieux',
+    entiteId: contentieuxId,
+    uploadedBy: fx.gestionnaire.id,
+  });
 
   const manual = await request({
     method: 'POST',
@@ -264,7 +296,7 @@ test('POST /api/contentieux/:id/decider et POST /api/contentieux/:id/evenements 
       date: '2026-06-15',
       auteur: 'Service contentieux',
       description: 'Courrier recommandé reçu.',
-      piece_jointe_id: fx.pieceJointeId,
+      piece_jointe_id: pieceJointeId,
     },
   });
   assert.equal(manual.status, 201);
@@ -288,7 +320,7 @@ test('POST /api/contentieux/:id/decider et POST /api/contentieux/:id/evenements 
   assert.equal(timeline.status, 200);
   assert.deepEqual(
     (timeline.data as Array<{ type: string }>).map((event) => event.type),
-    ['ouverture', 'courrier', 'statut', 'decision'],
+    ['ouverture', 'statut', 'decision', 'courrier'],
   );
 
   const pdf = await requestBinary({
@@ -300,4 +332,198 @@ test('POST /api/contentieux/:id/decider et POST /api/contentieux/:id/evenements 
   assert.match(pdf.headers.contentType, /application\/pdf/);
   assert.match(pdf.headers.disposition, /timeline-contentieux-/);
   assert.equal(pdf.buffer.subarray(0, 4).toString('utf8'), '%PDF');
+});
+
+test('POST /api/contentieux/:id/decider conserve la date réelle de décision même si la timeline contient un événement futur', async () => {
+  const fx = resetFixtures();
+
+  const created = await request({
+    method: 'POST',
+    path: '/api/contentieux',
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      assujetti_id: fx.assujettiId,
+      titre_id: fx.titreId,
+      type: 'contentieux',
+      montant_litige: 830,
+      description: 'Ouverture du dossier.',
+    },
+  });
+  assert.equal(created.status, 201);
+  const contentieuxId = (created.data as { id: number }).id;
+
+  const futureEvent = await request({
+    method: 'POST',
+    path: `/api/contentieux/${contentieuxId}/evenements`,
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      type: 'courrier',
+      date: '2099-12-31',
+      auteur: 'Avocat',
+      description: 'Audience planifiée très en avance.',
+    },
+  });
+  assert.equal(futureEvent.status, 201);
+
+  const decided = await request({
+    method: 'POST',
+    path: `/api/contentieux/${contentieuxId}/decider`,
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      statut: 'clos_maintenu',
+      decision: 'Décision rendue à la date du jour.',
+    },
+  });
+  assert.equal(decided.status, 200);
+
+  const timeline = await request({
+    method: 'GET',
+    path: `/api/contentieux/${contentieuxId}/timeline`,
+    headers: makeAuthHeader(fx.gestionnaire),
+  });
+  assert.equal(timeline.status, 200);
+
+  const decisionEvents = (timeline.data as Array<{ type: string; date: string }>).filter((event) =>
+    event.type === 'statut' || event.type === 'decision',
+  );
+  assert.equal(decisionEvents.length, 2);
+  assert.deepEqual(
+    decisionEvents.map((event) => event.date),
+    [new Date().toISOString().slice(0, 10), new Date().toISOString().slice(0, 10)],
+  );
+});
+
+test('POST /api/contentieux/:id/evenements refuse une pièce jointe qui appartient à une autre entité ou est inaccessible', async () => {
+  const fx = resetFixtures();
+
+  const created = await request({
+    method: 'POST',
+    path: '/api/contentieux',
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      assujetti_id: fx.assujettiId,
+      titre_id: fx.titreId,
+      type: 'contentieux',
+      montant_litige: 830,
+      description: 'Ouverture du dossier.',
+    },
+  });
+  assert.equal(created.status, 201);
+  const contentieuxId = (created.data as { id: number }).id;
+
+  const titreAttachmentId = createPieceJointe({
+    entite: 'titre',
+    entiteId: fx.titreId,
+    uploadedBy: fx.gestionnaire.id,
+    nom: 'titre.pdf',
+  });
+  const otherContentieuxId = Number(
+    db.prepare(
+      `INSERT INTO contentieux (numero, assujetti_id, titre_id, type, montant_litige, description, date_ouverture)
+       VALUES ('CTX-OTHER-1', ?, ?, 'contentieux', 100, 'Autre dossier', '2026-01-01')`,
+    ).run(fx.assujettiId, fx.titreId).lastInsertRowid,
+  );
+  const foreignAttachmentId = createPieceJointe({
+    entite: 'contentieux',
+    entiteId: otherContentieuxId,
+    uploadedBy: fx.gestionnaire.id,
+    nom: 'foreign.pdf',
+  });
+
+  const wrongEntity = await request({
+    method: 'POST',
+    path: `/api/contentieux/${contentieuxId}/evenements`,
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      type: 'courrier',
+      date: '2026-06-15',
+      description: 'Tentative de liaison interdite.',
+      piece_jointe_id: titreAttachmentId,
+    },
+  });
+  assert.equal(wrongEntity.status, 400);
+
+  const wrongContentieux = await request({
+    method: 'POST',
+    path: `/api/contentieux/${contentieuxId}/evenements`,
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      type: 'courrier',
+      date: '2026-06-15',
+      description: 'Tentative de liaison d un autre dossier.',
+      piece_jointe_id: foreignAttachmentId,
+    },
+  });
+  assert.equal(wrongContentieux.status, 400);
+
+  const sameContentieuxAttachmentId = createPieceJointe({
+    entite: 'contentieux',
+    entiteId: contentieuxId,
+    uploadedBy: fx.gestionnaire.id,
+    nom: 'same-contentieux.pdf',
+  });
+
+  const financierAttempt = await request({
+    method: 'POST',
+    path: `/api/contentieux/${contentieuxId}/evenements`,
+    headers: makeAuthHeader(fx.financier),
+    body: {
+      type: 'courrier',
+      date: '2026-06-15',
+      description: 'Tentative par financier sans accès à la PJ contentieux.',
+      piece_jointe_id: sameContentieuxAttachmentId,
+    },
+  });
+  assert.equal(financierAttempt.status, 403);
+});
+
+test('GET /api/contentieux/:id/timeline masque les métadonnées de pièce jointe pour un financier', async () => {
+  const fx = resetFixtures();
+
+  const created = await request({
+    method: 'POST',
+    path: '/api/contentieux',
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      assujetti_id: fx.assujettiId,
+      titre_id: fx.titreId,
+      type: 'contentieux',
+      montant_litige: 830,
+      description: 'Ouverture du dossier.',
+    },
+  });
+  assert.equal(created.status, 201);
+  const contentieuxId = (created.data as { id: number }).id;
+  const pieceJointeId = createPieceJointe({
+    entite: 'contentieux',
+    entiteId: contentieuxId,
+    uploadedBy: fx.gestionnaire.id,
+    nom: 'secret-contentieux.pdf',
+  });
+
+  const manual = await request({
+    method: 'POST',
+    path: `/api/contentieux/${contentieuxId}/evenements`,
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      type: 'courrier',
+      date: '2026-06-15',
+      auteur: 'Service contentieux',
+      description: 'Courrier avec pièce.',
+      piece_jointe_id: pieceJointeId,
+    },
+  });
+  assert.equal(manual.status, 201);
+
+  const timeline = await request({
+    method: 'GET',
+    path: `/api/contentieux/${contentieuxId}/timeline`,
+    headers: makeAuthHeader(fx.financier),
+  });
+  assert.equal(timeline.status, 200);
+  const eventWithAttachment = (timeline.data as Array<{ type: string; piece_jointe_id: number | null; piece_jointe_nom?: string | null }>).find(
+    (event) => event.type === 'courrier',
+  );
+  assert.equal(eventWithAttachment?.piece_jointe_id ?? null, null);
+  assert.equal(eventWithAttachment?.piece_jointe_nom ?? null, null);
 });

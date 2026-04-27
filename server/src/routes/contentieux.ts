@@ -82,6 +82,8 @@ type TimelineEventRow = {
   piece_jointe_id: number | null;
   created_at: string;
   piece_jointe_nom: string | null;
+  piece_jointe_entite?: string | null;
+  piece_jointe_entite_id?: number | null;
 };
 
 const eventTypeLabels: Record<TimelineEventType, string> = {
@@ -186,7 +188,7 @@ function insertTimelineEvent(params: {
 function loadTimeline(contentieuxId: number): TimelineEventRow[] {
   return db
     .prepare(
-      `SELECT e.*, p.nom AS piece_jointe_nom
+      `SELECT e.*, p.nom AS piece_jointe_nom, p.entite AS piece_jointe_entite, p.entite_id AS piece_jointe_entite_id
        FROM evenements_contentieux e
        LEFT JOIN pieces_jointes p ON p.id = e.piece_jointe_id AND p.deleted_at IS NULL
        WHERE e.contentieux_id = ?
@@ -195,27 +197,40 @@ function loadTimeline(contentieuxId: number): TimelineEventRow[] {
     .all(contentieuxId) as TimelineEventRow[];
 }
 
-function getNextDecisionEventDate(contentieuxId: number): string {
-  const latest = db
-    .prepare(
-      `SELECT date
-       FROM evenements_contentieux
-       WHERE contentieux_id = ?
-       ORDER BY date DESC, created_at DESC, id DESC
-       LIMIT 1`,
-    )
-    .get(contentieuxId) as { date: string } | undefined;
-  const today = todayIsoDate();
-  if (!latest?.date) return today;
-  return latest.date > today ? latest.date : today;
+function redactTimelineForUser(user: Request['user'], timeline: TimelineEventRow[]): TimelineEventRow[] {
+  return timeline.map((event) => {
+    if (!event.piece_jointe_id) return event;
+    if (event.piece_jointe_entite === 'contentieux' && user?.role === 'financier') {
+      return {
+        ...event,
+        piece_jointe_id: null,
+        piece_jointe_nom: null,
+      };
+    }
+    return event;
+  });
 }
 
-function ensurePieceJointeExists(pieceJointeId: number | null | undefined): boolean {
-  if (!pieceJointeId) return true;
+function timelineDecisionEventDate(): string {
+  return todayIsoDate();
+}
+
+function loadAccessiblePieceJointeForTimeline(
+  pieceJointeId: number,
+  contentieux: ContentieuxRow,
+  user: Request['user'],
+): { id: number; nom: string | null } | null {
   const row = db
-    .prepare('SELECT id FROM pieces_jointes WHERE id = ? AND deleted_at IS NULL')
-    .get(pieceJointeId) as { id: number } | undefined;
-  return !!row;
+    .prepare(
+      `SELECT id, nom, entite, entite_id
+       FROM pieces_jointes
+       WHERE id = ? AND deleted_at IS NULL`,
+    )
+    .get(pieceJointeId) as { id: number; nom: string | null; entite: string; entite_id: number } | undefined;
+  if (!row) return null;
+  if (row.entite !== 'contentieux' || row.entite_id !== contentieux.id) return null;
+  if (user?.role === 'financier') return null;
+  return { id: row.id, nom: row.nom };
 }
 
 function buildTimelinePdfBuffer(contentieux: ContentieuxRow, events: TimelineEventRow[]) {
@@ -349,7 +364,7 @@ contentieuxRouter.post('/', requireRole('admin', 'gestionnaire', 'contribuable')
 contentieuxRouter.get('/:id/timeline', (req, res) => {
   const contentieux = ensureContentieuxAccess(req, res);
   if (!contentieux) return;
-  res.json(loadTimeline(contentieux.id));
+  res.json(redactTimelineForUser(req.user, loadTimeline(contentieux.id)));
 });
 
 contentieuxRouter.post('/:id/evenements', requireRole('admin', 'gestionnaire', 'financier'), (req, res) => {
@@ -358,8 +373,11 @@ contentieuxRouter.post('/:id/evenements', requireRole('admin', 'gestionnaire', '
 
   const parsed = manualEventSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-  if (!ensurePieceJointeExists(parsed.data.piece_jointe_id)) {
-    return res.status(400).json({ error: 'Pièce jointe introuvable' });
+  const linkedPieceJointe = parsed.data.piece_jointe_id
+    ? loadAccessiblePieceJointeForTimeline(parsed.data.piece_jointe_id, contentieux, req.user)
+    : null;
+  if (parsed.data.piece_jointe_id && !linkedPieceJointe) {
+    return res.status(req.user?.role === 'financier' ? 403 : 400).json({ error: 'Pièce jointe introuvable ou inaccessible' });
   }
 
   const eventId = db.transaction(() => {
@@ -369,7 +387,7 @@ contentieuxRouter.post('/:id/evenements', requireRole('admin', 'gestionnaire', '
       date: parsed.data.date,
       auteur: parsed.data.auteur?.trim() || displayUser(req.user),
       description: parsed.data.description,
-      pieceJointeId: parsed.data.piece_jointe_id ?? null,
+      pieceJointeId: linkedPieceJointe?.id ?? null,
     });
 
     logAudit({
@@ -381,7 +399,7 @@ contentieuxRouter.post('/:id/evenements', requireRole('admin', 'gestionnaire', '
         event_id: createdId,
         event_type: parsed.data.type,
         event_date: parsed.data.date,
-        piece_jointe_id: parsed.data.piece_jointe_id ?? null,
+        piece_jointe_id: linkedPieceJointe?.id ?? null,
       },
       ip: req.ip ?? null,
     });
@@ -401,7 +419,7 @@ contentieuxRouter.post('/:id/decider', requireRole('admin', 'gestionnaire', 'fin
 
   const closed = parsed.data.statut !== 'instruction';
   const actor = displayUser(req.user);
-  const eventDate = getNextDecisionEventDate(contentieux.id);
+  const eventDate = timelineDecisionEventDate();
 
   db.transaction(() => {
     db.prepare(
