@@ -116,6 +116,10 @@ function createDispositifFromControle(input: z.infer<typeof createDispositifSche
   return { dispositifId, identifiant };
 }
 
+function isForeignKeyConstraintError(error: unknown): boolean {
+  return error instanceof Error && /foreign key constraint failed/i.test(error.message);
+}
+
 function ensureDispositifExists(dispositifId: number) {
   return db.prepare('SELECT id, identifiant, surface, nombre_faces FROM dispositifs WHERE id = ?').get(dispositifId) as
     | { id: number; identifiant: string; surface: number; nombre_faces: number }
@@ -194,9 +198,18 @@ controlesRouter.post('/', (req, res) => {
   let createdDispositifIdentifiant: string | null = null;
 
   if (input.create_dispositif) {
-    const created = createDispositifFromControle(input.create_dispositif, userId);
-    dispositifId = created.dispositifId;
-    createdDispositifIdentifiant = created.identifiant;
+    try {
+      const created = createDispositifFromControle(input.create_dispositif, userId);
+      dispositifId = created.dispositifId;
+      createdDispositifIdentifiant = created.identifiant;
+    } catch (error) {
+      if (isForeignKeyConstraintError(error)) {
+        return res.status(400).json({
+          error: 'Référentiel invalide pour le dispositif créé (assujetti, type ou zone introuvable)',
+        });
+      }
+      throw error;
+    }
   } else if (dispositifId !== null) {
     const existingDispositif = ensureDispositifExists(dispositifId);
     if (!existingDispositif) {

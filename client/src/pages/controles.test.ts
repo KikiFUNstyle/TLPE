@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  acquireControleSyncLock,
   canAccessControles,
   controleSubmissionMode,
   readNavigatorOnline,
@@ -65,4 +66,12 @@ test('readNavigatorOnline lit l’état navigateur avec fallback SSR sûr', () =
     value: originalNavigator,
     configurable: true,
   });
+});
+
+test('acquireControleSyncLock empêche une double synchronisation concurrente', () => {
+  const syncRef = { current: false };
+
+  assert.equal(acquireControleSyncLock(syncRef), true);
+  assert.equal(syncRef.current, true);
+  assert.equal(acquireControleSyncLock(syncRef), false);
 });

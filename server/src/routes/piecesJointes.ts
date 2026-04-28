@@ -17,6 +17,7 @@ import { db, logAudit } from '../db';
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const MAX_ENTITY_TOTAL_SIZE = 50 * 1024 * 1024;
 const MIME_WHITELIST = new Set(['image/jpeg', 'image/png', 'application/pdf']);
+const CONTROLE_MIME_WHITELIST = new Set(['image/jpeg', 'image/png']);
 const UPLOADS_DIR = path.resolve(__dirname, '..', '..', 'data', 'uploads');
 
 const storageMode = (process.env.TLPE_UPLOAD_STORAGE || 'local').trim().toLowerCase();
@@ -130,6 +131,13 @@ export function detectMimeFromMagicBytes(buffer: Buffer): string | null {
   }
 
   return null;
+}
+
+export function isMimeAllowedForEntity(entite: 'dispositif' | 'declaration' | 'contentieux' | 'titre' | 'controle', mimeType: string): boolean {
+  if (entite === 'controle') {
+    return CONTROLE_MIME_WHITELIST.has(mimeType);
+  }
+  return MIME_WHITELIST.has(mimeType);
 }
 
 function buildStorageRelativePath(params: {
@@ -324,8 +332,13 @@ piecesJointesRouter.post('/', requireRole('admin', 'gestionnaire', 'controleur',
     const { entite, entite_id } = parsed.data;
     const typePiece = resolveTypePiece(entite, parsed.data.type_piece, req.user);
 
-    if (!MIME_WHITELIST.has(file.mimetype)) {
-      return res.status(400).json({ error: 'Type de fichier non autorise (jpeg, png, pdf uniquement)' });
+    if (!isMimeAllowedForEntity(entite, file.mimetype)) {
+      return res.status(400).json({
+        error:
+          entite === 'controle'
+            ? 'Type de fichier non autorise pour un contrôle (photos jpeg/png uniquement)'
+            : 'Type de fichier non autorise (jpeg, png, pdf uniquement)',
+      });
     }
 
     const detectedMime = detectMimeFromMagicBytes(file.buffer);

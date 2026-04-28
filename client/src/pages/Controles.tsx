@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api';
 import { useAuth, type Role } from '../auth';
 import { AddressAutocomplete, type AddressSuggestion } from '../components/AddressAutocomplete';
@@ -137,6 +137,12 @@ export function shouldQueueControleOffline(isOnline: boolean): boolean {
 export function readNavigatorOnline(): boolean {
   if (typeof navigator === 'undefined') return true;
   return navigator.onLine;
+}
+
+export function acquireControleSyncLock(syncRef: { current: boolean }): boolean {
+  if (syncRef.current) return false;
+  syncRef.current = true;
+  return true;
 }
 
 function todayInputValue(): string {
@@ -305,6 +311,7 @@ export default function Controles() {
   const [selectedPhotos, setSelectedPhotos] = useState<File[]>([]);
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const syncInFlightRef = useRef(false);
   const [queuedCount, setQueuedCount] = useState(0);
   const [isOnline, setIsOnline] = useState(() => readNavigatorOnline());
   const [err, setErr] = useState<string | null>(null);
@@ -348,6 +355,9 @@ export default function Controles() {
 
   const handleOnline = useCallback(() => {
     setIsOnline(true);
+    if (!acquireControleSyncLock(syncInFlightRef)) {
+      return;
+    }
     setInfo('Connexion rétablie, synchronisation des constats en attente…');
     void (async () => {
       setSyncing(true);
@@ -363,6 +373,7 @@ export default function Controles() {
       } catch (error) {
         setErr((error as Error).message);
       } finally {
+        syncInFlightRef.current = false;
         setSyncing(false);
       }
     })();

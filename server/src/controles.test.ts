@@ -390,6 +390,95 @@ test('POST /api/pieces-jointes accepte les photos de contrôle pour un rôle con
   }
 });
 
+test('POST /api/controles retourne 400 quand la création de dispositif référence des FK invalides', async () => {
+  const fx = resetFixtures();
+
+  const response = await request({
+    method: 'POST',
+    path: '/api/controles',
+    headers: makeAuthHeader(fx.controleur),
+    body: {
+      date_controle: '2026-05-13',
+      latitude: 48.857,
+      longitude: 2.353,
+      surface_mesuree: 6,
+      nombre_faces_mesurees: 1,
+      ecart_detecte: true,
+      ecart_description: 'Dispositif non déclaré constaté sur site',
+      statut: 'saisi',
+      create_dispositif: {
+        assujetti_id: 999999,
+        type_id: fx.typeId,
+        zone_id: fx.zoneId,
+        adresse_rue: '99 avenue du Terrain',
+        adresse_cp: '75002',
+        adresse_ville: 'Paris',
+        latitude: 48.857,
+        longitude: 2.353,
+        surface: 6,
+        nombre_faces: 1,
+        statut: 'controle',
+        notes: 'Créé depuis un constat terrain',
+      },
+    },
+  });
+
+  assert.equal(response.status, 400);
+  assert.match(String((response.data as { error: string }).error), /assujetti|type|zone|référentiel|referentiel/i);
+});
+
+test('POST /api/pieces-jointes refuse au contrôleur les PDF sur une entité contrôle', async () => {
+  const fx = resetFixtures();
+
+  const created = await request({
+    method: 'POST',
+    path: '/api/controles',
+    headers: makeAuthHeader(fx.controleur),
+    body: {
+      dispositif_id: fx.dispositifId,
+      date_controle: '2026-05-12',
+      latitude: 48.8566,
+      longitude: 2.3522,
+      surface_mesuree: 13.5,
+      nombre_faces_mesurees: 2,
+      ecart_detecte: true,
+      ecart_description: 'Pièce PDF terrain interdite',
+      statut: 'saisi',
+    },
+  });
+
+  assert.equal(created.status, 201);
+  const controleId = (created.data as { id: number }).id;
+
+  const app = createApp();
+  const server = await new Promise<import('node:http').Server>((resolve) => {
+    const s = app.listen(0, () => resolve(s));
+  });
+  const address = server.address();
+  if (!address || typeof address === 'string') {
+    server.close();
+    throw new Error('Impossible de determiner le port de test');
+  }
+
+  try {
+    const form = new FormData();
+    form.set('entite', 'controle');
+    form.set('entite_id', String(controleId));
+    form.set('fichier', new Blob([Buffer.from('%PDF-1.7\n', 'utf8')], { type: 'application/pdf' }), 'controle.pdf');
+
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/pieces-jointes`, {
+      method: 'POST',
+      headers: makeAuthHeader(fx.controleur),
+      body: form,
+    });
+
+    assert.equal(response.status, 400);
+    assert.match(await response.text(), /jpeg|png|photo/i);
+  } finally {
+    server.close();
+  }
+});
+
 test('POST /api/pieces-jointes refuse au contrôleur les pièces jointes hors entité contrôle', async () => {
   const fx = resetFixtures();
 
