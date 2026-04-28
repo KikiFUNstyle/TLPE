@@ -49,6 +49,9 @@ async function request(params: {
       status: res.status,
       contentType,
       text,
+      contentDisposition: res.headers.get('content-disposition'),
+      generatedAt: res.headers.get('x-tlpe-generated-at'),
+      contentHash: res.headers.get('x-tlpe-content-hash'),
       data: contentType.includes('application/json') && text ? JSON.parse(text) : null,
     };
   } finally {
@@ -63,6 +66,7 @@ function resetFixtures() {
     db.exec('DELETE FROM pesv2_export_titres');
     db.exec('DELETE FROM pesv2_exports');
     db.exec('DELETE FROM declaration_receipts');
+    db.exec('DELETE FROM declaration_sequences');
     db.exec('DELETE FROM notifications_email');
     db.exec('DELETE FROM invitation_magic_links');
     db.exec('DELETE FROM campagne_jobs');
@@ -71,6 +75,7 @@ function resetFixtures() {
     db.exec('DELETE FROM evenements_contentieux');
     db.exec('DELETE FROM contentieux_alerts');
     db.exec('DELETE FROM contentieux');
+    db.exec('DELETE FROM contentieux_sequences');
     db.exec('DELETE FROM titre_mises_en_demeure');
     db.exec('DELETE FROM titre_mises_en_demeure_sequences');
     db.exec('DELETE FROM pieces_jointes');
@@ -511,51 +516,268 @@ test('POST /api/pieces-jointes refuse au contrôleur les pièces jointes hors en
   }
 });
 
-test('POST /api/controles rollbacke la création de dispositif si l’insertion du contrôle échoue ensuite', async () => {
+test('POST /api/controles/report renvoie un PDF horodaté avec hash et audit', async () => {
   const fx = resetFixtures();
-  const beforeCount = (
-    db.prepare(`SELECT COUNT(*) AS count FROM dispositifs WHERE notes = 'rollback-check'`).get() as { count: number }
-  ).count;
 
-  const response = await request({
+  const created = await request({
     method: 'POST',
     path: '/api/controles',
-    headers: makeAuthHeader({
-      ...fx.controleur,
-      id: 999999,
-      email: 'ghost-controleur@tlpe.local',
-    }),
+    headers: makeAuthHeader(fx.controleur),
     body: {
-      date_controle: '2026-05-13',
-      latitude: 48.857,
-      longitude: 2.353,
-      surface_mesuree: 6,
-      nombre_faces_mesurees: 1,
+      dispositif_id: fx.dispositifId,
+      date_controle: '2026-05-12',
+      latitude: 48.8566,
+      longitude: 2.3522,
+      surface_mesuree: 14.5,
+      nombre_faces_mesurees: 2,
       ecart_detecte: true,
-      ecart_description: 'Rollback attendu si l’agent est invalide',
-      statut: 'saisi',
-      create_dispositif: {
-        assujetti_id: fx.assujettiId,
-        type_id: fx.typeId,
-        zone_id: fx.zoneId,
-        adresse_rue: '99 avenue du Terrain',
-        adresse_cp: '75002',
-        adresse_ville: 'Paris',
-        latitude: 48.857,
-        longitude: 2.353,
-        surface: 6,
-        nombre_faces: 1,
-        statut: 'controle',
-        notes: 'rollback-check',
-      },
+      ecart_description: 'Surface mesurée supérieure à la fiche déclarée',
+      statut: 'cloture',
+    },
+  });
+  assert.equal(created.status, 201);
+  const controleId = (created.data as { id: number }).id;
+
+  const report = await request({
+    method: 'POST',
+    path: '/api/controles/report',
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      controle_ids: [controleId],
+      format: 'pdf',
     },
   });
 
-  assert.equal(response.status, 400);
-  assert.match(String((response.data as { error: string }).error), /assujetti|type|zone|référentiel|referentiel/i);
+  assert.equal(report.status, 200);
+  assert.match(report.contentType, /application\/pdf/);
+  assert.match(report.contentDisposition ?? '', /rapport-controles-2026-05-12\.pdf/);
+  assert.equal(report.generatedAt, '2026-05-12');
+  assert.match(report.contentHash ?? '', /^[a-f0-9]{64}$/);
 
-  const afterCount = (
-    db.prepare(`SELECT COUNT(*) AS count FROM dispositifs WHERE notes = 'rollback-check'`).get() as { count: number }
-  ).count;
-  assert.equal(afterCount, beforeCount);
+  const audit = db.prepare(
+    `SELECT details FROM audit_log WHERE action = 'export-rapport-controle' ORDER BY id DESC LIMIT 1`,
+  ).get() as { details: string } | undefined;
+  assert.ok(audit);
+  const details = JSON.parse(audit!.details) as { format: string; count: number; generated_at: string; content_hash: string };
+  assert.equal(details.format, 'pdf');
+  assert.equal(details.count, 1);
+  assert.equal(details.generated_at, '2026-05-12');
+  assert.equal(details.content_hash, report.contentHash);
+});
+
+test('POST /api/controles/report refuse un constat non clôturé', async () => {
+  const fx = resetFixtures();
+
+  const created = await request({
+    method: 'POST',
+    path: '/api/controles',
+    headers: makeAuthHeader(fx.controleur),
+    body: {
+      dispositif_id: fx.dispositifId,
+      date_controle: '2026-05-12',
+      latitude: 48.8566,
+      longitude: 2.3522,
+      surface_mesuree: 12.5,
+      nombre_faces_mesurees: 2,
+      ecart_detecte: true,
+      ecart_description: 'Constat encore en cours',
+      statut: 'saisi',
+    },
+  });
+  assert.equal(created.status, 201);
+  const controleId = (created.data as { id: number }).id;
+
+  const report = await request({
+    method: 'POST',
+    path: '/api/controles/report',
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      controle_ids: [controleId],
+      format: 'pdf',
+    },
+  });
+
+  assert.equal(report.status, 409);
+  assert.match(String((report.data as { error: string }).error), /clôtur/i);
+});
+
+test('POST /api/controles/proposer-rectification crée une déclaration d’office à partir des écarts sélectionnés', async () => {
+  const fx = resetFixtures();
+
+  const created = await request({
+    method: 'POST',
+    path: '/api/controles',
+    headers: makeAuthHeader(fx.controleur),
+    body: {
+      dispositif_id: fx.dispositifId,
+      date_controle: '2026-05-12',
+      latitude: 48.8566,
+      longitude: 2.3522,
+      surface_mesuree: 14.5,
+      nombre_faces_mesurees: 2,
+      ecart_detecte: true,
+      ecart_description: 'Rectification demandée suite au contrôle',
+      statut: 'cloture',
+    },
+  });
+  assert.equal(created.status, 201);
+  const controleId = (created.data as { id: number }).id;
+
+  const response = await request({
+    method: 'POST',
+    path: '/api/controles/proposer-rectification',
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      controle_ids: [controleId],
+      mode: 'declaration_office',
+    },
+  });
+
+  assert.equal(response.status, 201);
+  const body = response.data as {
+    ok: boolean;
+    mode: string;
+    created: Array<{ declaration_id: number; numero: string; assujetti_id: number; annee: number; statut: string }>;
+    conflicts: Array<unknown>;
+  };
+  assert.equal(body.ok, true);
+  assert.equal(body.mode, 'declaration_office');
+  assert.equal(body.created.length, 1);
+  assert.equal(body.conflicts.length, 0);
+  assert.match(body.created[0].numero, /^DEC-2026-\d{6}$/);
+  assert.equal(body.created[0].assujetti_id, fx.assujettiId);
+  assert.equal(body.created[0].annee, 2026);
+  assert.equal(body.created[0].statut, 'en_instruction');
+
+  const declaration = db.prepare(
+    `SELECT numero, statut, commentaires FROM declarations WHERE id = ?`,
+  ).get(body.created[0].declaration_id) as { numero: string; statut: string; commentaires: string | null } | undefined;
+  assert.ok(declaration);
+  assert.equal(declaration?.numero, body.created[0].numero);
+  assert.equal(declaration?.statut, 'en_instruction');
+  assert.match(declaration?.commentaires ?? '', /Contrôles source : #/);
+
+  const lignes = db.prepare(
+    `SELECT dispositif_id, surface_declaree, nombre_faces FROM lignes_declaration WHERE declaration_id = ?`,
+  ).all(body.created[0].declaration_id) as Array<{ dispositif_id: number; surface_declaree: number; nombre_faces: number }>;
+  assert.equal(lignes.length, 1);
+  assert.equal(lignes[0].dispositif_id, fx.dispositifId);
+  assert.equal(lignes[0].surface_declaree, 14.5);
+  assert.equal(lignes[0].nombre_faces, 2);
+
+  const declarationSequence = db.prepare(
+    `SELECT annee, numero_ordre FROM declaration_sequences WHERE annee = 2026 ORDER BY numero_ordre DESC LIMIT 1`,
+  ).get() as { annee: number; numero_ordre: number } | undefined;
+  assert.ok(declarationSequence);
+  assert.equal(declarationSequence?.annee, 2026);
+  assert.equal(declarationSequence?.numero_ordre, 1);
+});
+
+test('POST /api/controles/lancer-redressement retourne 409 si aucun assujetti exploitable n’est trouvé sur les contrôles sélectionnés', async () => {
+  const fx = resetFixtures();
+
+  const controleId = Number(
+    db.prepare(
+      `INSERT INTO controles (
+        dispositif_id, agent_id, date_controle, latitude, longitude,
+        surface_mesuree, nombre_faces_mesurees, ecart_detecte, ecart_description, statut
+      ) VALUES (NULL, ?, '2026-05-12', 48.8566, 2.3522, 15, 2, 1, 'Contrôle orphelin sans assujetti exploitable', 'cloture')`,
+    ).run(fx.controleur.id).lastInsertRowid,
+  );
+
+  const response = await request({
+    method: 'POST',
+    path: '/api/controles/lancer-redressement',
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      controle_ids: [controleId],
+    },
+  });
+
+  assert.equal(response.status, 409);
+  const body = response.data as {
+    ok: boolean;
+    error: string;
+    created: Array<{ contentieux_id: number; numero: string; assujetti_id: number; annee: number; montant_litige: number }>;
+  };
+  assert.equal(body.ok, false);
+  assert.match(body.error, /Aucun redressement créé/i);
+  assert.equal(body.created.length, 0);
+
+  const contentieuxCount = db.prepare(`SELECT COUNT(*) AS count FROM contentieux`).get() as { count: number };
+  assert.equal(contentieuxCount.count, 0);
+});
+
+test('POST /api/controles/lancer-redressement ouvre un contentieux de contrôle avec échéance et audit', async () => {
+  const fx = resetFixtures();
+
+  const created = await request({
+    method: 'POST',
+    path: '/api/controles',
+    headers: makeAuthHeader(fx.controleur),
+    body: {
+      dispositif_id: fx.dispositifId,
+      date_controle: '2026-05-12',
+      latitude: 48.8566,
+      longitude: 2.3522,
+      surface_mesuree: 15,
+      nombre_faces_mesurees: 2,
+      ecart_detecte: true,
+      ecart_description: 'Ouverture automatique d’un redressement attendue',
+      statut: 'cloture',
+    },
+  });
+  assert.equal(created.status, 201);
+  const controleId = (created.data as { id: number }).id;
+
+  const response = await request({
+    method: 'POST',
+    path: '/api/controles/lancer-redressement',
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      controle_ids: [controleId],
+    },
+  });
+
+  assert.equal(response.status, 201);
+  const body = response.data as {
+    ok: boolean;
+    created: Array<{ contentieux_id: number; numero: string; assujetti_id: number; annee: number; montant_litige: number }>;
+  };
+  assert.equal(body.ok, true);
+  assert.equal(body.created.length, 1);
+  assert.match(body.created[0].numero, /^CTX-2026-\d{5}$/);
+  assert.equal(body.created[0].assujetti_id, fx.assujettiId);
+  assert.equal(body.created[0].annee, 2026);
+  assert.ok(body.created[0].montant_litige > 0);
+
+  const contentieux = db.prepare(
+    `SELECT numero, type, date_ouverture, date_limite_reponse, date_limite_reponse_initiale FROM contentieux WHERE id = ?`,
+  ).get(body.created[0].contentieux_id) as {
+    numero: string;
+    type: string;
+    date_ouverture: string;
+    date_limite_reponse: string | null;
+    date_limite_reponse_initiale: string | null;
+  } | undefined;
+  assert.ok(contentieux);
+  assert.equal(contentieux?.numero, body.created[0].numero);
+  assert.equal(contentieux?.type, 'controle');
+  assert.equal(contentieux?.date_ouverture, '2026-05-12');
+  assert.equal(contentieux?.date_limite_reponse, '2026-11-12');
+  assert.equal(contentieux?.date_limite_reponse_initiale, '2026-11-12');
+
+  const contentieuxSequence = db.prepare(
+    `SELECT annee, numero_ordre FROM contentieux_sequences WHERE annee = 2026 ORDER BY numero_ordre DESC LIMIT 1`,
+  ).get() as { annee: number; numero_ordre: number } | undefined;
+  assert.ok(contentieuxSequence);
+  assert.equal(contentieuxSequence?.annee, 2026);
+  assert.equal(contentieuxSequence?.numero_ordre, 1);
+
+  const timeline = db.prepare(
+    `SELECT type, description FROM evenements_contentieux WHERE contentieux_id = ? ORDER BY id ASC`,
+  ).all(body.created[0].contentieux_id) as Array<{ type: string; description: string }>;
+  assert.equal(timeline.length, 1);
+  assert.equal(timeline[0].type, 'ouverture');
+  assert.match(timeline[0].description, /Contrôles source : #/);
 });

@@ -55,6 +55,7 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
 - Pour toute assertion de sécurité sur un PDF généré, ne jamais se contenter d'un `buffer.includes(...)` sur le binaire brut : vérifier la donnée avant rendu ou décompresser les flux PDF compressés pour éviter un faux positif.
 - Pour toute US de mise en demeure sur titres, vérifier explicitement en review :
   - route manuelle sécurisée (`POST /api/titres/:id/mise-en-demeure`) + route batch sécurisée (`POST /api/titres/mises-en-demeure/batch`),
+- Pour toute route batch métier qui peut ignorer des entrées invalides ou non rattachées (`redressement`, `rectification`, exports groupés, etc.), vérifier qu'un résultat vide ne renvoie jamais `201`/succès silencieux : exiger une réponse explicite de type `409/4xx` avec `created.length === 0` et un test de non-régression sans effet de bord.
   - numérotation unique et stable via table dédiée (`titre_mises_en_demeure`) avec réutilisation idempotente si un PDF existe déjà pour le titre,
   - séquence de numérotation résistante à la concurrence (pas de `COUNT(*) + 1`) et migration runtime/schéma dédiée si un compteur persistant est introduit,
   - archivage du PDF dans `pieces_jointes` avec entité `titre`, `download_url` renvoyé par l'API et traçabilité `audit_log` dédiée,
@@ -206,7 +207,9 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
   - le sélecteur de fichiers UI pour `entite='controle'` doit rester aligné avec la validation backend (photos `jpeg/png` uniquement, jamais `application/pdf`),
   - les uploads de pièces jointes `entite='controle'` doivent être limités aux photos terrain (`image/jpeg|image/png`), même si d’autres entités métier autorisent aussi les PDF,
   - la création d’un dispositif depuis un constat terrain doit convertir tout échec FK SQLite (`assujetti/type/zone` introuvable) en réponse 4xx métier exploitable, jamais en 500 brut,
-  - la création du dispositif, l’insertion du contrôle, la mise à jour de statut et les audits associés doivent être enveloppés dans une transaction SQLite unique pour éviter tout write partiel si une étape aval échoue.
+  - la création du dispositif, l’insertion du contrôle, la mise à jour de statut et les audits associés doivent être enveloppés dans une transaction SQLite unique pour éviter tout write partiel si une étape aval échoue,
+  - pour toute US de rapport de contrôle / rectification / redressement, refuser explicitement les constats non `cloture` avant export PDF/XLSX, génération de déclaration d’office/demande contribuable ou ouverture de contentieux, avec test 409 de non-régression.
+  - toute numérotation métier créée en lot depuis ces actions (`DEC-*`, `CTX-*`) doit être réservée via une table de séquence/persistance dédiée plutôt qu’un `COUNT(*) + 1`, avec backfill legacy et couverture de test.
 
 ## Format de sortie review
 

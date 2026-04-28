@@ -92,7 +92,7 @@ Chaque US fait l'objet d'une issue GitHub détaillée (contexte spec, critères 
 |---|---|---|---|---|---|
 | [#30](https://github.com/KikiFUNstyle/TLPE/issues/30) | US7.1 Saisie constat terrain (web + géoloc + photos) | §9.1, §9.2 | P5 | P1 | 🚫 |
 | [#31](https://github.com/KikiFUNstyle/TLPE/issues/31) | US7.2 Application mobile iOS/Android | §9.2 | P5 | P2 | 🚫 |
-| [#32](https://github.com/KikiFUNstyle/TLPE/issues/32) | US7.3 Rapport de contrôle automatique | §9.3 | P5 | P1 | 🚫 |
+| [#32](https://github.com/KikiFUNstyle/TLPE/issues/32) | US7.3 Rapport de contrôle automatique | §9.3 | P5 | P1 | ✅ |
 
 ## EPIC 8 — Reporting (§10)
 
