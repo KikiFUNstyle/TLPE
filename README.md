@@ -184,7 +184,8 @@ Routes backend (`/api/pieces-jointes`), authentifiées:
 
 - `POST /api/pieces-jointes` (multipart/form-data)
   - champs requis: `entite` (`dispositif|declaration|contentieux|titre|controle`), `entite_id`, `fichier`
-  - MIME autorisés: `image/jpeg`, `image/png`, `application/pdf`
+  - MIME autorisés globaux: `image/jpeg`, `image/png`, `application/pdf`
+  - exception métier: `entite=controle` est réservé aux photos terrain (`image/jpeg|image/png` uniquement, jamais PDF)
   - limites: 10 Mo par fichier, 50 Mo cumulés par entité (hors pièces soft-delete)
 - `GET /api/pieces-jointes/:id`
   - télécharge le fichier (`Content-Disposition: attachment`)

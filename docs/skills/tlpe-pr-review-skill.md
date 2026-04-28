@@ -198,6 +198,7 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
   - restitution utilisateur exploitable des erreurs Zod côté API/UI (premier message clair, pas seulement un objet sérialisé `[object Object]`),
   - date par défaut des formulaires `input[type=date]` calculée en local browser (pas `toISOString().slice(0,10)` brut, sensible à l’UTC),
   - si un mode hors-ligne navigateur est annoncé, vérifier IndexedDB + synchronisation au retour réseau + présence d’un smoke test de démarrage/service worker, sans confondre cela avec une application mobile native hors périmètre MVP,
+  - le service worker ne doit mettre en cache que des réponses GET same-origin réussies et pertinentes pour le shell statique (pas les documents HTML de navigation ni des réponses en erreur/transitoires),
   - le service worker ne doit renvoyer `index.html` qu’aux requêtes de navigation ; un asset statique manquant/offline ne doit pas recevoir du HTML en fallback,
   - l’état `en ligne / hors ligne` affiché dans l’UI doit être réactif (`useState` + listeners `online`/`offline`), pas une simple lecture ponctuelle de `navigator.onLine` dans le rendu,
   - la synchronisation des brouillons hors-ligne doit être protégée contre les doubles déclenchements concurrents (verrou/ref explicite côté UI ou idempotence équivalente) pour éviter les doublons de constats au retour réseau,

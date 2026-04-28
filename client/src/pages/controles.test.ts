@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import {
   acquireControleSyncLock,
   canAccessControles,
@@ -82,6 +84,15 @@ test('acquireControleSyncLock empêche une double synchronisation concurrente', 
 test('le sélecteur de fichiers terrain n’autorise que les photos jpeg/png', () => {
   assert.equal(CONTROLE_FILE_ACCEPT, 'image/jpeg,image/png');
   assert.equal(CONTROLE_FILE_ACCEPT.includes('application/pdf'), false);
+});
+
+test('le service worker ne met en cache que les réponses GET same-origin valides', () => {
+  const swPath = path.resolve(process.cwd(), 'public/sw.js');
+  const source = fs.readFileSync(swPath, 'utf8');
+
+  assert.match(source, /request\.method !== 'GET'/);
+  assert.match(source, /url\.origin !== self\.location\.origin/);
+  assert.match(source, /response\.ok && request\.destination !== 'document'/);
 });
 
 test('syncQueuedControles retire le brouillon avant upload photo pour éviter un doublon si l’upload échoue', async () => {
