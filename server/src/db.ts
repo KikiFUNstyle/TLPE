@@ -50,7 +50,7 @@ export function initSchema() {
         | { sql: string }
         | undefined
     )?.sql;
-    const hasTitreEntite = /entite\s+TEXT\s+NOT\s+NULL\s+CHECK\s*\(\s*entite\s+IN\s*\('dispositif','declaration','contentieux','titre'\)\s*\)/i.test(
+    const hasTitreEntite = /entite\s+TEXT\s+NOT\s+NULL\s+CHECK\s*\(\s*entite\s+IN\s*\('dispositif','declaration','contentieux','titre','controle'\)\s*\)/i.test(
       piecesJointesSql ?? '',
     );
     const hasTypePieceConstraint = /type_piece\s+TEXT\s+CHECK\s*\(\s*type_piece\s+IS\s+NULL\s+OR\s*\(\s*entite\s*=\s*'contentieux'\s+AND\s+type_piece\s+IN\s*\('courrier-admin','courrier-contribuable','decision','jugement'\)\s*\)\s*\)/i.test(
@@ -64,7 +64,7 @@ export function initSchema() {
           db.exec(`
             CREATE TABLE pieces_jointes_new (
               id            INTEGER PRIMARY KEY AUTOINCREMENT,
-              entite        TEXT NOT NULL CHECK (entite IN ('dispositif','declaration','contentieux','titre')),
+              entite        TEXT NOT NULL CHECK (entite IN ('dispositif','declaration','contentieux','titre','controle')),
               entite_id     INTEGER NOT NULL,
               nom           TEXT NOT NULL,
               mime_type     TEXT NOT NULL,

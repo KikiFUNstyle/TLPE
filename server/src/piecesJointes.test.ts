@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { initSchema, db } from './db';
 import { hashPassword } from './auth';
-import { detectMimeFromMagicBytes } from './routes/piecesJointes';
+import { detectMimeFromMagicBytes, isMimeAllowedForEntity } from './routes/piecesJointes';
 
 const uploadsRoot = path.resolve(__dirname, '..', 'data', 'uploads');
 
@@ -24,6 +24,7 @@ function seedFixture() {
   db.exec('DELETE FROM pieces_jointes');
   db.exec('DELETE FROM lignes_declaration');
   db.exec('DELETE FROM declarations');
+  db.exec('DELETE FROM controles');
   db.exec('DELETE FROM dispositifs');
   db.exec('DELETE FROM campagnes');
   db.exec('DELETE FROM audit_log');
@@ -236,4 +237,11 @@ test('detectMimeFromMagicBytes - detects allowed formats and rejects unknown pay
   assert.equal(detectMimeFromMagicBytes(png), 'image/png');
   assert.equal(detectMimeFromMagicBytes(pdf), 'application/pdf');
   assert.equal(detectMimeFromMagicBytes(txt), null);
+});
+
+test('isMimeAllowedForEntity limite les contrôles aux photos jpeg/png', () => {
+  assert.equal(isMimeAllowedForEntity('controle', 'image/jpeg'), true);
+  assert.equal(isMimeAllowedForEntity('controle', 'image/png'), true);
+  assert.equal(isMimeAllowedForEntity('controle', 'application/pdf'), false);
+  assert.equal(isMimeAllowedForEntity('titre', 'application/pdf'), true);
 });

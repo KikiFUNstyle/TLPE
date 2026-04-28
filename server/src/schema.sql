@@ -600,7 +600,7 @@ CREATE INDEX IF NOT EXISTS idx_evenements_contentieux_contentieux ON evenements_
 -- =====================================================================
 CREATE TABLE IF NOT EXISTS pieces_jointes (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
-  entite        TEXT NOT NULL CHECK (entite IN ('dispositif','declaration','contentieux','titre')),
+  entite        TEXT NOT NULL CHECK (entite IN ('dispositif','declaration','contentieux','titre','controle')),
   entite_id     INTEGER NOT NULL,
   nom           TEXT NOT NULL,
   mime_type     TEXT NOT NULL,
@@ -614,6 +614,30 @@ CREATE TABLE IF NOT EXISTS pieces_jointes (
 );
 CREATE INDEX IF NOT EXISTS idx_pieces_jointes_entite ON pieces_jointes(entite, entite_id, deleted_at);
 CREATE INDEX IF NOT EXISTS idx_pieces_jointes_uploaded_by ON pieces_jointes(uploaded_by);
+
+-- =====================================================================
+-- Contrôles terrain
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS controles (
+  id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+  dispositif_id          INTEGER,
+  agent_id               INTEGER NOT NULL,
+  date_controle          TEXT NOT NULL,
+  latitude               REAL NOT NULL,
+  longitude              REAL NOT NULL,
+  surface_mesuree        REAL NOT NULL CHECK (surface_mesuree > 0),
+  nombre_faces_mesurees  INTEGER NOT NULL CHECK (nombre_faces_mesurees >= 1 AND nombre_faces_mesurees <= 4),
+  ecart_detecte          INTEGER NOT NULL DEFAULT 0 CHECK (ecart_detecte IN (0,1)),
+  ecart_description      TEXT,
+  statut                 TEXT NOT NULL DEFAULT 'saisi' CHECK (statut IN ('saisi','cloture')),
+  created_at             TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at             TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (dispositif_id) REFERENCES dispositifs(id) ON DELETE SET NULL,
+  FOREIGN KEY (agent_id) REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_controles_date ON controles(date_controle DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_controles_dispositif ON controles(dispositif_id);
+CREATE INDEX IF NOT EXISTS idx_controles_agent ON controles(agent_id);
 
 CREATE TABLE IF NOT EXISTS titre_mises_en_demeure (
   id               INTEGER PRIMARY KEY AUTOINCREMENT,

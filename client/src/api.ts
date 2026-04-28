@@ -33,6 +33,40 @@ export function buildHeaders(options: RequestInit = {}, contentType = true): Rec
   return headers;
 }
 
+function extractApiErrorMessage(error: unknown): string | null {
+  if (typeof error === 'string' && error.trim()) return error;
+  if (!error || typeof error !== 'object') return null;
+
+  const maybeFlattened = error as {
+    formErrors?: unknown;
+    fieldErrors?: Record<string, unknown>;
+    message?: unknown;
+  };
+
+  if (typeof maybeFlattened.message === 'string' && maybeFlattened.message.trim()) {
+    return maybeFlattened.message;
+  }
+
+  if (Array.isArray(maybeFlattened.formErrors)) {
+    const firstFormError = maybeFlattened.formErrors.find(
+      (value): value is string => typeof value === 'string' && value.trim().length > 0,
+    );
+    if (firstFormError) return firstFormError;
+  }
+
+  if (maybeFlattened.fieldErrors && typeof maybeFlattened.fieldErrors === 'object') {
+    for (const messages of Object.values(maybeFlattened.fieldErrors)) {
+      if (!Array.isArray(messages)) continue;
+      const firstFieldError = messages.find(
+        (value): value is string => typeof value === 'string' && value.trim().length > 0,
+      );
+      if (firstFieldError) return firstFieldError;
+    }
+  }
+
+  return null;
+}
+
 async function throwApiError(res: Response): Promise<never> {
   if (res.status === 401) {
     clearToken();
@@ -42,9 +76,8 @@ async function throwApiError(res: Response): Promise<never> {
   const contentType = res.headers.get('content-type') || '';
   if (contentType.includes('application/json')) {
     const body = await res.json();
-    throw new Error(
-      typeof body.error === 'string' ? body.error : JSON.stringify(body.error),
-    );
+    const message = extractApiErrorMessage(body.error) ?? extractApiErrorMessage(body.details) ?? `HTTP ${res.status}`;
+    throw new Error(message);
   }
 
   throw new Error(`HTTP ${res.status}`);

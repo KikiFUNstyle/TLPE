@@ -17,6 +17,7 @@ import { db, logAudit } from '../db';
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const MAX_ENTITY_TOTAL_SIZE = 50 * 1024 * 1024;
 const MIME_WHITELIST = new Set(['image/jpeg', 'image/png', 'application/pdf']);
+const CONTROLE_MIME_WHITELIST = new Set(['image/jpeg', 'image/png']);
 const UPLOADS_DIR = path.resolve(__dirname, '..', '..', 'data', 'uploads');
 
 const storageMode = (process.env.TLPE_UPLOAD_STORAGE || 'local').trim().toLowerCase();
@@ -60,18 +61,18 @@ const upload = multer({
 });
 
 const createSchema = z.object({
-  entite: z.enum(['dispositif', 'declaration', 'contentieux', 'titre']),
+  entite: z.enum(['dispositif', 'declaration', 'contentieux', 'titre', 'controle']),
   entite_id: z.coerce.number().int().positive(),
   type_piece: z.enum(['courrier-admin', 'courrier-contribuable', 'decision', 'jugement']).optional(),
 });
 
 export const piecesJointesRouter = Router();
 piecesJointesRouter.use(authMiddleware);
-piecesJointesRouter.use(requireRole('admin', 'gestionnaire', 'financier', 'contribuable'));
+piecesJointesRouter.use(requireRole('admin', 'gestionnaire', 'financier', 'controleur', 'contribuable'));
 
 interface PieceJointeRow {
   id: number;
-  entite: 'dispositif' | 'declaration' | 'contentieux' | 'titre';
+  entite: 'dispositif' | 'declaration' | 'contentieux' | 'titre' | 'controle';
   entite_id: number;
   nom: string;
   mime_type: string;
@@ -84,7 +85,7 @@ interface PieceJointeRow {
 }
 
 function resolveTypePiece(
-  entite: 'dispositif' | 'declaration' | 'contentieux' | 'titre',
+  entite: 'dispositif' | 'declaration' | 'contentieux' | 'titre' | 'controle',
   requestedTypePiece: 'courrier-admin' | 'courrier-contribuable' | 'decision' | 'jugement' | undefined,
   user: Express.Request['user'],
 ): 'courrier-admin' | 'courrier-contribuable' | 'decision' | 'jugement' | null {
@@ -132,8 +133,15 @@ export function detectMimeFromMagicBytes(buffer: Buffer): string | null {
   return null;
 }
 
+export function isMimeAllowedForEntity(entite: 'dispositif' | 'declaration' | 'contentieux' | 'titre' | 'controle', mimeType: string): boolean {
+  if (entite === 'controle') {
+    return CONTROLE_MIME_WHITELIST.has(mimeType);
+  }
+  return MIME_WHITELIST.has(mimeType);
+}
+
 function buildStorageRelativePath(params: {
-  entite: 'dispositif' | 'declaration' | 'contentieux' | 'titre';
+  entite: 'dispositif' | 'declaration' | 'contentieux' | 'titre' | 'controle';
   entiteId: number;
   filename: string;
   mimeType: string;
@@ -147,7 +155,7 @@ function buildStorageRelativePath(params: {
   return path.posix.join(params.entite, String(params.entiteId), y, m, name);
 }
 
-function checkEntityExists(entite: 'dispositif' | 'declaration' | 'contentieux' | 'titre', entiteId: number): boolean {
+function checkEntityExists(entite: 'dispositif' | 'declaration' | 'contentieux' | 'titre' | 'controle', entiteId: number): boolean {
   if (entite === 'dispositif') {
     const row = db.prepare('SELECT id FROM dispositifs WHERE id = ?').get(entiteId) as { id: number } | undefined;
     return !!row;
@@ -160,17 +168,22 @@ function checkEntityExists(entite: 'dispositif' | 'declaration' | 'contentieux' 
     const row = db.prepare('SELECT id FROM contentieux WHERE id = ?').get(entiteId) as { id: number } | undefined;
     return !!row;
   }
+  if (entite === 'controle') {
+    const row = db.prepare('SELECT id FROM controles WHERE id = ?').get(entiteId) as { id: number } | undefined;
+    return !!row;
+  }
   const row = db.prepare('SELECT id FROM titres WHERE id = ?').get(entiteId) as { id: number } | undefined;
   return !!row;
 }
 
 function canAccessEntity(
   user: Express.Request['user'],
-  entite: 'dispositif' | 'declaration' | 'contentieux' | 'titre',
+  entite: 'dispositif' | 'declaration' | 'contentieux' | 'titre' | 'controle',
   entiteId: number,
 ): boolean {
   if (!user) return false;
   if (user.role === 'admin' || user.role === 'gestionnaire') return true;
+  if (user.role === 'controleur') return entite === 'controle';
   if (user.role === 'financier') return entite === 'titre';
   if (user.role !== 'contribuable' || !user.assujetti_id) return false;
 
@@ -195,13 +208,23 @@ function canAccessEntity(
     return !!row && row.assujetti_id === user.assujetti_id;
   }
 
+  if (entite === 'controle') {
+    const row = db.prepare(
+      `SELECT d.assujetti_id
+       FROM controles c
+       JOIN dispositifs d ON d.id = c.dispositif_id
+       WHERE c.id = ?`,
+    ).get(entiteId) as { assujetti_id: number } | undefined;
+    return !!row && row.assujetti_id === user.assujetti_id;
+  }
+
   const row = db.prepare('SELECT assujetti_id FROM titres WHERE id = ?').get(entiteId) as
     | { assujetti_id: number }
     | undefined;
   return !!row && row.assujetti_id === user.assujetti_id;
 }
 
-function getEntityTotalSize(entite: 'dispositif' | 'declaration' | 'contentieux' | 'titre', entiteId: number): number {
+function getEntityTotalSize(entite: 'dispositif' | 'declaration' | 'contentieux' | 'titre' | 'controle', entiteId: number): number {
   const row = db
     .prepare(
       `SELECT COALESCE(SUM(taille), 0) AS total
@@ -294,7 +317,7 @@ async function readStoredFile(cheminRelatif: string): Promise<{
   };
 }
 
-piecesJointesRouter.post('/', requireRole('admin', 'gestionnaire', 'contribuable'), upload.single('fichier'), async (req, res) => {
+piecesJointesRouter.post('/', requireRole('admin', 'gestionnaire', 'controleur', 'contribuable'), upload.single('fichier'), async (req, res) => {
   try {
     const parsed = createSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -309,8 +332,13 @@ piecesJointesRouter.post('/', requireRole('admin', 'gestionnaire', 'contribuable
     const { entite, entite_id } = parsed.data;
     const typePiece = resolveTypePiece(entite, parsed.data.type_piece, req.user);
 
-    if (!MIME_WHITELIST.has(file.mimetype)) {
-      return res.status(400).json({ error: 'Type de fichier non autorise (jpeg, png, pdf uniquement)' });
+    if (!isMimeAllowedForEntity(entite, file.mimetype)) {
+      return res.status(400).json({
+        error:
+          entite === 'controle'
+            ? 'Type de fichier non autorise pour un contrôle (photos jpeg/png uniquement)'
+            : 'Type de fichier non autorise (jpeg, png, pdf uniquement)',
+      });
     }
 
     const detectedMime = detectMimeFromMagicBytes(file.buffer);
@@ -328,7 +356,7 @@ piecesJointesRouter.post('/', requireRole('admin', 'gestionnaire', 'contribuable
 
     const insertPieceJointe = db.transaction(
       (params: {
-        entite: 'dispositif' | 'declaration' | 'contentieux' | 'titre';
+        entite: 'dispositif' | 'declaration' | 'contentieux' | 'titre' | 'controle';
         entite_id: number;
         nom: string;
         mime_type: string;
