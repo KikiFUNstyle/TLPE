@@ -62,6 +62,7 @@ const upload = multer({
 const createSchema = z.object({
   entite: z.enum(['dispositif', 'declaration', 'contentieux', 'titre']),
   entite_id: z.coerce.number().int().positive(),
+  type_piece: z.enum(['courrier-admin', 'courrier-contribuable', 'decision', 'jugement']).optional(),
 });
 
 export const piecesJointesRouter = Router();
@@ -76,9 +77,20 @@ interface PieceJointeRow {
   mime_type: string;
   taille: number;
   chemin: string;
+  type_piece: 'courrier-admin' | 'courrier-contribuable' | 'decision' | 'jugement' | null;
   uploaded_by: number | null;
   created_at: string;
   deleted_at: string | null;
+}
+
+function resolveTypePiece(
+  entite: 'dispositif' | 'declaration' | 'contentieux' | 'titre',
+  requestedTypePiece: 'courrier-admin' | 'courrier-contribuable' | 'decision' | 'jugement' | undefined,
+  user: Express.Request['user'],
+): 'courrier-admin' | 'courrier-contribuable' | 'decision' | 'jugement' | null {
+  if (entite !== 'contentieux') return null;
+  if (user?.role === 'contribuable') return 'courrier-contribuable';
+  return requestedTypePiece ?? 'courrier-admin';
 }
 
 function sanitizeFileName(original: string): string {
@@ -295,6 +307,7 @@ piecesJointesRouter.post('/', requireRole('admin', 'gestionnaire', 'contribuable
     }
 
     const { entite, entite_id } = parsed.data;
+    const typePiece = resolveTypePiece(entite, parsed.data.type_piece, req.user);
 
     if (!MIME_WHITELIST.has(file.mimetype)) {
       return res.status(400).json({ error: 'Type de fichier non autorise (jpeg, png, pdf uniquement)' });
@@ -321,6 +334,7 @@ piecesJointesRouter.post('/', requireRole('admin', 'gestionnaire', 'contribuable
         mime_type: string;
         taille: number;
         chemin: string;
+        type_piece: 'courrier-admin' | 'courrier-contribuable' | 'decision' | 'jugement' | null;
         uploaded_by: number | null;
       }) => {
         const currentSize = getEntityTotalSize(params.entite, params.entite_id);
@@ -330,8 +344,8 @@ piecesJointesRouter.post('/', requireRole('admin', 'gestionnaire', 'contribuable
 
         const info = db
           .prepare(
-            `INSERT INTO pieces_jointes (entite, entite_id, nom, mime_type, taille, chemin, uploaded_by)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO pieces_jointes (entite, entite_id, nom, mime_type, taille, chemin, type_piece, uploaded_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .run(
             params.entite,
@@ -340,6 +354,7 @@ piecesJointesRouter.post('/', requireRole('admin', 'gestionnaire', 'contribuable
             params.mime_type,
             params.taille,
             params.chemin,
+            params.type_piece,
             params.uploaded_by,
           );
 
@@ -369,6 +384,7 @@ piecesJointesRouter.post('/', requireRole('admin', 'gestionnaire', 'contribuable
         mime_type: file.mimetype,
         taille: file.size,
         chemin,
+        type_piece: typePiece,
         uploaded_by: req.user?.id ?? null,
       });
       logAudit({
@@ -376,7 +392,7 @@ piecesJointesRouter.post('/', requireRole('admin', 'gestionnaire', 'contribuable
         action: 'upload',
         entite: 'piece_jointe',
         entiteId: id,
-        details: { entite, entite_id, nom, mime_type: file.mimetype, taille: file.size },
+        details: { entite, entite_id, nom, mime_type: file.mimetype, taille: file.size, type_piece: typePiece },
         ip: req.ip ?? null,
       });
 
@@ -387,6 +403,7 @@ piecesJointesRouter.post('/', requireRole('admin', 'gestionnaire', 'contribuable
         nom,
         mime_type: file.mimetype,
         taille: file.size,
+        type_piece: typePiece,
         created_at: new Date().toISOString(),
       });
     } catch (error) {
@@ -408,7 +425,7 @@ piecesJointesRouter.get('/:id', async (req, res) => {
   try {
     const piece = db
       .prepare(
-        `SELECT id, entite, entite_id, nom, mime_type, taille, chemin, uploaded_by, created_at, deleted_at
+        `SELECT id, entite, entite_id, nom, mime_type, taille, chemin, type_piece, uploaded_by, created_at, deleted_at
          FROM pieces_jointes
          WHERE id = ?`,
       )
@@ -463,11 +480,11 @@ piecesJointesRouter.delete('/:id', async (req, res) => {
   try {
     const piece = db
       .prepare(
-        `SELECT id, entite, entite_id, nom, deleted_at
+        `SELECT id, entite, entite_id, nom, uploaded_by, deleted_at
          FROM pieces_jointes
          WHERE id = ?`,
       )
-      .get(req.params.id) as Pick<PieceJointeRow, 'id' | 'entite' | 'entite_id' | 'nom' | 'deleted_at'> | undefined;
+      .get(req.params.id) as Pick<PieceJointeRow, 'id' | 'entite' | 'entite_id' | 'nom' | 'uploaded_by' | 'deleted_at'> | undefined;
 
     if (!piece || piece.deleted_at) {
       return res.status(404).json({ error: 'Piece jointe introuvable' });
@@ -475,6 +492,10 @@ piecesJointesRouter.delete('/:id', async (req, res) => {
 
     if (!canAccessEntity(req.user, piece.entite, piece.entite_id)) {
       return res.status(403).json({ error: 'Droits insuffisants' });
+    }
+
+    if (piece.entite === 'contentieux' && req.user?.role === 'contribuable') {
+      return res.status(403).json({ error: 'Suppression interdite sur les pièces jointes contentieux' });
     }
 
     db.prepare(`UPDATE pieces_jointes SET deleted_at = datetime('now') WHERE id = ?`).run(piece.id);

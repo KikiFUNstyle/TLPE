@@ -28,6 +28,8 @@ const isoDateRegex = /^\d{4}-\d{2}-\d{2}$/;
 
 type TimelineEventType = (typeof timelineEventTypes)[number];
 
+type ContentieuxAttachmentType = 'courrier-admin' | 'courrier-contribuable' | 'decision' | 'jugement';
+
 function isValidIsoCalendarDate(value: string): boolean {
   if (!isoDateRegex.test(value)) return false;
   const [yearRaw, monthRaw, dayRaw] = value.split('-');
@@ -102,6 +104,18 @@ type TimelineEventRow = {
   piece_jointe_entite_id?: number | null;
 };
 
+type ContentieuxAttachmentRow = {
+  id: number;
+  nom: string;
+  mime_type: string;
+  taille: number;
+  type_piece: ContentieuxAttachmentType | null;
+  uploaded_by: number | null;
+  created_at: string;
+  auteur_nom: string | null;
+  auteur_role: string | null;
+};
+
 const eventTypeLabels: Record<TimelineEventType, string> = {
   ouverture: 'Ouverture',
   courrier: 'Courrier',
@@ -119,6 +133,13 @@ const statusLabels: Record<string, string> = {
   degrevement_partiel: 'Dégrevement partiel',
   degrevement_total: 'Dégrevement total',
   non_lieu: 'Non-lieu',
+};
+
+const attachmentTypeLabels: Record<ContentieuxAttachmentType, string> = {
+  'courrier-admin': 'Courrier administration',
+  'courrier-contribuable': 'Courrier contribuable',
+  decision: 'Décision',
+  jugement: 'Jugement',
 };
 
 
@@ -228,6 +249,30 @@ function redactTimelineForUser(user: Request['user'], timeline: TimelineEventRow
 
 function timelineDecisionEventDate(): string {
   return todayIsoDate();
+}
+
+function canAccessContentieuxAttachments(user: Request['user']): boolean {
+  if (!user) return false;
+  return user.role !== 'financier';
+}
+
+function resolveAttachmentTypeLabel(typePiece: ContentieuxAttachmentType | null): string {
+  if (!typePiece) return 'Pièce jointe';
+  return attachmentTypeLabels[typePiece] ?? 'Pièce jointe';
+}
+
+function loadContentieuxAttachments(contentieuxId: number): ContentieuxAttachmentRow[] {
+  return db
+    .prepare(
+      `SELECT pj.id, pj.nom, pj.mime_type, pj.taille, pj.type_piece, pj.uploaded_by, pj.created_at,
+              trim(COALESCE(u.prenom, '') || ' ' || COALESCE(u.nom, '')) AS auteur_nom,
+              u.role AS auteur_role
+       FROM pieces_jointes pj
+       LEFT JOIN users u ON u.id = pj.uploaded_by
+       WHERE pj.entite = 'contentieux' AND pj.entite_id = ? AND pj.deleted_at IS NULL
+       ORDER BY pj.created_at DESC, pj.id DESC`,
+    )
+    .all(contentieuxId) as ContentieuxAttachmentRow[];
 }
 
 function loadAccessiblePieceJointeForTimeline(
@@ -398,6 +443,32 @@ contentieuxRouter.get('/:id/timeline', (req, res) => {
   const contentieux = ensureContentieuxAccess(req, res);
   if (!contentieux) return;
   res.json(redactTimelineForUser(req.user, loadTimeline(contentieux.id)));
+});
+
+contentieuxRouter.get('/:id/pieces-jointes', (req, res) => {
+  const contentieux = ensureContentieuxAccess(req, res);
+  if (!contentieux) return;
+  if (!canAccessContentieuxAttachments(req.user)) {
+    return res.status(403).json({ error: 'Droits insuffisants' });
+  }
+
+  const rows = loadContentieuxAttachments(contentieux.id);
+  res.json(
+    rows.map((row) => ({
+      id: row.id,
+      nom: row.nom,
+      mime_type: row.mime_type,
+      taille: row.taille,
+      type_piece: row.type_piece,
+      type_piece_label: resolveAttachmentTypeLabel(row.type_piece),
+      created_at: row.created_at,
+      auteur: row.auteur_nom?.trim() || 'Utilisateur inconnu',
+      auteur_role: row.auteur_role,
+      access_mode: req.user?.role === 'contribuable' ? 'lecture-seule' : 'gestion',
+      can_delete: req.user?.role !== 'contribuable',
+      download_url: `/api/pieces-jointes/${row.id}`,
+    })),
+  );
 });
 
 contentieuxRouter.post('/:id/evenements', requireRole('admin', 'gestionnaire', 'financier'), (req, res) => {

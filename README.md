@@ -29,7 +29,7 @@ basée sur les articles L2333-6 à L2333-16 du CGCT.
 | Mandats SEPA + export pain.008.001.02 avec validation IBAN/BIC, séquencement FRST/RCUR et validation XSD locale | §7.2 / US5.4 | OK + tests |
 | Import de relevés bancaires (CSV paramétrable / OFX / MT940), dédoublonnage par transaction, page Rapprochement réservée admin/financier | §7.3 / US5.5 | OK + tests |
 | Paiements (5 modalités) + recouvrement | §7.2 | OK |
-| Contentieux / réclamations + timeline + alertes de délais légaux (US6.1/US6.2) | §8 | OK + tests |
+| Contentieux / réclamations + timeline + alertes de délais légaux + pièces jointes contentieux catégorisées avec aperçu (US6.1/US6.2/US6.3) | §8 | OK + tests |
 | Tableau de bord exécutif + KPI déclaratifs temps réel (US3.7: attendus/soumises/validées/rejetées, drilldown zone/type, évolution journalière, auto-refresh 5 min) + alertes contentieux J-30/J-7/dépassement | §10.1 / §5.4 | OK |
 | Authentification + RBAC (5 rôles) | §2 | OK |
 | Simulateur | §6.3 | OK |
@@ -126,6 +126,11 @@ Ouvrir ensuite http://localhost:5173.
   - le dashboard affiche le volume d'alertes contentieux à <= J-30 et le nombre de dossiers en dépassement
   - la liste `Contentieux` surligne en rouge les dossiers en dépassement et affiche le badge d'échéance/prolongation
   - `POST /api/contentieux/:id/prolonger-delai` exige une date strictement postérieure et une justification, journalise l'audit et ajoute un événement timeline `relance`
+- Smoke test US6.3:
+  - `GET /api/contentieux/:id/pieces-jointes` restitue les métadonnées (`type_piece`, libellé, auteur, date, `download_url`) triées par date décroissante
+  - `POST /api/pieces-jointes` avec `entite=contentieux` persiste `type_piece` (`courrier-admin|courrier-contribuable|decision|jugement`) et journalise l'upload
+  - un `contribuable` ne peut téléverser qu'un `courrier-contribuable`, visualise les pièces du dossier en lecture seule et ne peut pas supprimer une pièce contentieux
+  - la page `Contentieux` propose la liste des pièces, l'aperçu PDF/image et le téléchargement direct depuis le détail du dossier
 
 ## Transmission comptable public / titre exécutoire (US5.9)
 
@@ -171,7 +176,7 @@ curl -X POST http://localhost:4000/api/sepa/export-batch \
 Routes backend (`/api/pieces-jointes`), authentifiées:
 
 - `POST /api/pieces-jointes` (multipart/form-data)
-  - champs requis: `entite` (`dispositif|declaration|contentieux`), `entite_id`, `fichier`
+  - champs requis: `entite` (`dispositif|declaration|contentieux|titre`), `entite_id`, `fichier`
   - MIME autorisés: `image/jpeg`, `image/png`, `application/pdf`
   - limites: 10 Mo par fichier, 50 Mo cumulés par entité (hors pièces soft-delete)
 - `GET /api/pieces-jointes/:id`
@@ -188,6 +193,21 @@ Stockage:
 Audit:
 
 - `logAudit()` à chaque upload / download / soft delete (entité `piece_jointe`)
+
+## Pièces jointes contentieux (US6.3)
+
+Le détail d'un dossier contentieux permet désormais de centraliser les pièces jointes du dossier en réutilisant l'infrastructure US2.5 :
+
+- `POST /api/pieces-jointes` accepte `entite=contentieux`, `entite_id`, `fichier` et un `type_piece` optionnel parmi `courrier-admin|courrier-contribuable|decision|jugement`,
+- le backend persiste `pieces_jointes.type_piece` avec migration runtime idempotente pour les bases legacy,
+- `GET /api/contentieux/:id/pieces-jointes` renvoie la liste enrichie (`type_piece_label`, auteur, rôle auteur, date, `download_url`) triée par plus récent,
+- le contribuable ne peut téléverser que des `courrier-contribuable`, voit les pièces administration en lecture seule et ne peut pas supprimer une pièce attachée à un contentieux,
+- la page `client/src/pages/Contentieux.tsx` affiche la liste des pièces, un aperçu PDF/image et un téléversement contextualisé par rôle.
+
+Tests :
+
+- backend `src/contentieux.piecesJointes.test.ts` (ACL, audit, listing, blocage suppression contribuable, cloisonnement inter-assujetti)
+- frontend `src/pages/contentieuxAttachments.test.tsx` (options par rôle, aperçu, états de chargement)
 
 ## Alertes de délais contentieux (US6.2)
 

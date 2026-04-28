@@ -44,6 +44,7 @@ export function initSchema() {
   if (hasPiecesJointes) {
     const pieceColumns = db.prepare("PRAGMA table_info('pieces_jointes')").all() as Array<{ name: string }>;
     const hasDeletedAt = pieceColumns.some((col) => col.name === 'deleted_at');
+    const hasTypePiece = pieceColumns.some((col) => col.name === 'type_piece');
     const piecesJointesSql = (
       db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'pieces_jointes'").get() as
         | { sql: string }
@@ -52,7 +53,10 @@ export function initSchema() {
     const hasTitreEntite = /entite\s+TEXT\s+NOT\s+NULL\s+CHECK\s*\(\s*entite\s+IN\s*\('dispositif','declaration','contentieux','titre'\)\s*\)/i.test(
       piecesJointesSql ?? '',
     );
-    if (!hasDeletedAt || !hasTitreEntite) {
+    const hasTypePieceConstraint = /type_piece\s+TEXT\s+CHECK\s*\(\s*type_piece\s+IS\s+NULL\s+OR\s*\(\s*entite\s*=\s*'contentieux'\s+AND\s+type_piece\s+IN\s*\('courrier-admin','courrier-contribuable','decision','jugement'\)\s*\)\s*\)/i.test(
+      piecesJointesSql ?? '',
+    );
+    if (!hasDeletedAt || !hasTitreEntite || !hasTypePiece || !hasTypePieceConstraint) {
       db.pragma('foreign_keys = OFF');
       try {
         db.exec('BEGIN TRANSACTION');
@@ -66,14 +70,15 @@ export function initSchema() {
               mime_type     TEXT NOT NULL,
               taille        INTEGER NOT NULL CHECK (taille > 0),
               chemin        TEXT NOT NULL,
+              type_piece    TEXT CHECK (type_piece IS NULL OR (entite = 'contentieux' AND type_piece IN ('courrier-admin','courrier-contribuable','decision','jugement'))),
               uploaded_by   INTEGER,
               created_at    TEXT NOT NULL DEFAULT (datetime('now')),
               deleted_at    TEXT,
               FOREIGN KEY (uploaded_by) REFERENCES users(id)
             );
 
-            INSERT INTO pieces_jointes_new (id, entite, entite_id, nom, mime_type, taille, chemin, uploaded_by, created_at, deleted_at)
-            SELECT id, entite, entite_id, nom, mime_type, taille, chemin, uploaded_by, created_at, ${hasDeletedAt ? 'deleted_at' : 'NULL'}
+            INSERT INTO pieces_jointes_new (id, entite, entite_id, nom, mime_type, taille, chemin, type_piece, uploaded_by, created_at, deleted_at)
+            SELECT id, entite, entite_id, nom, mime_type, taille, chemin, ${hasTypePiece ? 'type_piece' : 'NULL'}, uploaded_by, created_at, ${hasDeletedAt ? 'deleted_at' : 'NULL'}
             FROM pieces_jointes;
 
             DROP TABLE pieces_jointes;

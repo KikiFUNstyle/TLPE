@@ -54,7 +54,7 @@ export async function api<T = unknown>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> {
-  const res = await fetch(path, { ...options, headers: buildHeaders(options) });
+  const res = await fetch(path, { ...options, headers: buildHeaders(options, shouldSendJsonContentType(options)) });
   const contentType = res.headers.get('content-type') || '';
   if (!res.ok) {
     await throwApiError(res);
