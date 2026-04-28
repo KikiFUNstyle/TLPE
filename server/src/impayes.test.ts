@@ -74,7 +74,8 @@ function resetFixtures() {
     db.exec('DELETE FROM mises_en_demeure');
     db.exec('DELETE FROM campagnes');
     db.exec('DELETE FROM audit_log');
-    db.exec('DELETE FROM users');
+    db.exec('DELETE FROM controles');
+  db.exec('DELETE FROM users');
     db.exec('DELETE FROM assujettis');
   } finally {
     db.pragma('foreign_keys = ON');

@@ -110,8 +110,10 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
   - si un événement référence une `piece_jointe_id`, vérifier que la pièce jointe appartient bien à la même entité métier (ici le même `contentieux`) avant persistance,
   - ne jamais exposer dans l'API/PDF des métadonnées de pièce jointe (`piece_jointe_id`, nom, entité liée, `entite_id`) à un rôle qui ne pourrait pas télécharger effectivement cette pièce via `piecesJointesRouter`.
 - Commandes minimales à exécuter:
-  - `npm test`
-  - `npm run build`
+- `npm test`
+- `npm run test:all`
+- `npm run build`
+- `npm run dev` puis smoke test backend (`/api/health`) et frontend (URL locale réelle, y compris port alternatif si 4000/5173 occupés)
 
 ### 8) Hygiène dépôt & artefacts runtime (appris sur US3.6)
 - Vérifier que les artefacts générés en test/dev (`server/data/receipts/*`, `server/data/mises_en_demeure/*`) ne polluent pas le diff Git.
@@ -187,8 +189,15 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
 - Vérifier que `GET /api/contentieux/:id/pieces-jointes` restitue bien les métadonnées utiles (`type_piece`, libellé, auteur, date, `download_url`) sans exposer plus que les droits du rôle courant.
 - Vérifier que le contribuable est restreint à `courrier-contribuable` à l’upload, reste en lecture seule sur les pièces administration, et qu’une suppression `DELETE /api/pieces-jointes/:id` sur entité `contentieux` est explicitement refusée pour ce rôle.
 - Vérifier la couverture UI minimale : liste des pièces, aperçu PDF/image, téléchargement, et états de chargement stables quand on change de dossier rapidement.
-- Vérifier qu’un changement de pièce sélectionnée invalide immédiatement l’aperçu courant (reset de l’URL/blob et de l’état d’erreur) pour éviter d’afficher le document précédemment prévisualisé.
+- Vérifier qu'un changement de pièce sélectionnée invalide immédiatement l’aperçu courant (reset de l’URL/blob et de l’état d’erreur) pour éviter d’afficher le document précédemment prévisualisé.
 - Vérifier que la documentation fonctionnelle/README mentionne l’US livrée, ses smoke tests et les nouvelles catégories métier de pièces jointes.
+- Pour toute US de contrôle terrain / formulaire mobile navigateur, vérifier explicitement :
+  - route métier dédiée protégée par `authMiddleware` + `requireRole('admin','gestionnaire','controleur')` et audit `logAudit()` sur la création du constat,
+  - possibilité de rattacher le constat à un dispositif existant **ou** de créer une fiche dispositif depuis le constat, avec test backend pour les deux chemins,
+  - support des photos via `pieces_jointes.entite='controle'`, y compris migration runtime idempotente pour les bases legacy,
+  - restitution utilisateur exploitable des erreurs Zod côté API/UI (premier message clair, pas seulement un objet sérialisé `[object Object]`),
+  - date par défaut des formulaires `input[type=date]` calculée en local browser (pas `toISOString().slice(0,10)` brut, sensible à l’UTC),
+  - si un mode hors-ligne navigateur est annoncé, vérifier IndexedDB + synchronisation au retour réseau + présence d’un smoke test de démarrage/service worker, sans confondre cela avec une application mobile native hors périmètre MVP.
 
 ## Format de sortie review
 

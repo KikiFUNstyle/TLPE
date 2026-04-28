@@ -36,6 +36,7 @@ basée sur les articles L2333-6 à L2333-16 du CGCT.
 | Audit log (traçabilité) | §12.2 | OK |
 | Portail contribuable (accès restreint à sa fiche) | §11 | OK |
 | Carte des dispositifs (Leaflet + filtres + export GeoJSON) | §4.2 / §9.2 / §10.2 | OK |
+| Contrôles terrain (web responsive, géoloc navigateur, photos, rattachement/ création dispositif, file hors-ligne navigateur) | §9.1 / §9.2 / US7.1 | OK + tests |
 
 ### Hors périmètre du MVP (prévu phases ultérieures)
 
@@ -72,6 +73,12 @@ Ouvrir ensuite http://localhost:5173.
 - Smoke test backend : `GET /api/health` → `{"status":"ok"...}`
 - Smoke test pièces jointes : login + création dispositif + upload PDF + download + soft delete + vérif 404 post-delete (script Node)
 - Smoke test cartographie : accès `/carte`, tuiles OSM + points affichés, export GeoJSON téléchargeable
+- Smoke test US7.1 :
+  - la page `Contrôles terrain` est visible uniquement pour `admin|gestionnaire|controleur`
+  - `POST /api/controles` crée un constat soit rattaché à un dispositif existant, soit avec création de fiche dispositif
+  - `POST /api/pieces-jointes` accepte `entite=controle` pour téléverser les photos du constat
+  - le bouton GPS remplit latitude/longitude via `navigator.geolocation`
+  - hors ligne, le constat est stocké dans IndexedDB puis synchronisé au retour réseau par la page web (le service worker couvre le shell PWA/offline)
 - Smoke test US3.3 :
   - soumission KO si doublon adresse+type, surface <= 0, type manquant, date de pose > date de dépose
   - soumission OK avec `alerte_gestionnaire=true` quand la variation de surface N vs N-1 dépasse 30 %
@@ -176,7 +183,7 @@ curl -X POST http://localhost:4000/api/sepa/export-batch \
 Routes backend (`/api/pieces-jointes`), authentifiées:
 
 - `POST /api/pieces-jointes` (multipart/form-data)
-  - champs requis: `entite` (`dispositif|declaration|contentieux|titre`), `entite_id`, `fichier`
+  - champs requis: `entite` (`dispositif|declaration|contentieux|titre|controle`), `entite_id`, `fichier`
   - MIME autorisés: `image/jpeg`, `image/png`, `application/pdf`
   - limites: 10 Mo par fichier, 50 Mo cumulés par entité (hors pièces soft-delete)
 - `GET /api/pieces-jointes/:id`

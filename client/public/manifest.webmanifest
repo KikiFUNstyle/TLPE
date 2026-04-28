@@ -1,0 +1,10 @@
+{
+  "name": "TLPE Manager",
+  "short_name": "TLPE",
+  "description": "Saisie et gestion des constats terrain TLPE",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f6f7fb",
+  "theme_color": "#000091",
+  "icons": []
+}

@@ -19,6 +19,7 @@ import { paiementsRouter } from './routes/paiements';
 import { sepaRouter } from './routes/sepa';
 import { startRelancesScheduler } from './jobs/relancesScheduler';
 import { rapprochementRouter } from './routes/rapprochement';
+import { controlesRouter } from './routes/controles';
 
 const PORT = Number(process.env.PORT || 4000);
 
@@ -56,6 +57,7 @@ app.use('/api/campagnes', campagnesRouter);
 app.use('/api/paiements', paiementsRouter);
 app.use('/api/sepa', sepaRouter);
 app.use('/api/rapprochement', rapprochementRouter);
+app.use('/api/controles', controlesRouter);
 
 // Fichiers statiques du front en prod
 const clientDist = path.resolve(__dirname, '..', '..', 'client', 'dist');

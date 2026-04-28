@@ -19,6 +19,7 @@ function resetTables() {
   db.exec('DELETE FROM pieces_jointes');
   db.exec('DELETE FROM lignes_declaration');
   db.exec('DELETE FROM declarations');
+  db.exec('DELETE FROM controles');
   db.exec('DELETE FROM dispositifs');
   db.exec('DELETE FROM campagnes');
   db.exec('DELETE FROM audit_log');
