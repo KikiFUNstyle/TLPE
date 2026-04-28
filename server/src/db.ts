@@ -53,7 +53,7 @@ export function initSchema() {
     const hasTitreEntite = /entite\s+TEXT\s+NOT\s+NULL\s+CHECK\s*\(\s*entite\s+IN\s*\('dispositif','declaration','contentieux','titre'\)\s*\)/i.test(
       piecesJointesSql ?? '',
     );
-    const hasTypePieceConstraint = /type_piece\s+TEXT\s+CHECK\s*\(\s*type_piece\s+IS\s+NULL\s+OR\s+type_piece\s+IN\s*\('courrier-admin','courrier-contribuable','decision','jugement'\)\s*\)/i.test(
+    const hasTypePieceConstraint = /type_piece\s+TEXT\s+CHECK\s*\(\s*type_piece\s+IS\s+NULL\s+OR\s*\(\s*entite\s*=\s*'contentieux'\s+AND\s+type_piece\s+IN\s*\('courrier-admin','courrier-contribuable','decision','jugement'\)\s*\)\s*\)/i.test(
       piecesJointesSql ?? '',
     );
     if (!hasDeletedAt || !hasTitreEntite || !hasTypePiece || !hasTypePieceConstraint) {
@@ -70,7 +70,7 @@ export function initSchema() {
               mime_type     TEXT NOT NULL,
               taille        INTEGER NOT NULL CHECK (taille > 0),
               chemin        TEXT NOT NULL,
-              type_piece    TEXT CHECK (type_piece IS NULL OR type_piece IN ('courrier-admin','courrier-contribuable','decision','jugement')),
+              type_piece    TEXT CHECK (type_piece IS NULL OR (entite = 'contentieux' AND type_piece IN ('courrier-admin','courrier-contribuable','decision','jugement'))),
               uploaded_by   INTEGER,
               created_at    TEXT NOT NULL DEFAULT (datetime('now')),
               deleted_at    TEXT,

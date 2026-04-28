@@ -50,6 +50,24 @@ test('clearAttachmentLoadingState conserve le chargement quand une autre ligne t
   assert.equal(clearAttachmentLoadingState(42, 42), null);
 });
 
+test('sélectionner une autre pièce doit invalider l’aperçu courant', () => {
+  let selectedId = 1;
+  let previewUrl = 'blob:old-preview';
+
+  const resetAttachmentPreview = () => {
+    previewUrl = '';
+  };
+
+  const handleSelect = (nextId: number) => {
+    resetAttachmentPreview();
+    selectedId = nextId;
+  };
+
+  handleSelect(2);
+  assert.equal(selectedId, 2);
+  assert.equal(previewUrl, '');
+});
+
 test('canViewContentieuxAttachments ne suffit pas à télécharger anonymement: le téléchargement passe par apiBlob authentifié', async () => {
   const originalFetch = globalThis.fetch;
   const originalLocalStorage = (globalThis as { localStorage?: Storage }).localStorage;

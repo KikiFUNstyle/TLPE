@@ -122,6 +122,10 @@ test('pieces_jointes schema supports deleted_at and indexes', () => {
   assert.ok(colNames.has('uploaded_by'));
   assert.ok(colNames.has('created_at'));
   assert.ok(colNames.has('deleted_at'));
+  assert.ok(colNames.has('type_piece'));
+
+  const createSql = (db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'pieces_jointes'").get() as { sql: string }).sql;
+  assert.match(createSql, /type_piece\s+TEXT\s+CHECK\s*\(\s*type_piece\s+IS\s+NULL\s+OR\s*\(\s*entite\s*=\s*'contentieux'\s+AND\s+type_piece\s+IN\s*\('courrier-admin','courrier-contribuable','decision','jugement'\)\s*\)\s*\)/i);
 
   const indexes = db.prepare("PRAGMA index_list('pieces_jointes')").all() as Array<{ name: string }>;
   const names = new Set(indexes.map((i) => i.name));

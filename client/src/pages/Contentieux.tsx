@@ -764,6 +764,7 @@ export default function ContentieuxPage() {
                                           type="button"
                                           className={`contentieux-attachment-item${selectedAttachmentId === attachment.id ? ' active' : ''}`}
                                           onClick={() => {
+                                            resetAttachmentPreview();
                                             setSelectedAttachmentIds((prev) => ({ ...prev, [contentieux.id]: attachment.id }));
                                           }}
                                         >
