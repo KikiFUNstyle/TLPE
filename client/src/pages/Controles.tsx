@@ -1,6 +1,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api } from '../api';
+import { api, apiBlobWithMetadata } from '../api';
 import { useAuth, type Role } from '../auth';
+import { formatEuro } from '../format';
 import { AddressAutocomplete, type AddressSuggestion } from '../components/AddressAutocomplete';
 
 export interface ControleCreateDispositifInput {
@@ -37,6 +38,8 @@ interface ControleRow {
   ecart_description: string | null;
   statut: 'saisi' | 'cloture';
   dispositif_identifiant: string | null;
+  dispositif_surface: number | null;
+  dispositif_nombre_faces: number | null;
   assujetti_raison_sociale: string | null;
   agent_nom: string;
   photos_count: number;
@@ -69,6 +72,38 @@ interface ZoneOption {
   id: number;
   libelle: string;
   coefficient: number;
+}
+
+interface ControleReportRow {
+  controle_id: number;
+  dispositif_id: number | null;
+  dispositif_identifiant: string | null;
+  assujetti_id: number | null;
+  assujetti_raison_sociale: string | null;
+  date_controle: string;
+  categorie: string | null;
+  type_libelle: string | null;
+  surface_declaree: number | null;
+  surface_mesuree: number;
+  nombre_faces_declares: number | null;
+  nombre_faces_mesurees: number;
+  ecart_detecte: boolean;
+  ecart_description: string | null;
+  taxe_declaree: number;
+  taxe_mesuree: number;
+  delta_montant_taxe: number;
+}
+
+interface ControleRectificationResponse {
+  ok: boolean;
+  mode: 'declaration_office' | 'demande_contribuable';
+  created: Array<{ declaration_id: number; numero: string; assujetti_id: number; annee: number; statut: string }>;
+  conflicts: Array<{ assujetti_id: number; annee: number; declaration_id: number; numero: string; statut: string }>;
+}
+
+interface ControleRedressementResponse {
+  ok: boolean;
+  created: Array<{ contentieux_id: number; numero: string; assujetti_id: number; annee: number; montant_litige: number }>;
 }
 
 interface ControleFormState {
@@ -124,6 +159,35 @@ const QUEUE_STORE_NAME = 'drafts';
 
 export function canAccessControles(role: Role | null | undefined): boolean {
   return role === 'admin' || role === 'gestionnaire' || role === 'controleur';
+}
+
+export function canGenerateControleReport(role: Role | null | undefined): boolean {
+  return role === 'admin' || role === 'gestionnaire';
+}
+
+export function countSelectedControleEcarts(
+  rows: Array<Pick<ControleRow, 'id' | 'ecart_detecte'>>,
+  selectedIds: ReadonlySet<number>,
+): number {
+  let count = 0;
+  for (const row of rows) {
+    if (selectedIds.has(row.id) && row.ecart_detecte) count += 1;
+  }
+  return count;
+}
+
+export function toggleControleSelection(selectedIds: ReadonlySet<number>, controleId: number): Set<number> {
+  const next = new Set(selectedIds);
+  if (next.has(controleId)) {
+    next.delete(controleId);
+  } else {
+    next.add(controleId);
+  }
+  return next;
+}
+
+export function selectAllControles(rows: Array<Pick<ControleRow, 'id'>>): Set<number> {
+  return new Set(rows.map((row) => row.id));
 }
 
 export function controleSubmissionMode(input: ControleDraftInput): 'existing' | 'create' {
@@ -241,6 +305,45 @@ async function uploadControlePhotos(controleId: number, photos: File[]): Promise
   }
 }
 
+export async function downloadControleReportFile(
+  path: string,
+  payload: Record<string, unknown>,
+  fallbackFilename: string,
+  deps?: {
+    request?: typeof apiBlobWithMetadata;
+    createObjectUrl?: (blob: Blob) => string;
+    revokeObjectUrl?: (url: string) => void;
+    createAnchor?: () => HTMLAnchorElement;
+    appendAnchor?: (anchor: HTMLAnchorElement) => void;
+    removeAnchor?: (anchor: HTMLAnchorElement) => void;
+  },
+): Promise<string> {
+  const request = deps?.request ?? apiBlobWithMetadata;
+  const createObjectUrl = deps?.createObjectUrl ?? ((blob: Blob) => window.URL.createObjectURL(blob));
+  const revokeObjectUrl = deps?.revokeObjectUrl ?? ((url: string) => window.URL.revokeObjectURL(url));
+  const createAnchor = deps?.createAnchor ?? (() => document.createElement('a'));
+  const appendAnchor = deps?.appendAnchor ?? ((anchor: HTMLAnchorElement) => document.body.appendChild(anchor));
+  const removeAnchor = deps?.removeAnchor ?? ((anchor: HTMLAnchorElement) => anchor.remove());
+
+  const { blob, filename } = await request(path, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  const href = createObjectUrl(blob);
+  const anchor = createAnchor();
+  const downloadName = filename || fallbackFilename;
+  anchor.href = href;
+  anchor.download = downloadName;
+  appendAnchor(anchor);
+  try {
+    anchor.click();
+  } finally {
+    removeAnchor(anchor);
+    revokeObjectUrl(href);
+  }
+  return downloadName;
+}
+
 export async function syncQueuedControles(deps?: {
   listQueuedControles?: () => Promise<QueuedControleRecord[]>;
   createControle?: (payload: QueuedControleRecord['payload']) => Promise<{ id: number }>;
@@ -331,12 +434,26 @@ export default function Controles() {
   const [isOnline, setIsOnline] = useState(() => readNavigatorOnline());
   const [err, setErr] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [reporting, setReporting] = useState<'pdf' | 'xlsx' | null>(null);
+  const [rectificationMode, setRectificationMode] = useState<'declaration_office' | 'demande_contribuable' | null>(null);
+  const [redressementing, setRedressementing] = useState(false);
   const canAccess = canAccessControles(user?.role);
+  const canReport = canGenerateControleReport(user?.role);
 
   const selectedDispositif = useMemo(
     () => dispositifs.find((dispositif) => String(dispositif.id) === form.dispositif_id) ?? null,
     [dispositifs, form.dispositif_id],
   );
+  const selectedControleIds = useMemo(() => Array.from(selectedIds), [selectedIds]);
+  const selectedRows = useMemo(() => rows.filter((row) => selectedIds.has(row.id)), [rows, selectedIds]);
+  const selectedEcartsCount = useMemo(() => countSelectedControleEcarts(rows, selectedIds), [rows, selectedIds]);
+  const selectedSurfaceDeltaTotal = useMemo(
+    () => selectedRows.reduce((sum, row) => sum + (row.surface_mesuree - (row.dispositif_surface ?? row.surface_mesuree)), 0),
+    [selectedRows],
+  );
+  const allSelected = rows.length > 0 && selectedIds.size === rows.length;
+  const hasSelection = selectedIds.size > 0;
 
   const refreshQueueCount = useCallback(async () => {
     try {
@@ -464,6 +581,94 @@ export default function Controles() {
     setForm(createInitialForm());
     setSelectedPhotos([]);
     setCreationMode('existing');
+  };
+
+  const clearSelection = () => {
+    setSelectedIds(new Set());
+  };
+
+  const toggleSelection = (controleId: number) => {
+    setSelectedIds((current) => toggleControleSelection(current, controleId));
+  };
+
+  const toggleSelectAll = () => {
+    setSelectedIds(allSelected ? new Set() : selectAllControles(rows));
+  };
+
+  const exportReport = async (format: 'pdf' | 'xlsx') => {
+    if (!hasSelection) {
+      setErr('Sélectionnez au moins un contrôle pour générer un rapport.');
+      return;
+    }
+
+    setErr(null);
+    setInfo(null);
+    setReporting(format);
+    try {
+      const fallbackFilename = `rapport-controles-${new Date().toISOString().slice(0, 10)}.${format}`;
+      const filename = await downloadControleReportFile(
+        '/api/controles/report',
+        { controle_ids: selectedControleIds, format },
+        fallbackFilename,
+      );
+      setInfo(`Rapport ${format.toUpperCase()} généré (${filename}).`);
+    } catch (error) {
+      setErr((error as Error).message);
+    } finally {
+      setReporting(null);
+    }
+  };
+
+  const proposeRectification = async (mode: 'declaration_office' | 'demande_contribuable') => {
+    if (!hasSelection) {
+      setErr('Sélectionnez au moins un contrôle pour proposer une rectification.');
+      return;
+    }
+
+    setErr(null);
+    setInfo(null);
+    setRectificationMode(mode);
+    try {
+      const response = await api<ControleRectificationResponse>('/api/controles/proposer-rectification', {
+        method: 'POST',
+        body: JSON.stringify({ controle_ids: selectedControleIds, mode }),
+      });
+      await load();
+      const createdSummary = response.created.length
+        ? `${response.created.length} déclaration(s) créée(s) (${response.created.map((item) => item.numero).join(', ')})`
+        : 'aucune nouvelle déclaration';
+      const conflictSummary = response.conflicts.length
+        ? ` Déjà existantes : ${response.conflicts.map((item) => item.numero).join(', ')}.`
+        : '';
+      setInfo(`Proposition de rectification enregistrée (${mode === 'declaration_office' ? 'déclaration d’office' : 'demande contribuable'}) : ${createdSummary}.${conflictSummary}`);
+    } catch (error) {
+      setErr((error as Error).message);
+    } finally {
+      setRectificationMode(null);
+    }
+  };
+
+  const launchRedressement = async () => {
+    if (!hasSelection) {
+      setErr('Sélectionnez au moins un contrôle pour lancer un redressement.');
+      return;
+    }
+
+    setErr(null);
+    setInfo(null);
+    setRedressementing(true);
+    try {
+      const response = await api<ControleRedressementResponse>('/api/controles/lancer-redressement', {
+        method: 'POST',
+        body: JSON.stringify({ controle_ids: selectedControleIds }),
+      });
+      const summary = response.created.map((item) => `${item.numero} (${formatEuro(item.montant_litige)})`).join(', ');
+      setInfo(`Redressement(s) ouvert(s) automatiquement : ${summary}.`);
+    } catch (error) {
+      setErr((error as Error).message);
+    } finally {
+      setRedressementing(false);
+    }
   };
 
   const submit = async (event: FormEvent) => {
@@ -721,6 +926,54 @@ export default function Controles() {
         </form>
 
         <div className="grid" style={{ gap: 16 }}>
+          {canReport && (
+            <div className="card">
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+                <div>
+                  <h2 style={{ marginTop: 0, marginBottom: 4 }}>Rapport de contrôle automatique</h2>
+                  <p style={{ marginTop: 0 }}>
+                    Sélectionnez un ou plusieurs constats clôturés pour générer un rapport PDF/Excel, proposer une rectification ou ouvrir un contentieux de redressement.
+                  </p>
+                  <div className="hint">
+                    {hasSelection
+                      ? `${selectedControleIds.length} contrôle(s) sélectionné(s) • ${selectedEcartsCount} avec anomalie • Δ surface totale ${selectedSurfaceDeltaTotal.toFixed(1)} m²`
+                      : 'Aucun contrôle sélectionné pour le rapport.'}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <button className="btn secondary small" type="button" disabled={!hasSelection || reporting !== null} onClick={() => exportReport('pdf')}>
+                    {reporting === 'pdf' ? 'Export PDF…' : 'Générer PDF'}
+                  </button>
+                  <button className="btn secondary small" type="button" disabled={!hasSelection || reporting !== null} onClick={() => exportReport('xlsx')}>
+                    {reporting === 'xlsx' ? 'Export Excel…' : 'Exporter Excel'}
+                  </button>
+                  <button
+                    className="btn secondary small"
+                    type="button"
+                    disabled={!hasSelection || rectificationMode !== null}
+                    onClick={() => proposeRectification('demande_contribuable')}
+                  >
+                    {rectificationMode === 'demande_contribuable' ? 'Demande…' : 'Proposer rectification'}
+                  </button>
+                  <button
+                    className="btn secondary small"
+                    type="button"
+                    disabled={!hasSelection || rectificationMode !== null}
+                    onClick={() => proposeRectification('declaration_office')}
+                  >
+                    {rectificationMode === 'declaration_office' ? 'Déclaration…' : 'Déclaration d’office'}
+                  </button>
+                  <button className="btn small" type="button" disabled={!hasSelection || redressementing} onClick={launchRedressement}>
+                    {redressementing ? 'Redressement…' : 'Lancer redressement'}
+                  </button>
+                  <button className="btn secondary small" type="button" disabled={!hasSelection} onClick={clearSelection}>
+                    Effacer sélection
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="card">
             <h2 style={{ marginTop: 0 }}>Mode hors-ligne navigateur</h2>
             <p style={{ marginTop: 0 }}>
@@ -743,10 +996,17 @@ export default function Controles() {
                 <h2 style={{ margin: 0 }}>Derniers constats</h2>
                 <div className="hint">{rows.length} constat(s) enregistrés</div>
               </div>
+              {canReport && rows.length > 0 && (
+                <label className="hint" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <input type="checkbox" checked={allSelected} onChange={toggleSelectAll} />
+                  Tout sélectionner
+                </label>
+              )}
             </div>
             <table className="table">
               <thead>
                 <tr>
+                  {canReport && <th>Sélection</th>}
                   <th>Date</th>
                   <th>Dispositif</th>
                   <th>Agent</th>
@@ -758,17 +1018,29 @@ export default function Controles() {
               <tbody>
                 {rows.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="empty">Aucun contrôle saisi pour le moment.</td>
+                    <td colSpan={canReport ? 7 : 6} className="empty">Aucun contrôle saisi pour le moment.</td>
                   </tr>
                 ) : rows.map((row) => (
                   <tr key={row.id}>
+                    {canReport && (
+                      <td>
+                        <input type="checkbox" checked={selectedIds.has(row.id)} onChange={() => toggleSelection(row.id)} aria-label={`Sélectionner le contrôle ${row.id}`} />
+                      </td>
+                    )}
                     <td>{row.date_controle}</td>
                     <td>
                       <strong>{row.dispositif_identifiant ?? 'Nouvelle fiche terrain'}</strong>
                       <div className="hint">{row.assujetti_raison_sociale ?? 'Assujetti à confirmer'}</div>
                     </td>
                     <td>{row.agent_nom}</td>
-                    <td>{row.surface_mesuree} m² · {row.nombre_faces_mesurees} face(s)</td>
+                    <td>
+                      {row.surface_mesuree} m² · {row.nombre_faces_mesurees} face(s)
+                      {row.dispositif_surface !== null && (
+                        <div className="hint">
+                          Déclaré : {row.dispositif_surface} m² · {row.dispositif_nombre_faces ?? '-'} face(s)
+                        </div>
+                      )}
+                    </td>
                     <td>
                       <span className={`badge ${row.ecart_detecte ? 'warn' : 'success'}`}>{row.ecart_detecte ? 'écart détecté' : 'conforme'}</span>
                       {row.ecart_description && <div className="hint">{row.ecart_description}</div>}

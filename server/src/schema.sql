@@ -264,6 +264,14 @@ CREATE TABLE IF NOT EXISTS declarations (
   UNIQUE (assujetti_id, annee)
 );
 
+CREATE TABLE IF NOT EXISTS declaration_sequences (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  annee            INTEGER NOT NULL,
+  numero_ordre     INTEGER NOT NULL,
+  created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (annee, numero_ordre)
+);
+
 -- Accuse de reception de soumission (US3.6)
 CREATE TABLE IF NOT EXISTS declaration_receipts (
   id                  INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -555,6 +563,14 @@ CREATE TABLE IF NOT EXISTS contentieux (
   FOREIGN KEY (assujetti_id) REFERENCES assujettis(id),
   FOREIGN KEY (titre_id) REFERENCES titres(id),
   FOREIGN KEY (delai_prolonge_par) REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS contentieux_sequences (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  annee            INTEGER NOT NULL,
+  numero_ordre     INTEGER NOT NULL,
+  created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (annee, numero_ordre)
 );
 
 CREATE TABLE IF NOT EXISTS contentieux_alerts (

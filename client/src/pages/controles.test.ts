@@ -5,10 +5,15 @@ import * as path from 'node:path';
 import {
   acquireControleSyncLock,
   canAccessControles,
+  canGenerateControleReport,
+  countSelectedControleEcarts,
   controleSubmissionMode,
+  downloadControleReportFile,
   readNavigatorOnline,
+  selectAllControles,
   shouldQueueControleOffline,
   syncQueuedControles,
+  toggleControleSelection,
   type ControleDraftInput,
   type QueuedControleRecord,
   CONTROLE_FILE_ACCEPT,
@@ -21,6 +26,81 @@ test('canAccessControles ouvre le module uniquement aux rôles terrain autorisé
   assert.equal(canAccessControles('financier'), false);
   assert.equal(canAccessControles('contribuable'), false);
   assert.equal(canAccessControles(null), false);
+});
+
+test('canGenerateControleReport réserve le rapport aux rôles gestionnaire/admin', () => {
+  assert.equal(canGenerateControleReport('admin'), true);
+  assert.equal(canGenerateControleReport('gestionnaire'), true);
+  assert.equal(canGenerateControleReport('controleur'), false);
+  assert.equal(canGenerateControleReport('financier'), false);
+  assert.equal(canGenerateControleReport(null), false);
+});
+
+test('countSelectedControleEcarts compte uniquement les constats sélectionnés avec anomalie', () => {
+  const rows = [
+    { id: 10, ecart_detecte: true },
+    { id: 11, ecart_detecte: false },
+    { id: 12, ecart_detecte: true },
+  ];
+  assert.equal(countSelectedControleEcarts(rows, new Set<number>([10, 11])), 1);
+  assert.equal(countSelectedControleEcarts(rows, new Set<number>([11])), 0);
+  assert.equal(countSelectedControleEcarts(rows, new Set<number>([10, 12])), 2);
+});
+
+test('toggleControleSelection ajoute ou retire un contrôle de la sélection', () => {
+  const initial = new Set<number>([10]);
+  const added = toggleControleSelection(initial, 11);
+  assert.deepEqual(Array.from<number>(added).sort((a: number, b: number) => a - b), [10, 11]);
+
+  const removed = toggleControleSelection(added, 10);
+  assert.deepEqual(Array.from<number>(removed), [11]);
+});
+
+test('selectAllControles sélectionne toutes les lignes visibles', () => {
+  const selected = selectAllControles([{ id: 3 }, { id: 7 }, { id: 9 }]);
+  assert.deepEqual(Array.from<number>(selected).sort((a: number, b: number) => a - b), [3, 7, 9]);
+});
+
+test('downloadControleReportFile conserve le nom renvoyé par le serveur et déclenche le téléchargement', async () => {
+  const clicks: string[] = [];
+  const appended: string[] = [];
+  const removed: string[] = [];
+  const revoked: string[] = [];
+  const anchor = {
+    href: '',
+    download: '',
+    click() {
+      clicks.push(anchor.download);
+    },
+    remove() {
+      removed.push(anchor.download);
+    },
+  } as unknown as HTMLAnchorElement;
+
+  const filename = await downloadControleReportFile(
+    '/api/controles/report',
+    { controle_ids: [10], format: 'pdf' },
+    'fallback.pdf',
+    {
+      request: async () => ({
+        blob: new Blob(['pdf']),
+        filename: 'rapport-controles-2026-05-12.pdf',
+      }),
+      createObjectUrl: () => 'blob:controle-report',
+      revokeObjectUrl: (url) => revoked.push(url),
+      createAnchor: () => anchor,
+      appendAnchor: (nextAnchor) => appended.push(nextAnchor.download),
+      removeAnchor: (nextAnchor) => nextAnchor.remove(),
+    },
+  );
+
+  assert.equal(filename, 'rapport-controles-2026-05-12.pdf');
+  assert.equal(anchor.href, 'blob:controle-report');
+  assert.equal(anchor.download, 'rapport-controles-2026-05-12.pdf');
+  assert.deepEqual(appended, ['rapport-controles-2026-05-12.pdf']);
+  assert.deepEqual(clicks, ['rapport-controles-2026-05-12.pdf']);
+  assert.deepEqual(removed, ['rapport-controles-2026-05-12.pdf']);
+  assert.deepEqual(revoked, ['blob:controle-report']);
 });
 
 test('controleSubmissionMode distingue le rattachement existant de la création d’un nouveau dispositif', () => {

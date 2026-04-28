@@ -154,6 +154,38 @@ export function initSchema() {
     }
   }
 
+  const hasDeclarationSequences = (
+    db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'declaration_sequences'").get() as
+      | { name: string }
+      | undefined
+  )?.name === 'declaration_sequences';
+  if (!hasDeclarationSequences) {
+    db.exec(`
+      CREATE TABLE declaration_sequences (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        annee            INTEGER NOT NULL,
+        numero_ordre     INTEGER NOT NULL,
+        created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE (annee, numero_ordre)
+      );
+    `);
+  }
+
+  const declarationSequenceBackfillCount = (
+    db.prepare('SELECT COUNT(*) AS c FROM declaration_sequences').get() as { c: number }
+  ).c;
+  if (declarationSequenceBackfillCount === 0) {
+    db.exec(`
+      INSERT INTO declaration_sequences (annee, numero_ordre, created_at)
+      SELECT
+        annee,
+        CAST(substr(numero, -6) AS INTEGER) AS numero_ordre,
+        created_at
+      FROM declarations
+      WHERE numero GLOB 'DEC-[0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]'
+    `);
+  }
+
   // migration legacy -> ajoute relance_j7_courrier sur campagnes si table deja presente
   const hasCampagnes = (
     db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'campagnes'").get() as
@@ -286,6 +318,38 @@ export function initSchema() {
         db.pragma('foreign_keys = ON');
       }
     }
+  }
+
+  const hasContentieuxSequences = (
+    db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'contentieux_sequences'").get() as
+      | { name: string }
+      | undefined
+  )?.name === 'contentieux_sequences';
+  if (!hasContentieuxSequences) {
+    db.exec(`
+      CREATE TABLE contentieux_sequences (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        annee            INTEGER NOT NULL,
+        numero_ordre     INTEGER NOT NULL,
+        created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE (annee, numero_ordre)
+      );
+    `);
+  }
+
+  const contentieuxSequenceBackfillCount = (
+    db.prepare('SELECT COUNT(*) AS c FROM contentieux_sequences').get() as { c: number }
+  ).c;
+  if (contentieuxSequenceBackfillCount === 0) {
+    db.exec(`
+      INSERT INTO contentieux_sequences (annee, numero_ordre, created_at)
+      SELECT
+        CAST(substr(numero, 5, 4) AS INTEGER) AS annee,
+        CAST(substr(numero, -5) AS INTEGER) AS numero_ordre,
+        date_ouverture
+      FROM contentieux
+      WHERE numero GLOB 'CTX-[0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9]'
+    `);
   }
 
   const hasContentieuxAlerts = (

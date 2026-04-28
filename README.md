@@ -37,6 +37,7 @@ basée sur les articles L2333-6 à L2333-16 du CGCT.
 | Portail contribuable (accès restreint à sa fiche) | §11 | OK |
 | Carte des dispositifs (Leaflet + filtres + export GeoJSON) | §4.2 / §9.2 / §10.2 | OK |
 | Contrôles terrain (web responsive, géoloc navigateur, photos, rattachement/ création dispositif, file hors-ligne navigateur) | §9.1 / §9.2 / US7.1 | OK + tests |
+| Rapport de contrôle automatique (PDF/Excel, delta de taxe, rectification d’office/demande contribuable, ouverture de redressement) | §9.3 / US7.3 | OK + tests |
 
 ### Hors périmètre du MVP (prévu phases ultérieures)
 
@@ -47,7 +48,7 @@ basée sur les articles L2333-6 à L2333-16 du CGCT.
 - Import SIG / Shapefile natif (§4.3)
 - Signature électronique (§13.2)
 - Conformité RGAA 4.1 complète (§11.3)
-- Rapports PDF avancés autres que le titre de recettes, le bordereau récapitulatif des titres (§10.2)
+- Rapports PDF avancés autres que le titre de recettes, le bordereau récapitulatif des titres (§10.2), **à l’exception du rapport de contrôle automatique US7.3 désormais implémenté**
 
 ## Démarrage
 
@@ -79,6 +80,12 @@ Ouvrir ensuite http://localhost:5173.
   - `POST /api/pieces-jointes` accepte `entite=controle` pour téléverser les photos du constat
   - le bouton GPS remplit latitude/longitude via `navigator.geolocation`
   - hors ligne, le constat est stocké dans IndexedDB puis synchronisé au retour réseau par la page web (le service worker couvre le shell PWA/offline)
+- Smoke test US7.3 :
+  - la carte/liste `Contrôles terrain` permet la sélection multiple de constats clôturés pour générer un rapport PDF ou Excel
+  - `POST /api/controles/report` refuse les constats non clôturés, renvoie un fichier horodaté avec hash SHA-256 et écrit `audit_log` (`action=export-rapport-controle`)
+  - `POST /api/controles/proposer-rectification` crée une déclaration d’office (`en_instruction`) ou une demande contribuable (`brouillon`) à partir des écarts contrôlés
+  - `POST /api/controles/lancer-redressement` ouvre automatiquement un contentieux `type=controle` avec échéance de réponse calculée et événement timeline initial
+  - les actions de rapport/rectification/redressement sont visibles uniquement pour `admin|gestionnaire` et conservent le nom de fichier backend côté téléchargement navigateur
 - Smoke test US3.3 :
   - soumission KO si doublon adresse+type, surface <= 0, type manquant, date de pose > date de dépose
   - soumission OK avec `alerte_gestionnaire=true` quand la variation de surface N vs N-1 dépasse 30 %

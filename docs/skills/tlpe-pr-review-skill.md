@@ -206,7 +206,9 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
   - le sélecteur de fichiers UI pour `entite='controle'` doit rester aligné avec la validation backend (photos `jpeg/png` uniquement, jamais `application/pdf`),
   - les uploads de pièces jointes `entite='controle'` doivent être limités aux photos terrain (`image/jpeg|image/png`), même si d’autres entités métier autorisent aussi les PDF,
   - la création d’un dispositif depuis un constat terrain doit convertir tout échec FK SQLite (`assujetti/type/zone` introuvable) en réponse 4xx métier exploitable, jamais en 500 brut,
-  - la création du dispositif, l’insertion du contrôle, la mise à jour de statut et les audits associés doivent être enveloppés dans une transaction SQLite unique pour éviter tout write partiel si une étape aval échoue.
+  - la création du dispositif, l’insertion du contrôle, la mise à jour de statut et les audits associés doivent être enveloppés dans une transaction SQLite unique pour éviter tout write partiel si une étape aval échoue,
+  - pour toute US de rapport de contrôle / rectification / redressement, refuser explicitement les constats non `cloture` avant export PDF/XLSX, génération de déclaration d’office/demande contribuable ou ouverture de contentieux, avec test 409 de non-régression.
+  - toute numérotation métier créée en lot depuis ces actions (`DEC-*`, `CTX-*`) doit être réservée via une table de séquence/persistance dédiée plutôt qu’un `COUNT(*) + 1`, avec backfill legacy et couverture de test.
 
 ## Format de sortie review
 
