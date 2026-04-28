@@ -6,7 +6,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { authMiddleware, requireRole } from '../auth';
 import { db, logAudit } from '../db';
-import { saveFile } from './piecesJointes';
+import { deleteStoredFile, saveFile } from './piecesJointes';
 
 export const rapportsRouter = Router();
 
@@ -329,11 +329,20 @@ async function archiveRoleReport(params: {
       : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   );
 
-  db.prepare(
-    `INSERT INTO rapports_exports (
-      type_rapport, annee, format, filename, storage_path, content_hash, titres_count, total_montant, generated_by
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run('role_tlpe', params.annee, params.format, filename, storagePath, params.hash, params.titresCount, params.totalMontant, params.generatedBy);
+  try {
+    db.prepare(
+      `INSERT INTO rapports_exports (
+        type_rapport, annee, format, filename, storage_path, content_hash, titres_count, total_montant, generated_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run('role_tlpe', params.annee, params.format, filename, storagePath, params.hash, params.titresCount, params.totalMontant, params.generatedBy);
+  } catch (error) {
+    try {
+      await deleteStoredFile(storagePath);
+    } catch (cleanupError) {
+      console.error('[TLPE] Echec nettoyage archive role TLPE', cleanupError);
+    }
+    throw error;
+  }
 
   return { filename, storagePath };
 }

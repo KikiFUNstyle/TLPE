@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import express from 'express';
 import XLSX from 'xlsx';
 import { db, initSchema } from './db';
 import { hashPassword, signToken, type AuthUser } from './auth';
+import { resolveUploadAbsolutePath } from './routes/piecesJointes';
 import { rapportsRouter } from './routes/rapports';
 
 function createApp() {
@@ -274,6 +276,42 @@ test('GET /api/rapports/role?annee=2026&format=pdf retourne un PDF et refuse le 
   assert.match(res.headers.contentType, /application\/pdf/);
   assert.match(res.headers.disposition, /role-tlpe-2026\.pdf/);
   assert.equal(res.buffer.subarray(0, 4).toString('utf8'), '%PDF');
+});
+
+test('GET /api/rapports/role nettoie le fichier archivé si la persistance SQL échoue', async () => {
+  const fx = resetFixtures();
+
+  const previousPrepare = db.prepare.bind(db);
+  let forcedOnce = false;
+  // @ts-ignore test monkey patch for fault injection
+  db.prepare = ((sql: string) => {
+    if (!forcedOnce && sql.includes('INSERT INTO rapports_exports')) {
+      forcedOnce = true;
+      throw new Error('disk I/O error');
+    }
+    return previousPrepare(sql);
+  }) as typeof db.prepare;
+
+  const roleDir = resolveUploadAbsolutePath('rapports/role_tlpe/2026');
+  fs.rmSync(roleDir, { recursive: true, force: true });
+
+  try {
+    const res = await requestBinary({
+      method: 'GET',
+      path: '/api/rapports/role?annee=2026&format=pdf',
+      headers: makeAuthHeader(fx.financier),
+    });
+
+    assert.equal(res.status, 500);
+    const archives = db.prepare(`SELECT storage_path FROM rapports_exports WHERE type_rapport = 'role_tlpe'`).all() as Array<{ storage_path: string }>;
+    assert.equal(archives.length, 0);
+
+    const remainingFiles = fs.existsSync(roleDir) ? fs.readdirSync(roleDir) : [];
+    assert.equal(remainingFiles.length, 0);
+  } finally {
+    // @ts-ignore restore monkey patch after fault injection
+    db.prepare = previousPrepare;
+  }
 });
 
 test('GET /api/rapports/role valide les paramètres requis', async () => {
