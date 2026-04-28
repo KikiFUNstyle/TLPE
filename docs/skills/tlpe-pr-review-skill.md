@@ -69,7 +69,9 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
   - filtrage métier exact des données exportées,
   - présence d'un horodatage + hash du contenu restitué,
   - écriture d'une trace `audit_log` dédiée à l'export,
-  - si l'US mentionne un déclencheur utilisateur (bouton, sélecteur année, action toolbar), vérifier que le wiring UI existe réellement dans la page cible et pas seulement des helpers/tests isolés.
+  - si l'US mentionne un déclencheur utilisateur (bouton, sélecteur année, action toolbar), vérifier que le wiring UI existe réellement dans la page cible et pas seulement des helpers/tests isolés,
+  - pour tout rendu tabulaire PDF multi-colonnes, calcul de hauteur de ligne basé sur la cellule la plus haute (pas seulement la dernière colonne dessinée) afin d'éviter les chevauchements de lignes.
+
 - Pour tout export XML métier (PESV2, pain.008, flux DGFiP), vérifier en review:
   - sélection métier exclusive et explicite (campagne **ou** période, jamais les deux),
   - validation XSD automatisée dans les tests et au runtime avant restitution,

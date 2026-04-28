@@ -43,6 +43,12 @@ type RoleReportPayload = {
   rows: RoleReportRow[];
 };
 
+type RoleReportColumn = {
+  label: string;
+  x: number;
+  width: number;
+};
+
 function formatDateTime(date: Date): string {
   return date.toISOString().replace('T', ' ').slice(0, 19);
 }
@@ -182,6 +188,38 @@ function buildRoleReportPayload(annee: number): RoleReportPayload {
   };
 }
 
+const ROLE_REPORT_COLUMNS: readonly RoleReportColumn[] = [
+  { label: 'N° titre', x: 36, width: 70 },
+  { label: 'Debiteur', x: 106, width: 100 },
+  { label: 'SIRET', x: 206, width: 70 },
+  { label: 'Adresse', x: 276, width: 120 },
+  { label: 'Dispositifs', x: 396, width: 100 },
+  { label: 'Montant', x: 496, width: 55 },
+  { label: 'Statut paiement', x: 551, width: 40 },
+] as const;
+
+export function measureRoleReportRowHeight(doc: InstanceType<typeof PDFDocument>, row: RoleReportRow): number {
+  const values = [
+    row.numero_titre,
+    row.debiteur,
+    row.siret || '-',
+    row.adresse || '-',
+    row.dispositifs,
+    formatMoney(row.montant),
+    row.statut_titre,
+  ] as const;
+
+  const height = ROLE_REPORT_COLUMNS.reduce((maxHeight, column, index) => {
+    const textHeight = doc.heightOfString(values[index], {
+      width: column.width,
+      align: index >= 5 ? 'right' : 'left',
+    });
+    return Math.max(maxHeight, textHeight);
+  }, 0);
+
+  return Math.max(height, 20);
+}
+
 async function buildRoleReportPdfBuffer(payload: RoleReportPayload): Promise<Buffer> {
   return new Promise<Buffer>((resolve, reject) => {
     const doc = new PDFDocument({ size: 'A4', margin: 36, bufferPages: true });
@@ -200,20 +238,11 @@ async function buildRoleReportPdfBuffer(payload: RoleReportPayload): Promise<Buf
     doc.text(`Hash SHA-256 : ${payload.hash}`);
     doc.moveDown(0.8);
 
-    const columns = [
-      { label: 'N° titre', x: 36, width: 70 },
-      { label: 'Debiteur', x: 106, width: 100 },
-      { label: 'SIRET', x: 206, width: 70 },
-      { label: 'Adresse', x: 276, width: 120 },
-      { label: 'Dispositifs', x: 396, width: 100 },
-      { label: 'Montant', x: 496, width: 55 },
-      { label: 'Statut paiement', x: 551, width: 40 },
-    ] as const;
-
+    doc.moveDown(0.8);
     const printHeader = () => {
       const top = doc.y;
       doc.fontSize(8).fillColor('#333');
-      columns.forEach((column) => {
+      ROLE_REPORT_COLUMNS.forEach((column) => {
         doc.text(column.label, column.x, top, { width: column.width });
       });
       doc.moveTo(36, top + 14).lineTo(595, top + 14).stroke();
@@ -234,14 +263,21 @@ async function buildRoleReportPdfBuffer(payload: RoleReportPayload): Promise<Buf
     for (const row of payload.rows) {
       ensurePage();
       const y = doc.y;
-      doc.text(row.numero_titre, columns[0].x, y, { width: columns[0].width });
-      doc.text(row.debiteur, columns[1].x, y, { width: columns[1].width });
-      doc.text(row.siret || '-', columns[2].x, y, { width: columns[2].width });
-      doc.text(row.adresse || '-', columns[3].x, y, { width: columns[3].width });
-      doc.text(row.dispositifs, columns[4].x, y, { width: columns[4].width });
-      doc.text(formatMoney(row.montant), columns[5].x, y, { width: columns[5].width, align: 'right' });
-      doc.text(row.statut_titre, columns[6].x, y, { width: columns[6].width, align: 'right' });
-      const rowBottom = Math.max(doc.y, y + 28);
+      const rowHeight = measureRoleReportRowHeight(doc, row);
+      doc.text(row.numero_titre, ROLE_REPORT_COLUMNS[0].x, y, { width: ROLE_REPORT_COLUMNS[0].width });
+      doc.text(row.debiteur, ROLE_REPORT_COLUMNS[1].x, y, { width: ROLE_REPORT_COLUMNS[1].width });
+      doc.text(row.siret || '-', ROLE_REPORT_COLUMNS[2].x, y, { width: ROLE_REPORT_COLUMNS[2].width });
+      doc.text(row.adresse || '-', ROLE_REPORT_COLUMNS[3].x, y, { width: ROLE_REPORT_COLUMNS[3].width });
+      doc.text(row.dispositifs, ROLE_REPORT_COLUMNS[4].x, y, { width: ROLE_REPORT_COLUMNS[4].width });
+      doc.text(formatMoney(row.montant), ROLE_REPORT_COLUMNS[5].x, y, {
+        width: ROLE_REPORT_COLUMNS[5].width,
+        align: 'right',
+      });
+      doc.text(row.statut_titre, ROLE_REPORT_COLUMNS[6].x, y, {
+        width: ROLE_REPORT_COLUMNS[6].width,
+        align: 'right',
+      });
+      const rowBottom = y + rowHeight;
       doc.moveTo(36, rowBottom + 4).lineTo(595, rowBottom + 4).strokeColor('#d8d8d8').stroke().strokeColor('black');
       doc.y = rowBottom + 8;
     }
