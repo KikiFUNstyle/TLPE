@@ -198,6 +198,9 @@ const ROLE_REPORT_COLUMNS: readonly RoleReportColumn[] = [
   { label: 'Statut paiement', x: 551, width: 40 },
 ] as const;
 
+const ROLE_REPORT_FOOTER_Y = 800;
+const ROLE_REPORT_ROW_SPACING = 8;
+
 export function measureRoleReportRowHeight(doc: InstanceType<typeof PDFDocument>, row: RoleReportRow): number {
   const values = [
     row.numero_titre,
@@ -218,6 +221,10 @@ export function measureRoleReportRowHeight(doc: InstanceType<typeof PDFDocument>
   }, 0);
 
   return Math.max(height, 20);
+}
+
+export function shouldRoleReportStartNewPage(currentY: number, rowHeight: number): boolean {
+  return currentY + rowHeight + ROLE_REPORT_ROW_SPACING > ROLE_REPORT_FOOTER_Y;
 }
 
 async function buildRoleReportPdfBuffer(payload: RoleReportPayload): Promise<Buffer> {
@@ -250,8 +257,8 @@ async function buildRoleReportPdfBuffer(payload: RoleReportPayload): Promise<Buf
       doc.fillColor('black');
     };
 
-    const ensurePage = () => {
-      if (doc.y > 720) {
+    const ensurePage = (rowHeight: number) => {
+      if (shouldRoleReportStartNewPage(doc.y, rowHeight)) {
         doc.addPage();
         printHeader();
       }
@@ -261,9 +268,9 @@ async function buildRoleReportPdfBuffer(payload: RoleReportPayload): Promise<Buf
     doc.fontSize(8);
 
     for (const row of payload.rows) {
-      ensurePage();
-      const y = doc.y;
       const rowHeight = measureRoleReportRowHeight(doc, row);
+      ensurePage(rowHeight);
+      const y = doc.y;
       doc.text(row.numero_titre, ROLE_REPORT_COLUMNS[0].x, y, { width: ROLE_REPORT_COLUMNS[0].width });
       doc.text(row.debiteur, ROLE_REPORT_COLUMNS[1].x, y, { width: ROLE_REPORT_COLUMNS[1].width });
       doc.text(row.siret || '-', ROLE_REPORT_COLUMNS[2].x, y, { width: ROLE_REPORT_COLUMNS[2].width });
@@ -279,7 +286,7 @@ async function buildRoleReportPdfBuffer(payload: RoleReportPayload): Promise<Buf
       });
       const rowBottom = y + rowHeight;
       doc.moveTo(36, rowBottom + 4).lineTo(595, rowBottom + 4).strokeColor('#d8d8d8').stroke().strokeColor('black');
-      doc.y = rowBottom + 8;
+      doc.y = rowBottom + ROLE_REPORT_ROW_SPACING;
     }
 
     if (payload.rows.length === 0) {

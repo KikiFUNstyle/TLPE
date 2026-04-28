@@ -16,6 +16,7 @@ type RoleTestContext = {
   rapportsRouter: typeof import('./routes/rapports').rapportsRouter;
   resolveUploadAbsolutePath: typeof import('./routes/piecesJointes').resolveUploadAbsolutePath;
   measureRoleReportRowHeight: typeof import('./routes/rapports').measureRoleReportRowHeight;
+  shouldRoleReportStartNewPage: typeof import('./routes/rapports').shouldRoleReportStartNewPage;
   cleanup: () => void;
 };
 
@@ -51,6 +52,7 @@ function createRoleTestContext(): RoleTestContext {
     rapportsRouter: rapportsModule.rapportsRouter,
     resolveUploadAbsolutePath: piecesJointesModule.resolveUploadAbsolutePath,
     measureRoleReportRowHeight: rapportsModule.measureRoleReportRowHeight,
+    shouldRoleReportStartNewPage: rapportsModule.shouldRoleReportStartNewPage,
     cleanup: () => {
       try {
         dbModule.db.close();
@@ -319,6 +321,30 @@ test('measureRoleReportRowHeight utilise la cellule la plus haute quand une colo
     });
 
     assert.ok(wrappedHeight > compactHeight);
+    doc.end();
+  });
+});
+
+test('shouldRoleReportStartNewPage tient compte de la hauteur de la prochaine ligne et du footer', async () => {
+  await withRoleTestContext((ctx) => {
+    const doc = new PDFDocument({ size: 'A4', margin: 36 });
+    doc.fontSize(8);
+
+    const wrappedHeight = ctx.measureRoleReportRowHeight(doc, {
+      titre_id: 2,
+      numero_titre: 'TIT-2026-2',
+      assujetti_id: 2,
+      debiteur: 'Beta Enseignes et Publicite Urbaine',
+      siret: '10987654321098',
+      adresse: '2 avenue Beta, 33100 Bordeaux, Batiment A, Escalier Nord',
+      dispositifs:
+        'DSP-ROLE-001 (enseigne murale grand format) | DSP-ROLE-002 (mobilier urbain lumineux double face) | DSP-ROLE-003 (preenseigne numerique partagee)',
+      montant: 450.5,
+      statut_titre: 'Paye partiel',
+    });
+
+    assert.equal(ctx.shouldRoleReportStartNewPage(36, wrappedHeight), false);
+    assert.equal(ctx.shouldRoleReportStartNewPage(740, wrappedHeight), true);
     doc.end();
   });
 });
