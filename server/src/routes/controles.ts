@@ -817,7 +817,14 @@ controlesRouter.post('/lancer-redressement', requireRole('admin', 'gestionnaire'
     }
   })();
 
-  res.status(201).json({ ok: true, created });
+  res.status(created.length > 0 ? 201 : 409).json({
+    ok: created.length > 0,
+    error:
+      created.length > 0
+        ? undefined
+        : 'Aucun redressement créé : aucun assujetti exploitable trouvé pour les contrôles sélectionnés.',
+    created,
+  });
 });
 
 controlesRouter.post('/', (req, res) => {

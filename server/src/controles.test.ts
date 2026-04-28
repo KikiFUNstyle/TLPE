@@ -673,6 +673,41 @@ test('POST /api/controles/proposer-rectification crée une déclaration d’offi
   assert.equal(declarationSequence?.numero_ordre, 1);
 });
 
+test('POST /api/controles/lancer-redressement retourne 409 si aucun assujetti exploitable n’est trouvé sur les contrôles sélectionnés', async () => {
+  const fx = resetFixtures();
+
+  const controleId = Number(
+    db.prepare(
+      `INSERT INTO controles (
+        dispositif_id, agent_id, date_controle, latitude, longitude,
+        surface_mesuree, nombre_faces_mesurees, ecart_detecte, ecart_description, statut
+      ) VALUES (NULL, ?, '2026-05-12', 48.8566, 2.3522, 15, 2, 1, 'Contrôle orphelin sans assujetti exploitable', 'cloture')`,
+    ).run(fx.controleur.id).lastInsertRowid,
+  );
+
+  const response = await request({
+    method: 'POST',
+    path: '/api/controles/lancer-redressement',
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      controle_ids: [controleId],
+    },
+  });
+
+  assert.equal(response.status, 409);
+  const body = response.data as {
+    ok: boolean;
+    error: string;
+    created: Array<{ contentieux_id: number; numero: string; assujetti_id: number; annee: number; montant_litige: number }>;
+  };
+  assert.equal(body.ok, false);
+  assert.match(body.error, /Aucun redressement créé/i);
+  assert.equal(body.created.length, 0);
+
+  const contentieuxCount = db.prepare(`SELECT COUNT(*) AS count FROM contentieux`).get() as { count: number };
+  assert.equal(contentieuxCount.count, 0);
+});
+
 test('POST /api/controles/lancer-redressement ouvre un contentieux de contrôle avec échéance et audit', async () => {
   const fx = resetFixtures();
 
