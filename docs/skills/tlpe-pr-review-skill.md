@@ -180,6 +180,14 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
 - Vérifier que les fixtures de tests purgent explicitement toute nouvelle table enfant (`contentieux_alerts`, etc.) même quand les FK sont temporairement désactivées.
 - Vérifier la restitution UX: badge d'échéance lisible, surlignage rouge des dossiers en dépassement, KPI dashboard distincts pour `<= J-30` et `dépassement`, couverture de tests front + back.
 
+### 17) Pièces jointes contentieux catégorisées (appris sur US6.3)
+- Vérifier la cohérence schéma SQL + migration runtime + API quand `pieces_jointes` reçoit un nouveau champ métier (`type_piece`) : présence de la colonne, de la contrainte `CHECK`, et reprise idempotente des bases legacy.
+- Vérifier que toute nouvelle suite de tests backend ajoutée pour la feature est bien branchée dans le script `npm test` du workspace concerné (pas seulement présente sur disque).
+- Vérifier que `GET /api/contentieux/:id/pieces-jointes` restitue bien les métadonnées utiles (`type_piece`, libellé, auteur, date, `download_url`) sans exposer plus que les droits du rôle courant.
+- Vérifier que le contribuable est restreint à `courrier-contribuable` à l’upload, reste en lecture seule sur les pièces administration, et qu’une suppression `DELETE /api/pieces-jointes/:id` sur entité `contentieux` est explicitement refusée pour ce rôle.
+- Vérifier la couverture UI minimale : liste des pièces, aperçu PDF/image, téléchargement, et états de chargement stables quand on change de dossier rapidement.
+- Vérifier que la documentation fonctionnelle/README mentionne l’US livrée, ses smoke tests et les nouvelles catégories métier de pièces jointes.
+
 ## Format de sortie review
 
 1. **Résumé**

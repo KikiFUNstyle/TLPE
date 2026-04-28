@@ -1,7 +1,7 @@
 import { Fragment, FormEvent, useEffect, useState } from 'react';
-import { api, apiBlobWithMetadata } from '../api';
+import { api, apiBlob, apiBlobWithMetadata } from '../api';
 import { formatDate, formatEuro, toLocalDateInputValue } from '../format';
-import { useAuth } from '../auth';
+import { useAuth, type Role, type User } from '../auth';
 import { classifyContentieuxDeadline, describeContentieuxDeadline, type ContentieuxDeadlineSummary } from './contentieuxDeadlineUtils';
 
 interface Contentieux extends ContentieuxDeadlineSummary {
@@ -45,6 +45,28 @@ interface TimelineDraft {
   piece_jointe_id: string;
 }
 
+type ContentieuxAttachmentType = 'courrier-admin' | 'courrier-contribuable' | 'decision' | 'jugement';
+
+interface ContentieuxAttachment {
+  id: number;
+  nom: string;
+  mime_type: string;
+  taille: number;
+  type_piece: ContentieuxAttachmentType | null;
+  type_piece_label: string;
+  created_at: string;
+  auteur: string;
+  auteur_role: string | null;
+  access_mode: 'lecture-seule' | 'gestion';
+  can_delete: boolean;
+  download_url: string;
+}
+
+interface AttachmentUploadDraft {
+  type_piece: ContentieuxAttachmentType;
+  file: File | null;
+}
+
 interface DeadlineExtensionDraft {
   date_limite_reponse: string;
   justification: string;
@@ -79,6 +101,40 @@ const statusLabels: Record<string, string> = {
 };
 
 const defaultDecisionStatus = 'instruction';
+
+const contentieuxAttachmentTypeOptions: Array<{ value: ContentieuxAttachmentType; label: string }> = [
+  { value: 'courrier-admin', label: 'Courrier administration' },
+  { value: 'courrier-contribuable', label: 'Courrier contribuable' },
+  { value: 'decision', label: 'Décision' },
+  { value: 'jugement', label: 'Jugement' },
+];
+
+export function attachmentTypeOptionsForRole(role: Role | undefined): Array<{ value: ContentieuxAttachmentType; label: string }> {
+  if (role === 'contribuable') {
+    return contentieuxAttachmentTypeOptions.filter((option) => option.value === 'courrier-contribuable');
+  }
+  return contentieuxAttachmentTypeOptions;
+}
+
+export function defaultAttachmentTypeForRole(role: Role | undefined): ContentieuxAttachmentType {
+  return attachmentTypeOptionsForRole(role)[0]?.value ?? 'courrier-contribuable';
+}
+
+export function attachmentPreviewKind(mimeType: string): 'pdf' | 'image' | 'unsupported' {
+  if (mimeType === 'application/pdf') return 'pdf';
+  if (mimeType.startsWith('image/')) return 'image';
+  return 'unsupported';
+}
+
+export function canViewContentieuxAttachments(user: Pick<User, 'role'> | null | undefined): boolean {
+  return Boolean(user && user.role !== 'financier');
+}
+
+export function canUploadContentieuxAttachments(user: Pick<User, 'role' | 'assujetti_id'> | null | undefined): boolean {
+  if (!user) return false;
+  if (user.role === 'admin' || user.role === 'gestionnaire') return true;
+  return user.role === 'contribuable' && Boolean(user.assujetti_id);
+}
 
 function todayInputValue() {
   return toLocalDateInputValue();
@@ -126,23 +182,39 @@ export function clearTimelineLoadingState(currentLoadingId: number | null, compl
   return clearContentieuxActionState(currentLoadingId, completedContentieuxId);
 }
 
+export function clearAttachmentLoadingState(currentLoadingId: number | null, completedContentieuxId: number): number | null {
+  return clearContentieuxActionState(currentLoadingId, completedContentieuxId);
+}
+
 export default function ContentieuxPage() {
   const { hasRole, user } = useAuth();
   const [rows, setRows] = useState<Contentieux[]>([]);
   const [timelines, setTimelines] = useState<Record<number, TimelineEvent[]>>({});
+  const [attachments, setAttachments] = useState<Record<number, ContentieuxAttachment[]>>({});
   const [openRowId, setOpenRowId] = useState<number | null>(null);
   const [loadingTimelineId, setLoadingTimelineId] = useState<number | null>(null);
+  const [loadingAttachmentsId, setLoadingAttachmentsId] = useState<number | null>(null);
   const [savingTimelineId, setSavingTimelineId] = useState<number | null>(null);
+  const [uploadingAttachmentId, setUploadingAttachmentId] = useState<number | null>(null);
   const [downloadingTimelineId, setDownloadingTimelineId] = useState<number | null>(null);
+  const [downloadingAttachmentId, setDownloadingAttachmentId] = useState<number | null>(null);
+  const [previewingAttachmentId, setPreviewingAttachmentId] = useState<number | null>(null);
+  const [selectedAttachmentIds, setSelectedAttachmentIds] = useState<Record<number, number | null>>({});
+  const [attachmentPreviewUrl, setAttachmentPreviewUrl] = useState<string | null>(null);
+  const [attachmentPreviewMimeType, setAttachmentPreviewMimeType] = useState<string | null>(null);
+  const [attachmentPreviewError, setAttachmentPreviewError] = useState<string | null>(null);
   const [decisioningId, setDecisioningId] = useState<number | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [decisionDrafts, setDecisionDrafts] = useState<Record<number, { statut: string; decision: string }>>({});
   const [timelineDrafts, setTimelineDrafts] = useState<Record<number, TimelineDraft>>({});
+  const [attachmentDrafts, setAttachmentDrafts] = useState<Record<number, AttachmentUploadDraft>>({});
   const [deadlineDrafts, setDeadlineDrafts] = useState<Record<number, DeadlineExtensionDraft>>({});
 
   const canCreate = hasRole('admin', 'gestionnaire') || (user?.role === 'contribuable' && user.assujetti_id);
   const canManage = hasRole('admin', 'gestionnaire', 'financier');
+  const canViewAttachments = canViewContentieuxAttachments(user);
+  const canUploadAttachments = canUploadContentieuxAttachments(user);
 
   const load = () => {
     api<Contentieux[]>('/api/contentieux')
@@ -153,6 +225,12 @@ export default function ContentieuxPage() {
       .catch((e) => setErr((e as Error).message));
   };
   useEffect(load, []);
+
+  useEffect(() => () => {
+    if (attachmentPreviewUrl) {
+      window.URL.revokeObjectURL(attachmentPreviewUrl);
+    }
+  }, [attachmentPreviewUrl]);
 
   const ensureTimelineDraft = (contentieuxId: number) => {
     setTimelineDrafts((prev) => {
@@ -178,6 +256,19 @@ export default function ContentieuxPage() {
         [contentieux.id]: {
           statut: contentieux.statut === 'ouvert' ? defaultDecisionStatus : contentieux.statut,
           decision: contentieux.decision ?? '',
+        },
+      };
+    });
+  };
+
+  const ensureAttachmentDraft = (contentieuxId: number) => {
+    setAttachmentDrafts((prev) => {
+      if (prev[contentieuxId]) return prev;
+      return {
+        ...prev,
+        [contentieuxId]: {
+          type_piece: defaultAttachmentTypeForRole(user?.role),
+          file: null,
         },
       };
     });
@@ -210,16 +301,59 @@ export default function ContentieuxPage() {
     }
   };
 
+  const loadAttachments = async (contentieuxId: number) => {
+    if (!canViewAttachments) return;
+    setLoadingAttachmentsId(contentieuxId);
+    try {
+      const rows = await api<ContentieuxAttachment[]>(`/api/contentieux/${contentieuxId}/pieces-jointes`);
+      setAttachments((prev) => ({ ...prev, [contentieuxId]: rows }));
+      setSelectedAttachmentIds((prev) => {
+        const currentSelected = prev[contentieuxId];
+        const stillExists = rows.some((row) => row.id === currentSelected);
+        return {
+          ...prev,
+          [contentieuxId]: stillExists ? currentSelected ?? null : rows[0]?.id ?? null,
+        };
+      });
+      ensureAttachmentDraft(contentieuxId);
+      setErr(null);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setLoadingAttachmentsId((current) => clearAttachmentLoadingState(current, contentieuxId));
+    }
+  };
+
+  const resetAttachmentPreview = () => {
+    if (attachmentPreviewUrl) {
+      window.URL.revokeObjectURL(attachmentPreviewUrl);
+    }
+    setAttachmentPreviewUrl(null);
+    setAttachmentPreviewMimeType(null);
+    setAttachmentPreviewError(null);
+    setPreviewingAttachmentId(null);
+  };
+
   const toggleTimeline = async (contentieux: Contentieux) => {
     if (openRowId === contentieux.id) {
       setOpenRowId(null);
+      resetAttachmentPreview();
       return;
     }
+    resetAttachmentPreview();
     setOpenRowId(contentieux.id);
     ensureDecisionDraft(contentieux);
     ensureDeadlineDraft(contentieux);
+    ensureAttachmentDraft(contentieux.id);
+    const loaders: Array<Promise<unknown>> = [];
     if (!timelines[contentieux.id]) {
-      await loadTimeline(contentieux.id);
+      loaders.push(loadTimeline(contentieux.id));
+    }
+    if (canViewAttachments && !attachments[contentieux.id]) {
+      loaders.push(loadAttachments(contentieux.id));
+    }
+    if (loaders.length > 0) {
+      await Promise.all(loaders);
     }
   };
 
@@ -248,7 +382,7 @@ export default function ContentieuxPage() {
           decision: draft.decision.trim() ? draft.decision.trim() : null,
         }),
       });
-      await Promise.all([load(), loadTimeline(contentieux.id)]);
+      await Promise.all([load(), loadTimeline(contentieux.id), loadAttachments(contentieux.id)]);
       setErr(null);
     } catch (e) {
       setErr((e as Error).message);
@@ -287,6 +421,17 @@ export default function ContentieuxPage() {
     }));
   };
 
+  const updateAttachmentDraft = (contentieuxId: number, patch: Partial<AttachmentUploadDraft>) => {
+    setAttachmentDrafts((prev) => ({
+      ...prev,
+      [contentieuxId]: {
+        type_piece: prev[contentieuxId]?.type_piece ?? defaultAttachmentTypeForRole(user?.role),
+        file: prev[contentieuxId]?.file ?? null,
+        ...patch,
+      },
+    }));
+  };
+
   const submitTimelineEvent = async (contentieuxId: number) => {
     const draft = timelineDrafts[contentieuxId];
     if (!draft) return;
@@ -310,12 +455,79 @@ export default function ContentieuxPage() {
           piece_jointe_id: '',
         },
       }));
-      await loadTimeline(contentieuxId);
+      await Promise.all([loadTimeline(contentieuxId), loadAttachments(contentieuxId)]);
       setErr(null);
     } catch (e) {
       setErr((e as Error).message);
     } finally {
       setSavingTimelineId((current) => clearContentieuxActionState(current, contentieuxId));
+    }
+  };
+
+  const uploadAttachment = async (contentieuxId: number) => {
+    const draft = attachmentDrafts[contentieuxId];
+    if (!draft?.file) return;
+    setUploadingAttachmentId(contentieuxId);
+    try {
+      const formData = new FormData();
+      formData.set('entite', 'contentieux');
+      formData.set('entite_id', String(contentieuxId));
+      formData.set('type_piece', draft.type_piece);
+      formData.set('fichier', draft.file);
+      await api('/api/pieces-jointes', {
+        method: 'POST',
+        body: formData,
+      });
+      setAttachmentDrafts((prev) => ({
+        ...prev,
+        [contentieuxId]: {
+          type_piece: defaultAttachmentTypeForRole(user?.role),
+          file: null,
+        },
+      }));
+      await loadAttachments(contentieuxId);
+      setErr(null);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setUploadingAttachmentId((current) => clearContentieuxActionState(current, contentieuxId));
+    }
+  };
+
+  const previewAttachment = async (contentieuxId: number, attachment: ContentieuxAttachment) => {
+    resetAttachmentPreview();
+    setPreviewingAttachmentId(attachment.id);
+    try {
+      const blob = await apiBlob(attachment.download_url);
+      const url = window.URL.createObjectURL(blob);
+      setAttachmentPreviewUrl(url);
+      setAttachmentPreviewMimeType(attachment.mime_type);
+      setSelectedAttachmentIds((prev) => ({ ...prev, [contentieuxId]: attachment.id }));
+      setErr(null);
+    } catch (e) {
+      setAttachmentPreviewError((e as Error).message);
+    } finally {
+      setPreviewingAttachmentId(null);
+    }
+  };
+
+  const downloadAttachment = async (attachment: ContentieuxAttachment) => {
+    setDownloadingAttachmentId(attachment.id);
+    try {
+      const blob = await apiBlob(attachment.download_url);
+      const href = window.URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = href;
+      anchor.download = attachment.nom;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(href);
+      setErr(null);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setDownloadingAttachmentId(null);
     }
   };
 
@@ -351,7 +563,7 @@ export default function ContentieuxPage() {
           justification: draft.justification,
         }),
       });
-      await Promise.all([load(), loadTimeline(contentieux.id)]);
+      await Promise.all([load(), loadTimeline(contentieux.id), loadAttachments(contentieux.id)]);
       setErr(null);
     } catch (e) {
       setErr((e as Error).message);
@@ -403,6 +615,16 @@ export default function ContentieuxPage() {
                 description: '',
                 piece_jointe_id: '',
               };
+              const attachmentDraft = attachmentDrafts[contentieux.id] ?? {
+                type_piece: defaultAttachmentTypeForRole(user?.role),
+                file: null,
+              };
+              const contentieuxAttachments = attachments[contentieux.id] ?? [];
+              const selectedAttachmentId = selectedAttachmentIds[contentieux.id] ?? contentieuxAttachments[0]?.id ?? null;
+              const selectedAttachment = contentieuxAttachments.find((attachment) => attachment.id === selectedAttachmentId) ?? null;
+              const selectedAttachmentPreviewKind = selectedAttachment
+                ? attachmentPreviewKind(selectedAttachment.mime_type)
+                : 'unsupported';
               const deadlineDraft = deadlineDrafts[contentieux.id] ?? {
                 date_limite_reponse: contentieux.date_limite_reponse ?? '',
                 justification: contentieux.delai_prolonge_justification ?? '',
@@ -519,6 +741,122 @@ export default function ContentieuxPage() {
                                       </button>
                                     </div>
                                   </div>
+                                </div>
+                              )}
+
+                              {canViewAttachments && (
+                                <div className="card">
+                                  <h3 style={{ marginTop: 0 }}>Pièces jointes</h3>
+                                  <div className="timeline-muted" style={{ marginBottom: 12 }}>
+                                    {loadingAttachmentsId === contentieux.id
+                                      ? 'Chargement des pièces jointes…'
+                                      : `${contentieuxAttachments.length} pièce(s) jointe(s)`}
+                                    {user?.role === 'contribuable' ? ' • les pièces administration restent en lecture seule' : ''}
+                                  </div>
+
+                                  {contentieuxAttachments.length === 0 && loadingAttachmentsId !== contentieux.id ? (
+                                    <div className="empty" style={{ padding: '12px 0' }}>Aucune pièce jointe.</div>
+                                  ) : (
+                                    <div className="contentieux-attachments-list">
+                                      {contentieuxAttachments.map((attachment) => (
+                                        <button
+                                          key={attachment.id}
+                                          type="button"
+                                          className={`contentieux-attachment-item${selectedAttachmentId === attachment.id ? ' active' : ''}`}
+                                          onClick={() => {
+                                            setSelectedAttachmentIds((prev) => ({ ...prev, [contentieux.id]: attachment.id }));
+                                          }}
+                                        >
+                                          <strong>{attachment.type_piece_label}</strong>
+                                          <span>{attachment.nom}</span>
+                                          <span className="timeline-muted">
+                                            {formatDate(attachment.created_at)} • {attachment.auteur}
+                                          </span>
+                                        </button>
+                                      ))}
+                                    </div>
+                                  )}
+
+                                  {selectedAttachment && (
+                                    <div className="contentieux-attachment-preview">
+                                      <div className="contentieux-attachment-toolbar">
+                                        <div>
+                                          <strong>{selectedAttachment.nom}</strong>
+                                          <div className="timeline-muted">
+                                            {selectedAttachment.type_piece_label} • {selectedAttachment.mime_type} • {selectedAttachment.auteur}
+                                          </div>
+                                        </div>
+                                        <div className="contentieux-attachment-toolbar-actions">
+                                          <button
+                                            type="button"
+                                            className="btn small secondary"
+                                            onClick={() => { void previewAttachment(contentieux.id, selectedAttachment); }}
+                                            disabled={previewingAttachmentId === selectedAttachment.id}
+                                          >
+                                            {previewingAttachmentId === selectedAttachment.id ? 'Prévisualisation...' : 'Aperçu'}
+                                          </button>
+                                          <button
+                                            type="button"
+                                            className="btn small secondary"
+                                            onClick={() => { void downloadAttachment(selectedAttachment); }}
+                                            disabled={downloadingAttachmentId === selectedAttachment.id}
+                                          >
+                                            {downloadingAttachmentId === selectedAttachment.id ? 'Téléchargement...' : 'Télécharger'}
+                                          </button>
+                                        </div>
+                                      </div>
+
+                                      {attachmentPreviewError && <div className="alert error">{attachmentPreviewError}</div>}
+                                      {attachmentPreviewUrl && selectedAttachmentPreviewKind === 'pdf' && (
+                                        <iframe title={`Aperçu ${selectedAttachment.nom}`} src={attachmentPreviewUrl} className="contentieux-attachment-frame" />
+                                      )}
+                                      {attachmentPreviewUrl && selectedAttachmentPreviewKind === 'image' && (
+                                        <img src={attachmentPreviewUrl} alt={selectedAttachment.nom} className="contentieux-attachment-image" />
+                                      )}
+                                      {attachmentPreviewUrl && selectedAttachmentPreviewKind === 'unsupported' && (
+                                        <div className="timeline-muted">Aperçu indisponible pour ce type de fichier. Utilisez le téléchargement.</div>
+                                      )}
+                                    </div>
+                                  )}
+
+                                  {canUploadAttachments && (
+                                    <div className="form" style={{ marginTop: 16 }}>
+                                      <div className="form-row">
+                                        <div>
+                                          <label>Catégorie</label>
+                                          <select
+                                            value={attachmentDraft.type_piece}
+                                            onChange={(e) => updateAttachmentDraft(contentieux.id, { type_piece: e.target.value as ContentieuxAttachmentType })}
+                                          >
+                                            {attachmentTypeOptionsForRole(user?.role).map((option) => (
+                                              <option key={option.value} value={option.value}>{option.label}</option>
+                                            ))}
+                                          </select>
+                                        </div>
+                                        <div>
+                                          <label>Fichier (PDF, PNG, JPG)</label>
+                                          <input
+                                            type="file"
+                                            accept="application/pdf,image/png,image/jpeg"
+                                            onChange={(e) => updateAttachmentDraft(contentieux.id, { file: e.target.files?.[0] ?? null })}
+                                          />
+                                        </div>
+                                      </div>
+                                      <div className="timeline-muted">
+                                        {attachmentDraft.file ? `Fichier prêt : ${attachmentDraft.file.name}` : 'Sélectionnez un document à verser au dossier.'}
+                                      </div>
+                                      <div className="actions">
+                                        <button
+                                          type="button"
+                                          className="btn secondary"
+                                          onClick={() => { void uploadAttachment(contentieux.id); }}
+                                          disabled={uploadingAttachmentId === contentieux.id || !attachmentDraft.file}
+                                        >
+                                          {uploadingAttachmentId === contentieux.id ? 'Téléversement...' : 'Ajouter la pièce jointe'}
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )}
                                 </div>
                               )}
 

@@ -606,6 +606,7 @@ CREATE TABLE IF NOT EXISTS pieces_jointes (
   mime_type     TEXT NOT NULL,
   taille        INTEGER NOT NULL CHECK (taille > 0),
   chemin        TEXT NOT NULL,
+  type_piece    TEXT CHECK (type_piece IS NULL OR type_piece IN ('courrier-admin','courrier-contribuable','decision','jugement')),
   uploaded_by   INTEGER,
   created_at    TEXT NOT NULL DEFAULT (datetime('now')),
   deleted_at    TEXT,

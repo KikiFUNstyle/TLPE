@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildBordereauFilename, buildBordereauPath, canExportBordereau } from './titresBordereau';
 import {
+  api,
   apiBlob,
   apiBlobWithMetadata,
   buildHeaders,
@@ -74,6 +75,32 @@ test('apiBlob POST JSON envoie bien Content-Type application/json', async () => 
     });
     const headers = capturedHeaders as Record<string, string>;
     assert.equal(headers['Content-Type'], 'application/json');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('api POST FormData ne force pas Content-Type JSON pour les uploads multipart', async () => {
+  const originalFetch = globalThis.fetch;
+  let capturedHeaders: HeadersInit | undefined;
+  globalThis.fetch = (async (_input, init) => {
+    capturedHeaders = init?.headers;
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  }) as typeof fetch;
+
+  try {
+    const formData = new FormData();
+    formData.set('entite', 'contentieux');
+    formData.set('entite_id', '12');
+    await api('/api/pieces-jointes', {
+      method: 'POST',
+      body: formData,
+    });
+    const headers = (capturedHeaders ?? {}) as Record<string, string>;
+    assert.equal(headers['Content-Type'], undefined);
   } finally {
     globalThis.fetch = originalFetch;
   }
