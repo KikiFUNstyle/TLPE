@@ -9,6 +9,7 @@ import {
   syncQueuedControles,
   type ControleDraftInput,
   type QueuedControleRecord,
+  CONTROLE_FILE_ACCEPT,
 } from './Controles';
 
 test('canAccessControles ouvre le module uniquement aux rôles terrain autorisés', () => {
@@ -76,6 +77,11 @@ test('acquireControleSyncLock empêche une double synchronisation concurrente', 
   assert.equal(acquireControleSyncLock(syncRef), true);
   assert.equal(syncRef.current, true);
   assert.equal(acquireControleSyncLock(syncRef), false);
+});
+
+test('le sélecteur de fichiers terrain n’autorise que les photos jpeg/png', () => {
+  assert.equal(CONTROLE_FILE_ACCEPT, 'image/jpeg,image/png');
+  assert.equal(CONTROLE_FILE_ACCEPT.includes('application/pdf'), false);
 });
 
 test('syncQueuedControles retire le brouillon avant upload photo pour éviter un doublon si l’upload échoue', async () => {

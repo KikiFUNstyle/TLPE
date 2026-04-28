@@ -23,6 +23,8 @@ export interface ControleDraftInput {
   create_dispositif: ControleCreateDispositifInput | null;
 }
 
+export const CONTROLE_FILE_ACCEPT = 'image/jpeg,image/png';
+
 interface ControleRow {
   id: number;
   dispositif_id: number | null;
@@ -702,7 +704,7 @@ export default function Controles() {
             <label>Photos / pièces du constat</label>
             <input
               type="file"
-              accept="image/jpeg,image/png,application/pdf"
+              accept={CONTROLE_FILE_ACCEPT}
               multiple
               onChange={(event) => setSelectedPhotos(Array.from(event.target.files ?? []))}
             />
