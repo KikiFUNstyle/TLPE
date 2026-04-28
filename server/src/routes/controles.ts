@@ -126,6 +126,73 @@ function ensureDispositifExists(dispositifId: number) {
     | undefined;
 }
 
+const DISPOSITIF_NOT_FOUND_ERROR = 'controle-dispositif-not-found';
+
+const createControleTransaction = db.transaction(
+  (input: z.infer<typeof controleSchema>, userId: number, ip: string | null | undefined) => {
+    let dispositifId = input.dispositif_id ?? null;
+    let createdDispositifIdentifiant: string | null = null;
+
+    if (input.create_dispositif) {
+      const created = createDispositifFromControle(input.create_dispositif, userId);
+      dispositifId = created.dispositifId;
+      createdDispositifIdentifiant = created.identifiant;
+    } else if (dispositifId !== null) {
+      const existingDispositif = ensureDispositifExists(dispositifId);
+      if (!existingDispositif) {
+        throw new Error(DISPOSITIF_NOT_FOUND_ERROR);
+      }
+    }
+
+    const info = db
+      .prepare(
+        `INSERT INTO controles (
+          dispositif_id, agent_id, date_controle, latitude, longitude,
+          surface_mesuree, nombre_faces_mesurees, ecart_detecte, ecart_description, statut
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        dispositifId,
+        userId,
+        input.date_controle,
+        input.latitude,
+        input.longitude,
+        input.surface_mesuree,
+        input.nombre_faces_mesurees,
+        input.ecart_detecte ? 1 : 0,
+        input.ecart_description?.trim() || null,
+        input.statut ?? 'saisi',
+      );
+
+    const controleId = Number(info.lastInsertRowid);
+
+    if (dispositifId !== null) {
+      db.prepare(`UPDATE dispositifs SET statut = 'controle', updated_at = datetime('now') WHERE id = ?`).run(dispositifId);
+    }
+
+    logAudit({
+      userId,
+      action: 'create',
+      entite: 'controle',
+      entiteId: controleId,
+      details: {
+        dispositif_id: dispositifId,
+        created_dispositif_identifiant: createdDispositifIdentifiant,
+        ecart_detecte: input.ecart_detecte,
+        date_controle: input.date_controle,
+      },
+      ip: ip ?? null,
+    });
+
+    return {
+      id: controleId,
+      dispositif_id: dispositifId,
+      created_dispositif_identifiant: createdDispositifIdentifiant,
+      photos_count: 0,
+    };
+  },
+);
+
 controlesRouter.get('/', (_req, res) => {
   const rows = db
     .prepare(
@@ -194,73 +261,18 @@ controlesRouter.post('/', (req, res) => {
     });
   }
 
-  let dispositifId = input.dispositif_id ?? null;
-  let createdDispositifIdentifiant: string | null = null;
-
-  if (input.create_dispositif) {
-    try {
-      const created = createDispositifFromControle(input.create_dispositif, userId);
-      dispositifId = created.dispositifId;
-      createdDispositifIdentifiant = created.identifiant;
-    } catch (error) {
-      if (isForeignKeyConstraintError(error)) {
-        return res.status(400).json({
-          error: 'Référentiel invalide pour le dispositif créé (assujetti, type ou zone introuvable)',
-        });
-      }
-      throw error;
-    }
-  } else if (dispositifId !== null) {
-    const existingDispositif = ensureDispositifExists(dispositifId);
-    if (!existingDispositif) {
+  try {
+    const created = createControleTransaction(input, userId, req.ip ?? null);
+    res.status(201).json(created);
+  } catch (error) {
+    if (error instanceof Error && error.message === DISPOSITIF_NOT_FOUND_ERROR) {
       return res.status(404).json({ error: 'Dispositif introuvable' });
     }
+    if (isForeignKeyConstraintError(error)) {
+      return res.status(400).json({
+        error: 'Référentiel invalide pour le dispositif créé (assujetti, type ou zone introuvable)',
+      });
+    }
+    throw error;
   }
-
-  const info = db
-    .prepare(
-      `INSERT INTO controles (
-        dispositif_id, agent_id, date_controle, latitude, longitude,
-        surface_mesuree, nombre_faces_mesurees, ecart_detecte, ecart_description, statut
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      dispositifId,
-      userId,
-      input.date_controle,
-      input.latitude,
-      input.longitude,
-      input.surface_mesuree,
-      input.nombre_faces_mesurees,
-      input.ecart_detecte ? 1 : 0,
-      input.ecart_description?.trim() || null,
-      input.statut ?? 'saisi',
-    );
-
-  const controleId = Number(info.lastInsertRowid);
-
-  if (dispositifId !== null) {
-    db.prepare(`UPDATE dispositifs SET statut = 'controle', updated_at = datetime('now') WHERE id = ?`).run(dispositifId);
-  }
-
-  logAudit({
-    userId,
-    action: 'create',
-    entite: 'controle',
-    entiteId: controleId,
-    details: {
-      dispositif_id: dispositifId,
-      created_dispositif_identifiant: createdDispositifIdentifiant,
-      ecart_detecte: input.ecart_detecte,
-      date_controle: input.date_controle,
-    },
-    ip: req.ip ?? null,
-  });
-
-  res.status(201).json({
-    id: controleId,
-    dispositif_id: dispositifId,
-    created_dispositif_identifiant: createdDispositifIdentifiant,
-    photos_count: 0,
-  });
 });

@@ -201,8 +201,10 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
   - le service worker ne doit renvoyer `index.html` qu’aux requêtes de navigation ; un asset statique manquant/offline ne doit pas recevoir du HTML en fallback,
   - l’état `en ligne / hors ligne` affiché dans l’UI doit être réactif (`useState` + listeners `online`/`offline`), pas une simple lecture ponctuelle de `navigator.onLine` dans le rendu,
   - la synchronisation des brouillons hors-ligne doit être protégée contre les doubles déclenchements concurrents (verrou/ref explicite côté UI ou idempotence équivalente) pour éviter les doublons de constats au retour réseau,
+  - après création serveur réussie d’un constat hors-ligne, le brouillon IndexedDB doit être retiré avant l’upload des photos ; un échec d’upload ne doit jamais re-poster le même constat au prochain retry,
   - les uploads de pièces jointes `entite='controle'` doivent être limités aux photos terrain (`image/jpeg|image/png`), même si d’autres entités métier autorisent aussi les PDF,
-  - la création d’un dispositif depuis un constat terrain doit convertir tout échec FK SQLite (`assujetti/type/zone` introuvable) en réponse 4xx métier exploitable, jamais en 500 brut.
+  - la création d’un dispositif depuis un constat terrain doit convertir tout échec FK SQLite (`assujetti/type/zone` introuvable) en réponse 4xx métier exploitable, jamais en 500 brut,
+  - la création du dispositif, l’insertion du contrôle, la mise à jour de statut et les audits associés doivent être enveloppés dans une transaction SQLite unique pour éviter tout write partiel si une étape aval échoue.
 
 ## Format de sortie review
 

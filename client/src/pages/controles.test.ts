@@ -6,7 +6,9 @@ import {
   controleSubmissionMode,
   readNavigatorOnline,
   shouldQueueControleOffline,
+  syncQueuedControles,
   type ControleDraftInput,
+  type QueuedControleRecord,
 } from './Controles';
 
 test('canAccessControles ouvre le module uniquement aux rôles terrain autorisés', () => {
@@ -74,4 +76,46 @@ test('acquireControleSyncLock empêche une double synchronisation concurrente', 
   assert.equal(acquireControleSyncLock(syncRef), true);
   assert.equal(syncRef.current, true);
   assert.equal(acquireControleSyncLock(syncRef), false);
+});
+
+test('syncQueuedControles retire le brouillon avant upload photo pour éviter un doublon si l’upload échoue', async () => {
+  const draft: QueuedControleRecord = {
+    id: 'draft-1',
+    payload: {
+      dispositif_id: 12,
+      create_dispositif: null,
+      date_controle: '2026-05-12',
+      latitude: 48.8566,
+      longitude: 2.3522,
+      surface_mesuree: 12,
+      nombre_faces_mesurees: 1,
+      ecart_detecte: false,
+      ecart_description: null,
+      statut: 'saisi',
+    },
+    photos: [{ name: 'photo.jpg', type: 'image/jpeg', blob: new Blob(['jpg']) }],
+    created_at: '2026-04-28T00:00:00.000Z',
+  };
+
+  const calls: string[] = [];
+  let queue = [draft];
+
+  const result = await syncQueuedControles({
+    listQueuedControles: async () => queue,
+    createControle: async () => {
+      calls.push('create');
+      return { id: 99 };
+    },
+    deleteQueuedControle: async (id) => {
+      calls.push(`delete:${id}`);
+      queue = queue.filter((item) => item.id !== id);
+    },
+    uploadControlePhotos: async () => {
+      calls.push('upload');
+      throw new Error('upload failed');
+    },
+  });
+
+  assert.deepEqual(calls, ['create', 'delete:draft-1', 'upload']);
+  assert.deepEqual(result, { synced: 0, remaining: 0 });
 });

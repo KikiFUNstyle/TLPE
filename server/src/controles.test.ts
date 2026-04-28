@@ -510,3 +510,52 @@ test('POST /api/pieces-jointes refuse au contrôleur les pièces jointes hors en
     server.close();
   }
 });
+
+test('POST /api/controles rollbacke la création de dispositif si l’insertion du contrôle échoue ensuite', async () => {
+  const fx = resetFixtures();
+  const beforeCount = (
+    db.prepare(`SELECT COUNT(*) AS count FROM dispositifs WHERE notes = 'rollback-check'`).get() as { count: number }
+  ).count;
+
+  const response = await request({
+    method: 'POST',
+    path: '/api/controles',
+    headers: makeAuthHeader({
+      ...fx.controleur,
+      id: 999999,
+      email: 'ghost-controleur@tlpe.local',
+    }),
+    body: {
+      date_controle: '2026-05-13',
+      latitude: 48.857,
+      longitude: 2.353,
+      surface_mesuree: 6,
+      nombre_faces_mesurees: 1,
+      ecart_detecte: true,
+      ecart_description: 'Rollback attendu si l’agent est invalide',
+      statut: 'saisi',
+      create_dispositif: {
+        assujetti_id: fx.assujettiId,
+        type_id: fx.typeId,
+        zone_id: fx.zoneId,
+        adresse_rue: '99 avenue du Terrain',
+        adresse_cp: '75002',
+        adresse_ville: 'Paris',
+        latitude: 48.857,
+        longitude: 2.353,
+        surface: 6,
+        nombre_faces: 1,
+        statut: 'controle',
+        notes: 'rollback-check',
+      },
+    },
+  });
+
+  assert.equal(response.status, 400);
+  assert.match(String((response.data as { error: string }).error), /assujetti|type|zone|référentiel|referentiel/i);
+
+  const afterCount = (
+    db.prepare(`SELECT COUNT(*) AS count FROM dispositifs WHERE notes = 'rollback-check'`).get() as { count: number }
+  ).count;
+  assert.equal(afterCount, beforeCount);
+});

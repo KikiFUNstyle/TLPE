@@ -99,7 +99,7 @@ interface QueuedControlePhoto {
   blob: Blob;
 }
 
-interface QueuedControleRecord {
+export interface QueuedControleRecord {
   id: string;
   payload: {
     dispositif_id: number | null;
@@ -239,26 +239,39 @@ async function uploadControlePhotos(controleId: number, photos: File[]): Promise
   }
 }
 
-async function syncQueuedControles(): Promise<{ synced: number; remaining: number }> {
-  const queued = await listQueuedControles();
+export async function syncQueuedControles(deps?: {
+  listQueuedControles?: () => Promise<QueuedControleRecord[]>;
+  createControle?: (payload: QueuedControleRecord['payload']) => Promise<{ id: number }>;
+  uploadControlePhotos?: (controleId: number, photos: File[]) => Promise<void>;
+  deleteQueuedControle?: (id: string) => Promise<void>;
+}): Promise<{ synced: number; remaining: number }> {
+  const listQueued = deps?.listQueuedControles ?? listQueuedControles;
+  const createControle =
+    deps?.createControle ??
+    ((payload: QueuedControleRecord['payload']) =>
+      api<{ id: number }>('/api/controles', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }));
+  const uploadPhotos = deps?.uploadControlePhotos ?? uploadControlePhotos;
+  const deleteQueued = deps?.deleteQueuedControle ?? deleteQueuedControle;
+
+  const queued = await listQueued();
   let synced = 0;
 
   for (const draft of queued) {
     try {
-      const created = await api<{ id: number }>('/api/controles', {
-        method: 'POST',
-        body: JSON.stringify(draft.payload),
-      });
+      const created = await createControle(draft.payload);
+      await deleteQueued(draft.id);
       const files = draft.photos.map((photo) => new File([photo.blob], photo.name, { type: photo.type }));
-      await uploadControlePhotos(created.id, files);
-      await deleteQueuedControle(draft.id);
+      await uploadPhotos(created.id, files);
       synced += 1;
     } catch {
       break;
     }
   }
 
-  const remaining = (await listQueuedControles()).length;
+  const remaining = (await listQueued()).length;
   return { synced, remaining };
 }
 
