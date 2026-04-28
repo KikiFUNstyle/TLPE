@@ -678,6 +678,22 @@ CREATE TABLE IF NOT EXISTS titre_mises_en_demeure_sequences (
   UNIQUE (annee, numero_ordre)
 );
 
+CREATE TABLE IF NOT EXISTS rapports_exports (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  type_rapport  TEXT NOT NULL CHECK (type_rapport IN ('role_tlpe')),
+  annee         INTEGER NOT NULL,
+  format        TEXT NOT NULL CHECK (format IN ('pdf','xlsx')),
+  filename      TEXT NOT NULL,
+  storage_path  TEXT NOT NULL,
+  content_hash  TEXT NOT NULL,
+  titres_count  INTEGER NOT NULL DEFAULT 0,
+  total_montant REAL NOT NULL DEFAULT 0,
+  generated_by  INTEGER,
+  exported_at   TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (generated_by) REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rapports_exports_type_annee ON rapports_exports(type_rapport, annee, exported_at DESC);
+
 -- =====================================================================
 -- Audit log (traçabilite cf. section 12.2)
 -- =====================================================================
