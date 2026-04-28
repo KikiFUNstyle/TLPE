@@ -68,8 +68,8 @@ const controleSchema = z
 
 function generateDispositifIdentifiant(): string {
   const year = new Date().getFullYear();
-  const count = (db.prepare('SELECT COUNT(*) AS c FROM dispositifs').get() as { c: number }).c;
-  return `DSP-${year}-${String(count + 1).padStart(6, '0')}`;
+  const maxId = (db.prepare('SELECT COALESCE(MAX(id), 0) AS max_id FROM dispositifs').get() as { max_id: number }).max_id;
+  return `DSP-${year}-${String(Number(maxId) + 1).padStart(6, '0')}`;
 }
 
 function createDispositifFromControle(input: z.infer<typeof createDispositifSchema>, userId: number) {

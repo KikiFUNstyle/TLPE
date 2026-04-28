@@ -233,6 +233,14 @@ test('POST /api/controles crée un constat rattaché à un dispositif existant p
 test('POST /api/controles peut créer une nouvelle fiche dispositif à partir du constat terrain', async () => {
   const fx = resetFixtures();
 
+  const deletedDispositifInfo = db.prepare(
+    `INSERT INTO dispositifs (
+      identifiant, assujetti_id, type_id, zone_id, adresse_rue, adresse_cp, adresse_ville,
+      latitude, longitude, surface, nombre_faces, statut
+    ) VALUES ('DSP-CTRL-DELETED', ?, ?, ?, 'Rue supprimée', '75009', 'Paris', 48.85, 2.34, 4, 1, 'depose')`,
+  ).run(fx.assujettiId, fx.typeId, fx.zoneId);
+  db.prepare('DELETE FROM dispositifs WHERE id = ?').run(Number(deletedDispositifInfo.lastInsertRowid));
+
   const created = await request({
     method: 'POST',
     path: '/api/controles',

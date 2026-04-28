@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   canAccessControles,
   controleSubmissionMode,
+  readNavigatorOnline,
   shouldQueueControleOffline,
   type ControleDraftInput,
 } from './Controles';
@@ -44,4 +45,24 @@ test('controleSubmissionMode rejette un brouillon sans rattachement ni création
 test('shouldQueueControleOffline bascule en file locale quand le terminal est hors ligne', () => {
   assert.equal(shouldQueueControleOffline(true), false);
   assert.equal(shouldQueueControleOffline(false), true);
+});
+
+test('readNavigatorOnline lit l’état navigateur avec fallback SSR sûr', () => {
+  const originalNavigator = globalThis.navigator;
+  Object.defineProperty(globalThis, 'navigator', {
+    value: { onLine: false },
+    configurable: true,
+  });
+  assert.equal(readNavigatorOnline(), false);
+
+  Object.defineProperty(globalThis, 'navigator', {
+    value: undefined,
+    configurable: true,
+  });
+  assert.equal(readNavigatorOnline(), true);
+
+  Object.defineProperty(globalThis, 'navigator', {
+    value: originalNavigator,
+    configurable: true,
+  });
 });

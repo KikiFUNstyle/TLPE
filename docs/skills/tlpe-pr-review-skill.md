@@ -197,7 +197,9 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
   - support des photos via `pieces_jointes.entite='controle'`, y compris migration runtime idempotente pour les bases legacy,
   - restitution utilisateur exploitable des erreurs Zod côté API/UI (premier message clair, pas seulement un objet sérialisé `[object Object]`),
   - date par défaut des formulaires `input[type=date]` calculée en local browser (pas `toISOString().slice(0,10)` brut, sensible à l’UTC),
-  - si un mode hors-ligne navigateur est annoncé, vérifier IndexedDB + synchronisation au retour réseau + présence d’un smoke test de démarrage/service worker, sans confondre cela avec une application mobile native hors périmètre MVP.
+  - si un mode hors-ligne navigateur est annoncé, vérifier IndexedDB + synchronisation au retour réseau + présence d’un smoke test de démarrage/service worker, sans confondre cela avec une application mobile native hors périmètre MVP,
+  - le service worker ne doit renvoyer `index.html` qu’aux requêtes de navigation ; un asset statique manquant/offline ne doit pas recevoir du HTML en fallback,
+  - l’état `en ligne / hors ligne` affiché dans l’UI doit être réactif (`useState` + listeners `online`/`offline`), pas une simple lecture ponctuelle de `navigator.onLine` dans le rendu.
 
 ## Format de sortie review
 

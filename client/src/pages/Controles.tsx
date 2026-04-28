@@ -134,6 +134,11 @@ export function shouldQueueControleOffline(isOnline: boolean): boolean {
   return !isOnline;
 }
 
+export function readNavigatorOnline(): boolean {
+  if (typeof navigator === 'undefined') return true;
+  return navigator.onLine;
+}
+
 function todayInputValue(): string {
   const now = new Date();
   const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
@@ -301,6 +306,7 @@ export default function Controles() {
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [queuedCount, setQueuedCount] = useState(0);
+  const [isOnline, setIsOnline] = useState(() => readNavigatorOnline());
   const [err, setErr] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const canAccess = canAccessControles(user?.role);
@@ -341,6 +347,7 @@ export default function Controles() {
   }, [canAccess, load, refreshQueueCount]);
 
   const handleOnline = useCallback(() => {
+    setIsOnline(true);
     setInfo('Connexion rétablie, synchronisation des constats en attente…');
     void (async () => {
       setSyncing(true);
@@ -361,12 +368,22 @@ export default function Controles() {
     })();
   }, [load, refreshQueueCount]);
 
+  const handleOffline = useCallback(() => {
+    setIsOnline(false);
+    setInfo('Mode hors-ligne activé : les constats seront placés en file locale.');
+  }, []);
+
   useEffect(() => {
     if (!canAccess || typeof window === 'undefined') return;
-    const listener = () => handleOnline();
-    window.addEventListener('online', listener);
-    return () => window.removeEventListener('online', listener);
-  }, [canAccess, handleOnline]);
+    const onlineListener = () => handleOnline();
+    const offlineListener = () => handleOffline();
+    window.addEventListener('online', onlineListener);
+    window.addEventListener('offline', offlineListener);
+    return () => {
+      window.removeEventListener('online', onlineListener);
+      window.removeEventListener('offline', offlineListener);
+    };
+  }, [canAccess, handleOnline, handleOffline]);
 
   if (!canAccess) {
     return <div className="alert warning">Le module de contrôles terrain est réservé aux profils admin, gestionnaire et contrôleur.</div>;
@@ -430,7 +447,7 @@ export default function Controles() {
     setSaving(true);
     try {
       const payload = buildPayload(form, creationMode);
-      if (shouldQueueControleOffline(typeof navigator !== 'undefined' ? navigator.onLine : true)) {
+      if (shouldQueueControleOffline(isOnline)) {
         await queueCurrentControle(payload);
         resetForm();
         setInfo('Constat enregistré dans la file hors-ligne. Il sera synchronisé automatiquement dès le retour de la connexion.');
@@ -685,10 +702,10 @@ export default function Controles() {
             </p>
             <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
               <span className={`badge ${queuedCount > 0 ? 'warn' : 'success'}`}>{queuedCount} constat(s) en attente</span>
-              <span className={`badge ${(typeof navigator !== 'undefined' && navigator.onLine) ? 'success' : 'danger'}`}>
-                {(typeof navigator !== 'undefined' && navigator.onLine) ? 'en ligne' : 'hors ligne'}
+              <span className={`badge ${isOnline ? 'success' : 'danger'}`}>
+                {isOnline ? 'en ligne' : 'hors ligne'}
               </span>
-              <button className="btn secondary small" type="button" disabled={syncing || queuedCount === 0 || (typeof navigator !== 'undefined' && !navigator.onLine)} onClick={() => handleOnline()}>
+              <button className="btn secondary small" type="button" disabled={syncing || queuedCount === 0 || !isOnline} onClick={() => handleOnline()}>
                 {syncing ? 'Synchronisation…' : 'Synchroniser maintenant'}
               </button>
             </div>

@@ -29,7 +29,10 @@ self.addEventListener('fetch', (event) => {
       .catch(async () => {
         const cached = await caches.match(request);
         if (cached) return cached;
-        return caches.match('/index.html');
+        if (request.mode === 'navigate') {
+          return caches.match('/index.html');
+        }
+        throw new Error('offline-resource-miss');
       }),
   );
 });
