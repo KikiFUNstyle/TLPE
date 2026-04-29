@@ -124,7 +124,7 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
 - `npm run dev` puis smoke test backend (`/api/health`) et frontend (URL locale réelle, y compris port alternatif si 4000/5173 occupés)
 
 ### 8) Hygiène dépôt & artefacts runtime (appris sur US3.6)
-- Vérifier que les artefacts générés en test/dev (`server/data/receipts/*`, `server/data/mises_en_demeure/*`) ne polluent pas le diff Git.
+- Vérifier que les artefacts générés en test/dev (`server/data/receipts/*`, `server/data/mises_en_demeure/*`, `server/data/uploads/rapports/*`) ne polluent pas le diff Git.
 - Maintenir `.gitignore` aligné avec les nouveaux répertoires de sorties runtime avant push.
 - En review, confirmer qu'aucun fichier binaire/généré n'est commité par inadvertance.
 
