@@ -163,7 +163,7 @@ export function initSchema() {
     db.exec(`
       CREATE TABLE rapports_exports (
         id            INTEGER PRIMARY KEY AUTOINCREMENT,
-        type_rapport  TEXT NOT NULL CHECK (type_rapport IN ('role_tlpe')),
+        type_rapport  TEXT NOT NULL CHECK (type_rapport IN ('role_tlpe','etat_recouvrement','suivi_relances')),
         annee         INTEGER NOT NULL,
         format        TEXT NOT NULL CHECK (format IN ('pdf','xlsx')),
         filename      TEXT NOT NULL,
@@ -184,7 +184,13 @@ export function initSchema() {
       | { sql: string }
       | undefined
   )?.sql;
-  if (rapportsExportsSql && !/type_rapport\s+TEXT\s+NOT\s+NULL\s+CHECK\s*\(\s*type_rapport\s+IN\s*\([^)]*'etat_recouvrement'[^)]*\)\s*\)/i.test(rapportsExportsSql)) {
+  const hasEtatRecouvrementReport = /type_rapport\s+TEXT\s+NOT\s+NULL\s+CHECK\s*\(\s*type_rapport\s+IN\s*\([^)]*'etat_recouvrement'[^)]*\)\s*\)/i.test(
+    rapportsExportsSql ?? '',
+  );
+  const hasSuiviRelancesReport = /type_rapport\s+TEXT\s+NOT\s+NULL\s+CHECK\s*\(\s*type_rapport\s+IN\s*\([^)]*'suivi_relances'[^)]*\)\s*\)/i.test(
+    rapportsExportsSql ?? '',
+  );
+  if (rapportsExportsSql && (!hasEtatRecouvrementReport || !hasSuiviRelancesReport)) {
     db.pragma('foreign_keys = OFF');
     try {
       db.exec('BEGIN TRANSACTION');
@@ -192,7 +198,7 @@ export function initSchema() {
         db.exec(`
           CREATE TABLE rapports_exports_new (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
-            type_rapport  TEXT NOT NULL CHECK (type_rapport IN ('role_tlpe','etat_recouvrement')),
+            type_rapport  TEXT NOT NULL CHECK (type_rapport IN ('role_tlpe','etat_recouvrement','suivi_relances')),
             annee         INTEGER NOT NULL,
             format        TEXT NOT NULL CHECK (format IN ('pdf','xlsx')),
             filename      TEXT NOT NULL,

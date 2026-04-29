@@ -40,6 +40,48 @@ const recouvrementReportQuerySchema = z.object({
   format: z.enum(['json', 'pdf', 'xlsx']).optional().default('json'),
 });
 
+const RELANCES_REPORT_TYPES = [
+  'relance_declaration',
+  'mise_en_demeure_declaration',
+  'relance_impaye',
+  'mise_en_demeure_impaye',
+] as const;
+
+const RELANCES_REPORT_STATUSES = ['pending', 'envoye', 'echec', 'transmis', 'classe'] as const;
+
+type RelancesReportType = (typeof RELANCES_REPORT_TYPES)[number];
+type RelancesReportStatus = (typeof RELANCES_REPORT_STATUSES)[number];
+
+function isValidIsoCalendarDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year, month, day] = value.split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    !Number.isNaN(date.getTime())
+    && date.getUTCFullYear() === year
+    && date.getUTCMonth() === month - 1
+    && date.getUTCDate() === day
+  );
+}
+
+const isoCalendarDateSchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'Format YYYY-MM-DD attendu')
+  .refine((value) => isValidIsoCalendarDate(value), 'Date calendrier invalide');
+
+const relancesReportQuerySchema = z
+  .object({
+    date_debut: isoCalendarDateSchema,
+    date_fin: isoCalendarDateSchema,
+    type: z.enum(RELANCES_REPORT_TYPES).optional(),
+    statut: z.enum(RELANCES_REPORT_STATUSES).optional(),
+    format: z.enum(['json', 'pdf', 'xlsx']).optional().default('json'),
+  })
+  .refine((value) => value.date_debut <= value.date_fin, {
+    message: 'La date de début doit être antérieure ou égale à la date de fin',
+    path: ['date_fin'],
+  });
+
 type RoleReportRow = {
   titre_id: number;
   numero_titre: string;
@@ -81,6 +123,38 @@ type RecouvrementRowBase = {
   assujetti_label: string;
 };
 
+type RelancesReportRow = {
+  date: string;
+  date_time: string;
+  destinataire: string;
+  type_code: RelancesReportType;
+  type_label: string;
+  canal: 'email' | 'courrier';
+  statut: RelancesReportStatus;
+  reponse_label: string;
+};
+
+type RelancesReportPayload = {
+  generatedAt: string;
+  hash: string;
+  filters: {
+    date_debut: string;
+    date_fin: string;
+    type: RelancesReportType | null;
+    statut: RelancesReportStatus | null;
+  };
+  indicators: {
+    total: number;
+    envoyees: number;
+    echecs: number;
+    regularisees: number;
+    taux_regularisation: number;
+    canal_email: number;
+    canal_courrier: number;
+  };
+  rows: RelancesReportRow[];
+};
+
 function formatDateTime(date: Date): string {
   return date.toISOString().replace('T', ' ').slice(0, 19);
 }
@@ -93,6 +167,10 @@ function formatRecouvrementPct(value: number): string {
   return `${(value * 100).toFixed(1)} %`;
 }
 
+function formatRate(value: number): number {
+  return Number(value.toFixed(4));
+}
+
 function sanitizeFileComponent(value: string): string {
   return value
     .normalize('NFD')
@@ -101,6 +179,52 @@ function sanitizeFileComponent(value: string): string {
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '')
     .slice(0, 120);
+}
+
+function relancesTypeLabel(type: RelancesReportType): string {
+  switch (type) {
+    case 'mise_en_demeure_declaration':
+      return 'Mise en demeure déclaration';
+    case 'relance_impaye':
+      return 'Relance impayé';
+    case 'mise_en_demeure_impaye':
+      return 'Mise en demeure impayé';
+    case 'relance_declaration':
+    default:
+      return 'Relance déclaration';
+  }
+}
+
+function relancesStatusLabel(status: RelancesReportStatus): string {
+  switch (status) {
+    case 'pending':
+      return 'En attente';
+    case 'transmis':
+      return 'Transmis';
+    case 'classe':
+      return 'Classé';
+    case 'echec':
+      return 'Échec';
+    case 'envoye':
+    default:
+      return 'Envoyé';
+  }
+}
+
+function relancesResponseLabelForDeclaration(status: string | null): string {
+  return status === 'soumise' || status === 'validee' || status === 'rejetee'
+    ? 'Déclaration reçue'
+    : 'Aucune réponse';
+}
+
+function relancesResponseLabelForRecouvrement(params: { montant: number; montant_paye: number }): string {
+  if (params.montant_paye >= params.montant && params.montant > 0) return 'Paiement reçu';
+  if (params.montant_paye > 0) return 'Paiement partiel';
+  return 'Aucune réponse';
+}
+
+function buildRelancesFilename(dateDebut: string, dateFin: string, format: 'pdf' | 'xlsx'): string {
+  return `suivi-relances-${dateDebut}_${dateFin}.${format}`;
 }
 
 function paymentStatusLabel(statut: string) {
@@ -764,6 +888,280 @@ async function archiveRecouvrementReport(params: {
   return { filename, storagePath };
 }
 
+function listRelancesRows(filters: {
+  dateDebut: string;
+  dateFin: string;
+  type: RelancesReportType | null;
+  statut: RelancesReportStatus | null;
+}): RelancesReportRow[] {
+  const declarationRows = db
+    .prepare(
+      `SELECT
+         date(COALESCE(n.sent_at, n.created_at)) AS action_date,
+         COALESCE(n.sent_at, n.created_at) AS action_datetime,
+         a.raison_sociale AS destinataire,
+         n.template_code,
+         n.piece_jointe_path,
+         n.statut,
+         (
+           SELECT d.statut
+           FROM declarations d
+           WHERE d.assujetti_id = n.assujetti_id
+             AND d.annee = COALESCE(c.annee, CAST(substr(COALESCE(n.sent_at, n.created_at), 1, 4) AS INTEGER))
+           ORDER BY d.id DESC
+           LIMIT 1
+         ) AS declaration_statut
+       FROM notifications_email n
+       JOIN assujettis a ON a.id = n.assujetti_id
+       LEFT JOIN campagnes c ON c.id = n.campagne_id
+       WHERE date(COALESCE(n.sent_at, n.created_at)) BETWEEN date(?) AND date(?)
+         AND n.template_code IN ('relance_declaration', 'mise_en_demeure_auto')`,
+    )
+    .all(filters.dateDebut, filters.dateFin) as Array<{
+    action_date: string;
+    action_datetime: string;
+    destinataire: string;
+    template_code: string;
+    piece_jointe_path: string | null;
+    statut: RelancesReportStatus;
+    declaration_statut: string | null;
+  }>;
+
+  const recouvrementRows = db
+    .prepare(
+      `SELECT
+         date(ra.created_at) AS action_date,
+         ra.created_at AS action_datetime,
+         a.raison_sociale AS destinataire,
+         ra.action_type,
+         ra.statut,
+         t.montant,
+         t.montant_paye
+       FROM recouvrement_actions ra
+       JOIN titres t ON t.id = ra.titre_id
+       JOIN assujettis a ON a.id = t.assujetti_id
+       WHERE date(ra.created_at) BETWEEN date(?) AND date(?)
+         AND ra.action_type IN ('rappel_email', 'mise_en_demeure')`,
+    )
+    .all(filters.dateDebut, filters.dateFin) as Array<{
+    action_date: string;
+    action_datetime: string;
+    destinataire: string;
+    action_type: 'rappel_email' | 'mise_en_demeure';
+    statut: RelancesReportStatus;
+    montant: number;
+    montant_paye: number;
+  }>;
+
+  return [
+    ...declarationRows.map((row) => {
+      const typeCode: RelancesReportType = row.template_code === 'mise_en_demeure_auto'
+        ? 'mise_en_demeure_declaration'
+        : 'relance_declaration';
+      const canal: 'email' | 'courrier' = row.template_code === 'mise_en_demeure_auto' || Boolean(row.piece_jointe_path)
+        ? 'courrier'
+        : 'email';
+      return {
+        date: row.action_date,
+        date_time: row.action_datetime,
+        destinataire: row.destinataire,
+        type_code: typeCode,
+        type_label: relancesTypeLabel(typeCode),
+        canal,
+        statut: row.statut,
+        reponse_label: relancesResponseLabelForDeclaration(row.declaration_statut),
+      };
+    }),
+    ...recouvrementRows.map((row) => {
+      const typeCode: RelancesReportType = row.action_type === 'mise_en_demeure'
+        ? 'mise_en_demeure_impaye'
+        : 'relance_impaye';
+      const canal: 'email' | 'courrier' = row.action_type === 'mise_en_demeure' ? 'courrier' : 'email';
+      return {
+        date: row.action_date,
+        date_time: row.action_datetime,
+        destinataire: row.destinataire,
+        type_code: typeCode,
+        type_label: relancesTypeLabel(typeCode),
+        canal,
+        statut: row.statut,
+        reponse_label: relancesResponseLabelForRecouvrement({ montant: row.montant, montant_paye: row.montant_paye }),
+      };
+    }),
+  ]
+    .filter((row) => (filters.type ? row.type_code === filters.type : true))
+    .filter((row) => (filters.statut ? row.statut === filters.statut : true))
+    .sort((a, b) => b.date_time.localeCompare(a.date_time) || a.destinataire.localeCompare(b.destinataire, 'fr'));
+}
+
+function buildRelancesReportPayload(filters: {
+  dateDebut: string;
+  dateFin: string;
+  type: RelancesReportType | null;
+  statut: RelancesReportStatus | null;
+}): RelancesReportPayload {
+  const rows = listRelancesRows(filters);
+  const envoyees = rows.filter((row) => row.statut === 'envoye').length;
+  const echecs = rows.filter((row) => row.statut === 'echec').length;
+  const regularisees = rows.filter((row) => row.statut === 'envoye' && row.reponse_label !== 'Aucune réponse').length;
+  const canalEmail = rows.filter((row) => row.canal === 'email').length;
+  const canalCourrier = rows.filter((row) => row.canal === 'courrier').length;
+  const generatedAt = formatDateTime(new Date());
+  const indicators = {
+    total: rows.length,
+    envoyees,
+    echecs,
+    regularisees,
+    taux_regularisation: formatRate(envoyees > 0 ? regularisees / envoyees : 0),
+    canal_email: canalEmail,
+    canal_courrier: canalCourrier,
+  };
+  const hash = crypto
+    .createHash('sha256')
+    .update(
+      JSON.stringify({
+        filters,
+        generatedAt,
+        indicators,
+        rows,
+      }),
+    )
+    .digest('hex');
+
+  return {
+    generatedAt,
+    hash,
+    filters: {
+      date_debut: filters.dateDebut,
+      date_fin: filters.dateFin,
+      type: filters.type,
+      statut: filters.statut,
+    },
+    indicators,
+    rows,
+  };
+}
+
+function buildRelancesWorkbook(payload: RelancesReportPayload): Buffer {
+  const rows: Array<Array<string | number>> = [
+    ['Suivi des relances et mises en demeure'],
+    ['Date début', payload.filters.date_debut],
+    ['Date fin', payload.filters.date_fin],
+    ['Type', payload.filters.type ? relancesTypeLabel(payload.filters.type) : 'Tous'],
+    ['Statut', payload.filters.statut ? relancesStatusLabel(payload.filters.statut) : 'Tous'],
+    ['Total', payload.indicators.total],
+    ['Envoyées', payload.indicators.envoyees],
+    ['Taux de régularisation', payload.indicators.taux_regularisation],
+    ['Date', 'Destinataire', 'Type', 'Canal', 'Statut', 'Réponse'],
+    ...payload.rows.map((row) => [row.date, row.destinataire, row.type_label, row.canal, relancesStatusLabel(row.statut), row.reponse_label]),
+  ];
+
+  const worksheet = XLSX.utils.aoa_to_sheet(rows);
+  worksheet['!cols'] = [
+    { wch: 14 },
+    { wch: 24 },
+    { wch: 28 },
+    { wch: 14 },
+    { wch: 14 },
+    { wch: 22 },
+  ];
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Suivi relances');
+  return Buffer.from(XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }));
+}
+
+async function buildRelancesPdfBuffer(payload: RelancesReportPayload): Promise<Buffer> {
+  return new Promise<Buffer>((resolve, reject) => {
+    const doc = new PDFDocument({ size: 'A4', margin: 36, bufferPages: true });
+    const chunks: Buffer[] = [];
+
+    doc.on('data', (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    doc.fontSize(18).text('Suivi des relances et mises en demeure', { align: 'center' });
+    doc.moveDown(0.4);
+    doc.fontSize(10).fillColor('#555').text(`Période : ${payload.filters.date_debut} → ${payload.filters.date_fin}`, { align: 'center' });
+    doc.moveDown(0.6).fillColor('black');
+    doc.text(`Horodatage : ${payload.generatedAt}`);
+    doc.text(`Hash SHA-256 : ${payload.hash}`);
+    doc.text(`Envoyées : ${payload.indicators.envoyees} · Échecs : ${payload.indicators.echecs} · Taux régularisation : ${(payload.indicators.taux_regularisation * 100).toFixed(2)} %`);
+    doc.moveDown();
+
+    if (payload.rows.length === 0) {
+      doc.fontSize(10).fillColor('#666').text('Aucune relance ou mise en demeure pour ces filtres.');
+      doc.fillColor('black');
+    } else {
+      doc.fontSize(9);
+      for (const row of payload.rows) {
+        doc.text(`${row.date} · ${row.destinataire} · ${row.type_label} · ${row.canal} · ${relancesStatusLabel(row.statut)} · ${row.reponse_label}`);
+        doc.moveDown(0.2);
+      }
+    }
+
+    const range = doc.bufferedPageRange();
+    for (let index = range.start; index < range.start + range.count; index += 1) {
+      doc.switchToPage(index);
+      doc.fontSize(8).fillColor('#555').text(`Page ${index - range.start + 1}/${range.count}`, 36, 800, { align: 'center', width: 523 });
+      doc.fillColor('black');
+    }
+
+    doc.end();
+  });
+}
+
+async function archiveRelancesReport(params: {
+  dateDebut: string;
+  dateFin: string;
+  format: 'pdf' | 'xlsx';
+  buffer: Buffer;
+  hash: string;
+  rowCount: number;
+  sentCount: number;
+  generatedBy: number;
+}): Promise<{ filename: string; storagePath: string }> {
+  const archiveYear = Number(params.dateDebut.slice(0, 4));
+  const filename = buildRelancesFilename(params.dateDebut, params.dateFin, params.format);
+  const storagePath = path.posix.join(
+    'rapports',
+    'suivi_relances',
+    String(archiveYear),
+    `${Date.now()}-${sanitizeFileComponent(params.hash.slice(0, 12))}.${params.format}`,
+  );
+  await saveFile(
+    storagePath,
+    params.buffer,
+    params.format === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  );
+
+  try {
+    db.prepare(
+      `INSERT INTO rapports_exports (
+        type_rapport, annee, format, filename, storage_path, content_hash, titres_count, total_montant, generated_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      'suivi_relances',
+      archiveYear,
+      params.format,
+      filename,
+      storagePath,
+      params.hash,
+      params.rowCount,
+      params.sentCount,
+      params.generatedBy,
+    );
+  } catch (error) {
+    try {
+      await deleteStoredFile(storagePath);
+    } catch (cleanupError) {
+      console.error('[TLPE] Echec nettoyage archive suivi relances', cleanupError);
+    }
+    throw error;
+  }
+
+  return { filename, storagePath };
+}
+
 rapportsRouter.get('/role', requireRole('admin', 'financier'), async (req, res) => {
   const parsed = roleReportQuerySchema.safeParse(req.query);
   if (!parsed.success) {
@@ -876,5 +1274,68 @@ rapportsRouter.get('/recouvrement', requireRole('admin', 'financier'), async (re
   } catch (error) {
     console.error('[TLPE] Erreur generation etat de recouvrement', error);
     return res.status(500).json({ error: 'Erreur interne generation etat de recouvrement' });
+  }
+});
+
+rapportsRouter.get('/relances', requireRole('admin', 'gestionnaire'), async (req, res) => {
+  const parsed = relancesReportQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'Parametres du suivi des relances invalides' });
+  }
+
+  const filters = {
+    dateDebut: parsed.data.date_debut,
+    dateFin: parsed.data.date_fin,
+    type: parsed.data.type ?? null,
+    statut: parsed.data.statut ?? null,
+  };
+
+  try {
+    const payload = buildRelancesReportPayload(filters);
+
+    if (parsed.data.format === 'json') {
+      return res.json(payload);
+    }
+
+    const buffer = parsed.data.format === 'pdf' ? await buildRelancesPdfBuffer(payload) : buildRelancesWorkbook(payload);
+    const archive = await archiveRelancesReport({
+      dateDebut: filters.dateDebut,
+      dateFin: filters.dateFin,
+      format: parsed.data.format,
+      buffer,
+      hash: payload.hash,
+      rowCount: payload.rows.length,
+      sentCount: payload.indicators.envoyees,
+      generatedBy: req.user!.id,
+    });
+
+    logAudit({
+      userId: req.user!.id,
+      action: 'export-suivi-relances',
+      entite: 'rapport',
+      details: {
+        date_debut: filters.dateDebut,
+        date_fin: filters.dateFin,
+        type: filters.type,
+        statut: filters.statut,
+        format: parsed.data.format,
+        generated_at: payload.generatedAt,
+        hash: payload.hash,
+        rows_count: payload.rows.length,
+        envoyees: payload.indicators.envoyees,
+        archive_path: archive.storagePath,
+      },
+      ip: req.ip ?? null,
+    });
+
+    res.setHeader(
+      'Content-Type',
+      parsed.data.format === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader('Content-Disposition', `attachment; filename="${archive.filename}"`);
+    return res.send(buffer);
+  } catch (error) {
+    console.error('[TLPE] Erreur generation suivi des relances', error);
+    return res.status(500).json({ error: 'Erreur interne generation suivi des relances' });
   }
 });

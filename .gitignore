@@ -15,5 +15,6 @@ coverage/
 **/data/receipts/
 **/data/mises_en_demeure/
 **/data/uploads/mises_en_demeure_titres/
+**/data/uploads/rapports/
 uploads/
 TLPE/
