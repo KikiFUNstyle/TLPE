@@ -77,6 +77,7 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
   - pour toute ventilation/agrégation métier par assujetti, grouper sur une clé stable technique (`assujetti_id`) et non sur un libellé affiché (`raison_sociale`) afin d'éviter les collisions d'homonymes,
   - pour tout export issu d'un payload déjà agrégé, vérifier qu'aucune seconde requête brute identique n'est relancée uniquement pour recalculer un compteur dérivable (`titresCount`, `rows.length`, etc.) : réutiliser la donnée préparée et ajouter un test de non-régression si besoin,
   - pour toute page pilotée par un filtre texte/année déclenchant un chargement automatique, vérifier que l'UI n'envoie pas de requête sur saisie partielle (`2`, `20`, `202`) : attendre un filtre complet/valide avant auto-fetch et couvrir ce garde-fou par un test helper.
+  - pour toute carte métier exportable en PNG côté navigateur, vérifier un test helper sur la rasterisation SVG→canvas→blob (succès + nom de fichier) afin d'éviter un bouton UI branché sans export effectif.
 
   - pour toute synthèse financière contentieuse, vérifier que les montants dérivés nécessaires au reporting (ex. `montant_degreve`) sont portés de bout en bout : schéma SQL + migration runtime legacy + mutation métier qui alimente la donnée (`POST /api/contentieux/:id/decider`) + restitution UI/export/tests, sinon la synthèse PDF/XLSX sous-estime silencieusement l'exposition réelle.
 
