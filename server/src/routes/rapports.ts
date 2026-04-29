@@ -82,6 +82,11 @@ const relancesReportQuerySchema = z
     path: ['date_fin'],
   });
 
+const contentieuxReportQuerySchema = z.object({
+  date_reference: isoCalendarDateSchema.optional(),
+  format: z.enum(['json', 'pdf', 'xlsx']).optional().default('json'),
+});
+
 type RoleReportRow = {
   titre_id: number;
   numero_titre: string;
@@ -153,6 +158,46 @@ type RelancesReportPayload = {
     canal_courrier: number;
   };
   rows: RelancesReportRow[];
+};
+
+type ContentieuxAlertLevel = 'J-30' | 'J-7' | 'depasse';
+
+type ContentieuxSummaryRow = {
+  type: string;
+  nombre_dossiers: number;
+  montant_litige: number;
+  montant_degreve: number;
+  anciennete_moyenne_jours: number;
+  statut_resume: string;
+};
+
+type ContentieuxAlertRow = {
+  contentieux_id: number;
+  numero: string;
+  assujetti: string;
+  type: string;
+  statut: string;
+  date_echeance: string;
+  niveau_alerte: ContentieuxAlertLevel;
+  days_remaining: number;
+};
+
+type ContentieuxReportPayload = {
+  date_reference: string;
+  generatedAt: string;
+  hash: string;
+  indicators: {
+    total_dossiers: number;
+    montant_litige_total: number;
+    montant_degreve_total: number;
+  };
+  rows: ContentieuxSummaryRow[];
+  chart: Array<{ type: string; nombre_dossiers: number; montant_litige: number }>;
+  alerts: {
+    total: number;
+    overdue: number;
+    rows: ContentieuxAlertRow[];
+  };
 };
 
 function formatDateTime(date: Date): string {
@@ -1161,6 +1206,402 @@ async function archiveRelancesReport(params: {
 
   return { filename, storagePath };
 }
+
+function parseIsoDateUtc(value: string): Date {
+  const [year, month, day] = value.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day));
+}
+
+function diffCalendarDays(fromIso: string, toIso: string): number {
+  const from = parseIsoDateUtc(fromIso).getTime();
+  const to = parseIsoDateUtc(toIso).getTime();
+  return Math.round((to - from) / 86_400_000);
+}
+
+function contentieuxTypeLabel(type: string): string {
+  switch (type) {
+    case 'gracieux':
+      return 'Gracieux';
+    case 'moratoire':
+      return 'Moratoire';
+    case 'controle':
+      return 'Contrôle';
+    case 'contentieux':
+    default:
+      return 'Contentieux';
+  }
+}
+
+function contentieuxStatusLabel(status: string): string {
+  switch (status) {
+    case 'ouvert':
+      return 'ouvert';
+    case 'instruction':
+      return 'instruction';
+    case 'clos_maintenu':
+      return 'clos maintenu';
+    case 'degrevement_partiel':
+      return 'dégrèvement partiel';
+    case 'degrevement_total':
+      return 'dégrèvement total';
+    case 'non_lieu':
+      return 'non-lieu';
+    default:
+      return status.replace(/_/g, ' ');
+  }
+}
+
+function resolveContentieuxAlertLevel(daysRemaining: number): ContentieuxAlertLevel | null {
+  if (daysRemaining < 0) return 'depasse';
+  if (daysRemaining <= 7) return 'J-7';
+  if (daysRemaining <= 30) return 'J-30';
+  return null;
+}
+
+function buildContentieuxStatusSummary(statusCounts: Map<string, number>): string {
+  const statusOrder = ['ouvert', 'instruction', 'clos_maintenu', 'degrevement_partiel', 'degrevement_total', 'non_lieu'];
+  return statusOrder
+    .filter((status) => statusCounts.has(status))
+    .map((status) => `${statusCounts.get(status)} ${contentieuxStatusLabel(status)}`)
+    .join(' • ');
+}
+
+function buildContentieuxReportPayload(dateReference: string): ContentieuxReportPayload {
+  const dossiers = db
+    .prepare(
+      `SELECT
+         c.id,
+         c.numero,
+         c.type,
+         c.statut,
+         c.montant_litige,
+         c.montant_degreve,
+         c.date_ouverture,
+         c.date_limite_reponse,
+         c.date_cloture,
+         a.raison_sociale AS assujetti
+       FROM contentieux c
+       JOIN assujettis a ON a.id = c.assujetti_id
+       WHERE c.date_cloture IS NULL
+       ORDER BY c.date_ouverture ASC, c.id ASC`,
+    )
+    .all() as Array<{
+      id: number;
+      numero: string;
+      type: string;
+      statut: string;
+      montant_litige: number | null;
+      montant_degreve: number | null;
+      date_ouverture: string;
+      date_limite_reponse: string | null;
+      date_cloture: string | null;
+      assujetti: string;
+    }>;
+
+  const groups = new Map<string, {
+    type: string;
+    nombre_dossiers: number;
+    montant_litige: number;
+    montant_degreve: number;
+    total_anciennete: number;
+    status_counts: Map<string, number>;
+  }>();
+
+  for (const dossier of dossiers) {
+    const current = groups.get(dossier.type) || {
+      type: dossier.type,
+      nombre_dossiers: 0,
+      montant_litige: 0,
+      montant_degreve: 0,
+      total_anciennete: 0,
+      status_counts: new Map<string, number>(),
+    };
+    current.nombre_dossiers += 1;
+    current.montant_litige = Number((current.montant_litige + (dossier.montant_litige ?? 0)).toFixed(2));
+    current.montant_degreve = Number((current.montant_degreve + (dossier.montant_degreve ?? 0)).toFixed(2));
+    current.total_anciennete += diffCalendarDays(dossier.date_ouverture, dateReference);
+    current.status_counts.set(dossier.statut, (current.status_counts.get(dossier.statut) ?? 0) + 1);
+    groups.set(dossier.type, current);
+  }
+
+  const rows = Array.from(groups.values())
+    .map((group) => ({
+      type: group.type,
+      nombre_dossiers: group.nombre_dossiers,
+      montant_litige: group.montant_litige,
+      montant_degreve: group.montant_degreve,
+      anciennete_moyenne_jours: Number((group.total_anciennete / group.nombre_dossiers).toFixed(1)),
+      statut_resume: buildContentieuxStatusSummary(group.status_counts),
+    }))
+    .sort((left, right) => right.nombre_dossiers - left.nombre_dossiers || right.montant_litige - left.montant_litige || left.type.localeCompare(right.type, 'fr'));
+
+  const alertsRows = dossiers
+    .filter((dossier) => !dossier.date_cloture && Boolean(dossier.date_limite_reponse))
+    .map((dossier) => {
+      const dateEcheance = dossier.date_limite_reponse as string;
+      const daysRemaining = diffCalendarDays(dateReference, dateEcheance);
+      const niveau = resolveContentieuxAlertLevel(daysRemaining);
+      if (!niveau) return null;
+      return {
+        contentieux_id: dossier.id,
+        numero: dossier.numero,
+        assujetti: dossier.assujetti,
+        type: dossier.type,
+        statut: dossier.statut,
+        date_echeance: dateEcheance,
+        niveau_alerte: niveau,
+        days_remaining: daysRemaining,
+      } satisfies ContentieuxAlertRow;
+    })
+    .filter((row): row is ContentieuxAlertRow => Boolean(row))
+    .sort((left, right) => left.days_remaining - right.days_remaining || left.numero.localeCompare(right.numero, 'fr'));
+
+  const indicators = {
+    total_dossiers: dossiers.length,
+    montant_litige_total: Number(dossiers.reduce((sum, row) => sum + (row.montant_litige ?? 0), 0).toFixed(2)),
+    montant_degreve_total: Number(dossiers.reduce((sum, row) => sum + (row.montant_degreve ?? 0), 0).toFixed(2)),
+  };
+  const generatedAt = formatDateTime(new Date());
+  const chart = rows.map((row) => ({
+    type: row.type,
+    nombre_dossiers: row.nombre_dossiers,
+    montant_litige: row.montant_litige,
+  }));
+  const hash = crypto
+    .createHash('sha256')
+    .update(
+      JSON.stringify({
+        date_reference: dateReference,
+        indicators,
+        rows,
+        alerts: alertsRows,
+      }),
+    )
+    .digest('hex');
+
+  return {
+    date_reference: dateReference,
+    generatedAt,
+    hash,
+    indicators,
+    rows,
+    chart,
+    alerts: {
+      total: alertsRows.length,
+      overdue: alertsRows.filter((row) => row.niveau_alerte === 'depasse').length,
+      rows: alertsRows,
+    },
+  };
+}
+
+function buildContentieuxWorkbook(payload: ContentieuxReportPayload): Buffer {
+  const rows: Array<Array<string | number>> = [
+    ['Synthèse des contentieux'],
+    ['Date de référence', payload.date_reference],
+    ['Horodatage', payload.generatedAt],
+    ['Hash SHA-256', payload.hash],
+    ['Total dossiers', payload.indicators.total_dossiers],
+    ['Montant en litige', payload.indicators.montant_litige_total],
+    ['Montant dégrevé', payload.indicators.montant_degreve_total],
+    [],
+    ['Type', 'Nombre dossiers', 'Montant en litige', 'Montant dégrevé', 'Ancienneté moyenne (jours)', 'Statuts'],
+    ...payload.rows.map((row) => [
+      contentieuxTypeLabel(row.type),
+      row.nombre_dossiers,
+      row.montant_litige,
+      row.montant_degreve,
+      row.anciennete_moyenne_jours,
+      row.statut_resume,
+    ]),
+    [],
+    ['Alertes délais'],
+    ['Numéro', 'Assujetti', 'Type', 'Statut', 'Échéance', 'Niveau', 'Jours restants'],
+    ...payload.alerts.rows.map((row) => [
+      row.numero,
+      row.assujetti,
+      contentieuxTypeLabel(row.type),
+      contentieuxStatusLabel(row.statut),
+      row.date_echeance,
+      row.niveau_alerte,
+      row.days_remaining,
+    ]),
+  ];
+
+  const worksheet = XLSX.utils.aoa_to_sheet(rows);
+  worksheet['!cols'] = [
+    { wch: 18 },
+    { wch: 18 },
+    { wch: 18 },
+    { wch: 18 },
+    { wch: 22 },
+    { wch: 34 },
+    { wch: 14 },
+  ];
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Synthèse contentieux');
+  return Buffer.from(XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }));
+}
+
+async function buildContentieuxPdfBuffer(payload: ContentieuxReportPayload): Promise<Buffer> {
+  return new Promise<Buffer>((resolve, reject) => {
+    const doc = new PDFDocument({ size: 'A4', margin: 36, bufferPages: true });
+    const chunks: Buffer[] = [];
+
+    doc.on('data', (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    doc.fontSize(18).text('Synthèse des contentieux', { align: 'center' });
+    doc.moveDown(0.4);
+    doc.fontSize(10).fillColor('#555').text(`Date de référence : ${payload.date_reference}`, { align: 'center' });
+    doc.moveDown(0.6).fillColor('black');
+    doc.text(`Horodatage : ${payload.generatedAt}`);
+    doc.text(`Hash SHA-256 : ${payload.hash}`);
+    doc.text(`Dossiers : ${payload.indicators.total_dossiers} • Litige : ${formatMoney(payload.indicators.montant_litige_total)} • Dégrèvement : ${formatMoney(payload.indicators.montant_degreve_total)}`);
+    doc.moveDown();
+
+    doc.fontSize(12).text('Répartition par type', { underline: true });
+    doc.moveDown(0.4);
+    doc.fontSize(10);
+    for (const row of payload.rows) {
+      doc.text(`${contentieuxTypeLabel(row.type)} • ${row.nombre_dossiers} dossier(s) • Litige ${formatMoney(row.montant_litige)} • Dégrèvement ${formatMoney(row.montant_degreve)} • Ancienneté ${row.anciennete_moyenne_jours} j • ${row.statut_resume}`);
+      doc.moveDown(0.2);
+    }
+
+    doc.moveDown();
+    doc.fontSize(12).text('Alertes délais', { underline: true });
+    doc.moveDown(0.4);
+    doc.fontSize(10);
+    if (payload.alerts.rows.length === 0) {
+      doc.fillColor('#666').text('Aucune alerte <= J-30 pour cette date de référence.');
+      doc.fillColor('black');
+    } else {
+      for (const alert of payload.alerts.rows) {
+        doc.text(`${alert.numero} • ${alert.assujetti} • ${contentieuxTypeLabel(alert.type)} • ${alert.date_echeance} • ${alert.niveau_alerte} • ${alert.days_remaining} j`);
+        doc.moveDown(0.2);
+      }
+    }
+
+    const range = doc.bufferedPageRange();
+    for (let index = range.start; index < range.start + range.count; index += 1) {
+      doc.switchToPage(index);
+      doc.fontSize(8).fillColor('#555').text(`Page ${index - range.start + 1}/${range.count}`, 36, 800, { align: 'center', width: 523 });
+      doc.fillColor('black');
+    }
+
+    doc.end();
+  });
+}
+
+async function archiveContentieuxReport(params: {
+  dateReference: string;
+  format: 'pdf' | 'xlsx';
+  buffer: Buffer;
+  hash: string;
+  rowCount: number;
+  totalMontant: number;
+  generatedBy: number;
+}): Promise<{ filename: string; storagePath: string }> {
+  const archiveYear = Number(params.dateReference.slice(0, 4));
+  const filename = `synthese-contentieux-${params.dateReference}.${params.format}`;
+  const storagePath = path.posix.join(
+    'rapports',
+    'synthese_contentieux',
+    String(archiveYear),
+    `${Date.now()}-${sanitizeFileComponent(params.hash.slice(0, 12))}.${params.format}`,
+  );
+  await saveFile(
+    storagePath,
+    params.buffer,
+    params.format === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  );
+
+  try {
+    db.prepare(
+      `INSERT INTO rapports_exports (
+        type_rapport, annee, format, filename, storage_path, content_hash, titres_count, total_montant, generated_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      'synthese_contentieux',
+      archiveYear,
+      params.format,
+      filename,
+      storagePath,
+      params.hash,
+      params.rowCount,
+      params.totalMontant,
+      params.generatedBy,
+    );
+  } catch (error) {
+    try {
+      await deleteStoredFile(storagePath);
+    } catch (cleanupError) {
+      console.error('[TLPE] Echec nettoyage archive synthese contentieux', cleanupError);
+    }
+    throw error;
+  }
+
+  return { filename, storagePath };
+}
+
+rapportsRouter.get('/contentieux', requireRole('admin', 'financier'), async (req, res) => {
+  const parsed = contentieuxReportQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'Parametres de synthese contentieux invalides' });
+  }
+
+  const dateReference = parsed.data.date_reference ?? new Date().toISOString().slice(0, 10);
+
+  try {
+    const payload = buildContentieuxReportPayload(dateReference);
+
+    if (parsed.data.format === 'json') {
+      return res.json(payload);
+    }
+
+    const buffer = parsed.data.format === 'pdf'
+      ? await buildContentieuxPdfBuffer(payload)
+      : buildContentieuxWorkbook(payload);
+    const archive = await archiveContentieuxReport({
+      dateReference,
+      format: parsed.data.format,
+      buffer,
+      hash: payload.hash,
+      rowCount: payload.indicators.total_dossiers,
+      totalMontant: payload.indicators.montant_litige_total,
+      generatedBy: req.user!.id,
+    });
+
+    logAudit({
+      userId: req.user!.id,
+      action: 'export-synthese-contentieux',
+      entite: 'rapport',
+      details: {
+        date_reference: payload.date_reference,
+        format: parsed.data.format,
+        generated_at: payload.generatedAt,
+        hash: payload.hash,
+        dossiers_count: payload.indicators.total_dossiers,
+        montant_litige_total: payload.indicators.montant_litige_total,
+        montant_degreve_total: payload.indicators.montant_degreve_total,
+        alerts_total: payload.alerts.total,
+        alerts_overdue: payload.alerts.overdue,
+        archive_path: archive.storagePath,
+      },
+      ip: req.ip ?? null,
+    });
+
+    res.setHeader(
+      'Content-Type',
+      parsed.data.format === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader('Content-Disposition', `attachment; filename="${archive.filename}"`);
+    return res.send(buffer);
+  } catch (error) {
+    console.error('[TLPE] Erreur generation synthese contentieux', error);
+    return res.status(500).json({ error: 'Erreur interne generation synthese contentieux' });
+  }
+});
 
 rapportsRouter.get('/role', requireRole('admin', 'financier'), async (req, res) => {
   const parsed = roleReportQuerySchema.safeParse(req.query);

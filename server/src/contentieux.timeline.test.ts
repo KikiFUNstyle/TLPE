@@ -318,6 +318,76 @@ test('initSchema backfill les echeances des contentieux legacy pour les alertes 
   });
 });
 
+test('initSchema reconstruit une table contentieux legacy pour ajouter le CHECK SQL sur montant_degreve', () => {
+  const fx = resetFixtures();
+
+  db.pragma('foreign_keys = OFF');
+  db.exec('BEGIN TRANSACTION');
+  try {
+    db.exec(`
+      CREATE TABLE contentieux_legacy (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        numero          TEXT NOT NULL UNIQUE,
+        assujetti_id    INTEGER NOT NULL,
+        titre_id        INTEGER,
+        type            TEXT NOT NULL CHECK (type IN ('gracieux','contentieux','moratoire','controle')),
+        montant_litige  REAL,
+        montant_degreve REAL,
+        date_ouverture  TEXT NOT NULL DEFAULT (date('now')),
+        date_limite_reponse TEXT,
+        date_limite_reponse_initiale TEXT,
+        delai_prolonge_justification TEXT,
+        delai_prolonge_par INTEGER,
+        delai_prolonge_at TEXT,
+        date_cloture    TEXT,
+        statut          TEXT NOT NULL DEFAULT 'ouvert' CHECK (statut IN ('ouvert','instruction','clos_maintenu','degrevement_partiel','degrevement_total','non_lieu')),
+        description     TEXT,
+        decision        TEXT,
+        FOREIGN KEY (assujetti_id) REFERENCES assujettis(id),
+        FOREIGN KEY (titre_id) REFERENCES titres(id),
+        FOREIGN KEY (delai_prolonge_par) REFERENCES users(id) ON DELETE SET NULL
+      );
+
+      INSERT INTO contentieux_legacy (
+        id, numero, assujetti_id, titre_id, type, montant_litige, montant_degreve, date_ouverture,
+        date_limite_reponse, date_limite_reponse_initiale, delai_prolonge_justification,
+        delai_prolonge_par, delai_prolonge_at, date_cloture, statut, description, decision
+      ) VALUES (
+        1001, 'CTX-LEGACY-CHECK-1', ${fx.assujettiId}, ${fx.titreId}, 'contentieux', 830, 120, '2026-01-15',
+        '2026-07-15', '2026-07-15', NULL, NULL, NULL, NULL, 'degrevement_partiel', 'Legacy sans CHECK SQL', 'Decision legacy'
+      );
+
+      DROP TABLE contentieux;
+      ALTER TABLE contentieux_legacy RENAME TO contentieux;
+    `);
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  } finally {
+    db.pragma('foreign_keys = ON');
+  }
+
+  initSchema();
+
+  const contentieuxSql = (
+    db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'contentieux'").get() as
+      | { sql: string }
+      | undefined
+  )?.sql;
+  assert.match(contentieuxSql ?? '', /montant_degreve\s+REAL\s+CHECK\s*\(\s*montant_degreve\s+IS\s+NULL\s+OR\s+montant_degreve\s*>?=\s*0\s*\)/i);
+
+  assert.throws(
+    () =>
+      db.prepare(
+        `INSERT INTO contentieux (
+          numero, assujetti_id, titre_id, type, montant_litige, montant_degreve, date_ouverture, statut, description
+        ) VALUES ('CTX-NEGATIVE-CHECK', ?, ?, 'contentieux', 830, -1, '2026-02-01', 'ouvert', 'Montant dégrevé négatif')`,
+      ).run(fx.assujettiId, fx.titreId),
+    /CHECK constraint failed/i,
+  );
+});
+
 test('POST /api/contentieux calcule automatiquement une échéance à 6 mois et expose le résumé d’alerte dans la liste', async () => {
   const fx = resetFixtures();
 
@@ -637,6 +707,90 @@ test('POST /api/contentieux/:id/decider conserve la date réelle de décision m�
     decisionEvents.map((event) => event.date),
     [new Date().toISOString().slice(0, 10), new Date().toISOString().slice(0, 10)],
   );
+});
+
+test('POST /api/contentieux/:id/decider valide et persiste le montant dégrevé attendu pour la synthèse financière', async () => {
+  const fx = resetFixtures();
+
+  const created = await request({
+    method: 'POST',
+    path: '/api/contentieux',
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      assujetti_id: fx.assujettiId,
+      titre_id: fx.titreId,
+      type: 'contentieux',
+      montant_litige: 830,
+      description: 'Ouverture du dossier.',
+    },
+  });
+  assert.equal(created.status, 201);
+  const contentieuxId = (created.data as { id: number }).id;
+
+  const missingPartialAmount = await request({
+    method: 'POST',
+    path: `/api/contentieux/${contentieuxId}/decider`,
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      statut: 'degrevement_partiel',
+      decision: 'Remise partielle sans montant.',
+    },
+  });
+  assert.equal(missingPartialAmount.status, 400);
+  assert.match(missingPartialAmount.text, /montant dégrevé est obligatoire/i);
+
+  const excessiveAmount = await request({
+    method: 'POST',
+    path: `/api/contentieux/${contentieuxId}/decider`,
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      statut: 'degrevement_partiel',
+      decision: 'Remise partielle trop élevée.',
+      montant_degreve: 900,
+    },
+  });
+  assert.equal(excessiveAmount.status, 400);
+  assert.match(excessiveAmount.text, /ne peut pas dépasser le montant en litige/i);
+
+  const partialDecision = await request({
+    method: 'POST',
+    path: `/api/contentieux/${contentieuxId}/decider`,
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      statut: 'degrevement_partiel',
+      decision: 'Remise partielle accordée.',
+      montant_degreve: 210,
+    },
+  });
+  assert.equal(partialDecision.status, 200);
+
+  const storedPartial = db.prepare('SELECT statut, montant_degreve FROM contentieux WHERE id = ?').get(contentieuxId) as {
+    statut: string;
+    montant_degreve: number | null;
+  };
+  assert.equal(storedPartial.statut, 'degrevement_partiel');
+  assert.equal(storedPartial.montant_degreve, 210);
+
+  const totalDecision = await request({
+    method: 'POST',
+    path: `/api/contentieux/${contentieuxId}/decider`,
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      statut: 'degrevement_total',
+      decision: 'Annulation totale.',
+      montant_degreve: 210,
+    },
+  });
+  assert.equal(totalDecision.status, 200);
+
+  const storedTotal = db.prepare('SELECT statut, montant_litige, montant_degreve FROM contentieux WHERE id = ?').get(contentieuxId) as {
+    statut: string;
+    montant_litige: number | null;
+    montant_degreve: number | null;
+  };
+  assert.equal(storedTotal.statut, 'degrevement_total');
+  assert.equal(storedTotal.montant_degreve, storedTotal.montant_litige);
+  assert.equal(storedTotal.montant_degreve, 830);
 });
 
 test('POST /api/contentieux/:id/evenements refuse une pièce jointe qui appartient à une autre entité ou est inaccessible', async () => {

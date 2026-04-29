@@ -60,6 +60,7 @@ const extendDeadlineSchema = z.object({
 const decideSchema = z.object({
   statut: z.enum(['instruction', 'clos_maintenu', 'degrevement_partiel', 'degrevement_total', 'non_lieu']),
   decision: z.string().trim().optional().nullable(),
+  montant_degreve: z.number().min(0).nullable().optional(),
 });
 
 const manualEventSchema = z.object({
@@ -77,6 +78,7 @@ type ContentieuxRow = {
   titre_id: number | null;
   type: string;
   montant_litige: number | null;
+  montant_degreve: number | null;
   date_ouverture: string;
   date_limite_reponse: string | null;
   date_limite_reponse_initiale: string | null;
@@ -398,10 +400,10 @@ contentieuxRouter.post('/', requireRole('admin', 'gestionnaire', 'contribuable')
     const info = db
       .prepare(
         `INSERT INTO contentieux (
-          numero, assujetti_id, titre_id, type, montant_litige, description,
+          numero, assujetti_id, titre_id, type, montant_litige, montant_degreve, description,
           date_ouverture, date_limite_reponse, date_limite_reponse_initiale
         )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         numero,
@@ -409,6 +411,7 @@ contentieuxRouter.post('/', requireRole('admin', 'gestionnaire', 'contribuable')
         payload.titre_id ?? null,
         payload.type,
         payload.montant_litige ?? null,
+        null,
         payload.description,
         openedAt,
         responseDeadline,
@@ -587,15 +590,31 @@ contentieuxRouter.post('/:id/decider', requireRole('admin', 'gestionnaire', 'fin
   const closed = parsed.data.statut !== 'instruction';
   const actor = displayUser(req.user);
   const eventDate = timelineDecisionEventDate();
+  const shouldStoreDegrevement = parsed.data.statut === 'degrevement_partiel' || parsed.data.statut === 'degrevement_total';
+  const montantLitige = contentieux.montant_litige ?? null;
+  const montantDegreve =
+    parsed.data.statut === 'degrevement_total'
+      ? montantLitige
+      : shouldStoreDegrevement
+        ? parsed.data.montant_degreve ?? null
+        : null;
+
+  if (parsed.data.statut === 'degrevement_partiel' && montantDegreve === null) {
+    return res.status(400).json({ error: 'Le montant dégrevé est obligatoire pour un dégrèvement partiel' });
+  }
+  if (montantLitige !== null && montantDegreve !== null && montantDegreve > montantLitige) {
+    return res.status(400).json({ error: 'Le montant dégrevé ne peut pas dépasser le montant en litige' });
+  }
 
   db.transaction(() => {
     db.prepare(
       `UPDATE contentieux
        SET statut = ?,
            decision = ?,
+           montant_degreve = ?,
            date_cloture = ${closed ? "date('now')" : 'NULL'}
        WHERE id = ?`,
-    ).run(parsed.data.statut, parsed.data.decision ?? null, contentieux.id);
+    ).run(parsed.data.statut, parsed.data.decision ?? null, montantDegreve, contentieux.id);
 
     insertTimelineEvent({
       contentieuxId: contentieux.id,

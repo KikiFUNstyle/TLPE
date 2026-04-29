@@ -75,6 +75,7 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
   - pour tout rendu tabulaire PDF multi-colonnes, calcul de hauteur de ligne basé sur la cellule la plus haute (pas seulement la dernière colonne dessinée) afin d'éviter les chevauchements de lignes,
   - pour toute pagination de tableau PDF, décider le saut de page à partir de la hauteur de la prochaine ligne + espace de séparation/footer (pas uniquement sur le `doc.y` courant), avec test de non-régression sur une ligne haute proche du bas de page,
   - pour toute ventilation/agrégation métier par assujetti, grouper sur une clé stable technique (`assujetti_id`) et non sur un libellé affiché (`raison_sociale`) afin d'éviter les collisions d'homonymes.
+  - pour toute synthèse financière contentieuse, vérifier que les montants dérivés nécessaires au reporting (ex. `montant_degreve`) sont portés de bout en bout : schéma SQL + migration runtime legacy + mutation métier qui alimente la donnée (`POST /api/contentieux/:id/decider`) + restitution UI/export/tests, sinon la synthèse PDF/XLSX sous-estime silencieusement l'exposition réelle.
 
 - Pour tout export XML métier (PESV2, pain.008, flux DGFiP), vérifier en review:
   - sélection métier exclusive et explicite (campagne **ou** période, jamais les deux),
@@ -102,6 +103,7 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
   - migration runtime idempotente pour les bases legacy,
   - éviter `ALTER TABLE ... ADD COLUMN ... DEFAULT (datetime('now'))` ou toute autre expression non constante: reconstruire la table si une valeur dérivée/fonctionnelle est nécessaire,
   - ajout/reconstruction des `CHECK`/`UNIQUE` au runtime pour les bases legacy (pas seulement dans `schema.sql`),
+  - pour tout nouveau champ monétaire ou quantitatif borné (`montant_degreve`, quote-part, compteurs métier, etc.), exiger aussi une contrainte SQL explicite (`>= 0`, plage bornée, unicité métier) dans `schema.sql` **et** dans la reconstruction runtime legacy ; une validation API seule n'est jamais suffisante,
   - ne pas ajouter d'index explicite qui duplique un index implicite déjà créé par une contrainte `UNIQUE` ou `PRIMARY KEY` identique,
   - nettoyage explicite des nouvelles tables dans les fixtures de tests qui purgent `campagnes`/tables parentes,
   - ordre de purge compatible FK dans les fixtures (supprimer d'abord les tables enfants, ex. `evenements_contentieux` puis `contentieux`, puis `titres`),
@@ -111,6 +113,7 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
   - les événements système utilisent leur **date métier réelle** (ex. décision/statut = date du jour ou date explicitement fournie), sans se décaler artificiellement sur la date d'un événement futur déjà saisi dans la timeline,
   - ordre chronologique stable quand des événements manuels antérieurs ou futurs sont saisis après coup (tri par date métier, pas seulement par date de création),
   - export documentaire (PDF) cohérent avec la timeline affichée et journalisé dans `audit_log`,
+  - pour toute décision `degrevement_total`, ignorer/écraser toute valeur partielle fournie par le client et persister automatiquement `montant_degreve = montant_litige`, avec test de non-régression pour éviter un mismatch statut/montant,
   - UI sans prompt navigateur bloquant si une saisie métier structurée est attendue,
   - pour tout chargement asynchrone UI par ligne/dossier, vérifier qu'un retour tardif d'une requête précédente ne réinitialise pas l'état de chargement du dossier actuellement ouvert (loading state clé par id, ou nettoyage conditionnel),
   - champs `input[type=date]` préremplis avec une date locale (pas `toISOString().slice(0, 10)` brut, sensible à l'UTC),
