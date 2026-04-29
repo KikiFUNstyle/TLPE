@@ -24,7 +24,7 @@ basée sur les articles L2333-6 à L2333-16 du CGCT.
 | Quote-part dispositifs numériques partagés (0-100%, contrôle somme ≤ 100%, impact calcul + PDF titre) | §6.2 (US4.1) | OK + tests |
 | Accusé de réception PDF horodaté avec hash SHA-256 + QR de vérification + téléchargement sur détail déclaration | §5.2 / US3.6 | OK + tests |
 | Hash SHA-256 de soumission (accusé) | §5.2 | OK |
-| Titres de recettes + PDF (ordonnancement) + bordereau récapitulatif PDF/Excel horodaté avec hash SHA-256 + rôle TLPE PDF/Excel archivé + état de recouvrement (page + PDF/Excel archivés) + suivi des relances et mises en demeure (page + PDF/Excel archivés) + synthèse des contentieux en cours (page + PDF/Excel archivés) + mises en demeure PDF unitaire/batch archivées | §7.1 / §10.2 / US5.1 / US8.1 / US8.2 / US8.3 / US8.4 / US5.8 | OK + tests |
+| Titres de recettes + PDF (ordonnancement) + bordereau récapitulatif PDF/Excel horodaté avec hash SHA-256 + rôle TLPE PDF/Excel archivé + état de recouvrement (page + PDF/Excel archivés) + comparatif pluriannuel 3 ans glissants (page + PDF/Excel archivés) + suivi des relances et mises en demeure (page + PDF/Excel archivés) + synthèse des contentieux en cours (page + PDF/Excel archivés) + mises en demeure PDF unitaire/batch archivées | §7.1 / §10.2 / US5.1 / US8.1 / US8.2 / US8.5 / US8.3 / US8.4 / US5.8 | OK + tests |
 | Escalade automatique des impayés (J+10 / J+30 / J+60) + historique par titre | §7.4 / US5.7 | OK + tests |
 | Mandats SEPA + export pain.008.001.02 avec validation IBAN/BIC, séquencement FRST/RCUR et validation XSD locale | §7.2 / US5.4 | OK + tests |
 | Import de relevés bancaires (CSV paramétrable / OFX / MT940), dédoublonnage par transaction, page Rapprochement réservée admin/financier | §7.3 / US5.5 | OK + tests |
@@ -48,7 +48,7 @@ basée sur les articles L2333-6 à L2333-16 du CGCT.
 - Import SIG / Shapefile natif (§4.3)
 - Signature électronique (§13.2)
 - Conformité RGAA 4.1 complète (§11.3)
-- Rapports PDF avancés autres que le titre de recettes, le bordereau récapitulatif des titres (§10.2), **à l’exception du rapport de contrôle automatique US7.3, du rôle TLPE US8.1, de l’état de recouvrement US8.2, du suivi des relances US8.3 et de la synthèse des contentieux US8.4 désormais implémentés**
+- Rapports PDF avancés autres que le titre de recettes, le bordereau récapitulatif des titres (§10.2), **à l’exception du rapport de contrôle automatique US7.3, du rôle TLPE US8.1, de l’état de recouvrement US8.2, du comparatif pluriannuel US8.5, du suivi des relances US8.3 et de la synthèse des contentieux US8.4 désormais implémentés**
 
 ## Démarrage
 
@@ -102,7 +102,7 @@ Ouvrir ensuite http://localhost:5173.
 - Smoke test US3.7:
   - `GET /api/dashboard` expose `operationnel.declarations_soumises|validees|rejetees`, `drilldown.by_zone`, `drilldown.by_type_assujetti`, `evolution_journaliere`
   - le dashboard affiche le taux de déclaration, l'évolution vs N-1, le drilldown par zone/type et le graphe d'évolution journalière
-- Smoke test US5.1 / US8.1 / US8.2 / US8.3 / US8.4:
+- Smoke test US5.1 / US8.1 / US8.2 / US8.3 / US8.4 / US8.5:
   - la page `Titres` affiche les boutons `Bordereau PDF` / `Bordereau Excel` et `Rôle TLPE PDF` / `Rôle TLPE Excel` uniquement pour `admin|financier` quand une année est sélectionnée
   - la page `Titres` propose désormais `Générer mise en demeure` sur chaque titre impayé et un lot `mises en demeure` (max 100 titres filtrés) pour produire/archiver les PDF recommandés en `pieces_jointes`
   - la page `État de recouvrement` est visible uniquement pour `admin|financier`, permet de filtrer par année/zone/catégorie/statut de paiement et bascule la ventilation `assujetti|zone|categorie`
@@ -111,10 +111,13 @@ Ouvrir ensuite http://localhost:5173.
   - `GET /api/rapports/role?annee=YYYY&format=pdf|xlsx` retourne la liste exhaustive des titres émis avec total, horodatage, hash SHA-256, signature ordonnateur et archivage en `rapports_exports`
   - un export du rôle écrit une trace `audit_log` (`action=export-role-tlpe`)
   - `GET /api/rapports/recouvrement?annee=YYYY&format=json|pdf|xlsx` (ajouter uniquement les filtres optionnels réellement renseignés parmi `zone`, `categorie`, `statut_paiement`, `ventilation`) retourne l'agrégation `montant_emis|montant_recouvre|reste_a_recouvrer|taux_recouvrement`, le graphique/tableau selon la ventilation et archive les exports PDF/Excel dans `rapports_exports`
+  - la page `Comparatif pluriannuel` est visible uniquement pour `admin|financier`, permet de choisir une année de référence et affiche le comparatif N/N-1/N-2 (montants émis, recouvrés, assujettis, dispositifs), les évolutions en % et les ventilations zone/catégorie
+  - `GET /api/rapports/comparatif?annee=YYYY&format=json|pdf|xlsx` retourne la synthèse sur 3 ans glissants, les évolutions `vs_n1|vs_n2`, les ventilations par zone/catégorie et archive les exports PDF/Excel dans `rapports_exports`
   - `GET /api/rapports/contentieux?date_reference=YYYY-MM-DD&format=json|pdf|xlsx` retourne la synthèse par type (`nombre_dossiers`, `montant_litige`, `montant_degreve`, `anciennete_moyenne_jours`), un graphique de répartition et les alertes délais ≤ J-30 / dépassées, puis archive les exports PDF/Excel dans `rapports_exports`
   - la page `Contentieux` affiche, pour `admin|financier`, un bloc de synthèse avec KPI, camembert par type et exports PDF/Excel horodatés en conservant le nom de fichier backend
   - en cas d'échec SQL lors de l'archivage d'un export de recouvrement ou de synthèse contentieux, le fichier binaire temporairement écrit est supprimé avant réponse 500 pour éviter les archives orphelines
   - un export de recouvrement écrit une trace `audit_log` (`action=export-etat-recouvrement`) avec `hash`, `titres_count` et `archive_path`
+  - un export de comparatif écrit une trace `audit_log` (`action=export-comparatif-pluriannuel`) avec `hash`, `titres_count` et `archive_path`
   - un export de synthèse contentieux écrit une trace `audit_log` (`action=export-synthese-contentieux`) avec `hash`, `dossiers_count`, `alerts_total` et `archive_path`
 - Smoke test US5.4:
   - la fiche assujetti affiche les mandats SEPA existants et un formulaire de création (RUM, IBAN, BIC, date de signature)

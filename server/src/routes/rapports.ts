@@ -87,6 +87,11 @@ const contentieuxReportQuerySchema = z.object({
   format: z.enum(['json', 'pdf', 'xlsx']).optional().default('json'),
 });
 
+const comparatifReportQuerySchema = z.object({
+  annee: z.coerce.number().int().min(2000).max(2100),
+  format: z.enum(['json', 'pdf', 'xlsx']).optional().default('json'),
+});
+
 type RoleReportRow = {
   titre_id: number;
   numero_titre: string;
@@ -197,6 +202,51 @@ type ContentieuxReportPayload = {
     total: number;
     overdue: number;
     rows: ContentieuxAlertRow[];
+  };
+};
+
+type ComparatifSummaryRow = {
+  annee: number;
+  montant_emis: number;
+  montant_recouvre: number;
+  nombre_assujettis: number;
+  nombre_dispositifs: number;
+};
+
+type ComparatifBreakdownValue = {
+  annee: number;
+  montant_emis: number;
+  montant_recouvre: number;
+};
+
+type ComparatifBreakdownRow = {
+  key: string;
+  label: string;
+  values: ComparatifBreakdownValue[];
+};
+
+type ComparatifEvolution = {
+  montant_emis: number;
+  montant_recouvre: number;
+  nombre_assujettis: number;
+  nombre_dispositifs: number;
+};
+
+type ComparatifReportPayload = {
+  generatedAt: string;
+  hash: string;
+  filters: {
+    annee: number;
+    years: number[];
+  };
+  summary: ComparatifSummaryRow[];
+  breakdowns: {
+    zone: ComparatifBreakdownRow[];
+    categorie: ComparatifBreakdownRow[];
+  };
+  evolutions: {
+    vs_n1: ComparatifEvolution;
+    vs_n2: ComparatifEvolution;
   };
 };
 
@@ -926,6 +976,357 @@ async function archiveRecouvrementReport(params: {
       await deleteStoredFile(storagePath);
     } catch (cleanupError) {
       console.error('[TLPE] Echec nettoyage archive etat recouvrement', cleanupError);
+    }
+    throw error;
+  }
+
+  return { filename, storagePath };
+}
+
+type ComparatifRawRow = {
+  annee: number;
+  titre_id: number;
+  assujetti_id: number;
+  montant: number;
+  montant_paye: number;
+  montant_ligne: number;
+  dispositif_id: number;
+  zone_id: number | null;
+  zone_label: string | null;
+  categorie: string;
+};
+
+function buildComparatifYears(referenceYear: number): [number, number, number] {
+  return [referenceYear, referenceYear - 1, referenceYear - 2];
+}
+
+function buildComparatifEvolution(current: ComparatifSummaryRow, previous: ComparatifSummaryRow): ComparatifEvolution {
+  return {
+    montant_emis: computeRecouvrementRate(current.montant_emis - previous.montant_emis, previous.montant_emis),
+    montant_recouvre: computeRecouvrementRate(current.montant_recouvre - previous.montant_recouvre, previous.montant_recouvre),
+    nombre_assujettis: computeRecouvrementRate(current.nombre_assujettis - previous.nombre_assujettis, previous.nombre_assujettis),
+    nombre_dispositifs: computeRecouvrementRate(current.nombre_dispositifs - previous.nombre_dispositifs, previous.nombre_dispositifs),
+  };
+}
+
+function comparatifCategorieLabel(categorie: string): string {
+  switch (categorie) {
+    case 'enseigne':
+      return 'Enseigne';
+    case 'preenseigne':
+      return 'Préenseigne';
+    case 'publicitaire':
+    default:
+      return 'Publicitaire';
+  }
+}
+
+function listComparatifRawRows(years: number[]): ComparatifRawRow[] {
+  return db
+    .prepare(
+      `SELECT
+         t.annee,
+         t.id AS titre_id,
+         t.assujetti_id,
+         t.montant,
+         t.montant_paye,
+         ld.montant_ligne,
+         ld.dispositif_id,
+         d.zone_id,
+         z.libelle AS zone_label,
+         td.categorie
+       FROM titres t
+       JOIN declarations dec ON dec.id = t.declaration_id
+       JOIN lignes_declaration ld ON ld.declaration_id = dec.id
+       JOIN dispositifs d ON d.id = ld.dispositif_id
+       JOIN types_dispositifs td ON td.id = d.type_id
+       LEFT JOIN zones z ON z.id = d.zone_id
+       WHERE t.annee IN (?, ?, ?)
+       ORDER BY t.annee DESC, t.numero, ld.id`,
+    )
+    .all(...years) as ComparatifRawRow[];
+}
+
+function buildComparatifSummary(years: number[], rows: ComparatifRawRow[]): ComparatifSummaryRow[] {
+  const metrics = new Map<number, {
+    montantEmis: number;
+    montantRecouvre: number;
+    assujettis: Set<number>;
+    dispositifs: Set<number>;
+    titres: Set<number>;
+  }>();
+
+  for (const year of years) {
+    metrics.set(year, {
+      montantEmis: 0,
+      montantRecouvre: 0,
+      assujettis: new Set<number>(),
+      dispositifs: new Set<number>(),
+      titres: new Set<number>(),
+    });
+  }
+
+  for (const row of rows) {
+    const current = metrics.get(row.annee);
+    if (!current) continue;
+    current.assujettis.add(row.assujetti_id);
+    current.dispositifs.add(row.dispositif_id);
+    if (!current.titres.has(row.titre_id)) {
+      current.titres.add(row.titre_id);
+      current.montantEmis = roundRecouvrementCurrency(current.montantEmis + row.montant);
+      current.montantRecouvre = roundRecouvrementCurrency(current.montantRecouvre + row.montant_paye);
+    }
+  }
+
+  return years.map((year) => {
+    const metric = metrics.get(year)!;
+    return {
+      annee: year,
+      montant_emis: metric.montantEmis,
+      montant_recouvre: metric.montantRecouvre,
+      nombre_assujettis: metric.assujettis.size,
+      nombre_dispositifs: metric.dispositifs.size,
+    };
+  });
+}
+
+function buildComparatifBreakdown(
+  years: number[],
+  rows: ComparatifRawRow[],
+  groupBy: 'zone' | 'categorie',
+): ComparatifBreakdownRow[] {
+  const groups = new Map<string, { key: string; label: string; values: Map<number, ComparatifBreakdownValue> }>();
+
+  for (const row of rows) {
+    const key = groupBy === 'zone'
+      ? row.zone_id ? String(row.zone_id) : 'sans-zone'
+      : row.categorie;
+    const label = groupBy === 'zone'
+      ? row.zone_label || 'Sans zone'
+      : comparatifCategorieLabel(row.categorie);
+    const current = groups.get(key) || {
+      key,
+      label,
+      values: new Map<number, ComparatifBreakdownValue>(
+        years.map((year) => [year, { annee: year, montant_emis: 0, montant_recouvre: 0 }]),
+      ),
+    };
+    const yearValue = current.values.get(row.annee);
+    if (!yearValue) continue;
+
+    const emittedShare = row.montant > 0 ? roundRecouvrementCurrency((row.montant * row.montant_ligne) / row.montant) : 0;
+    const recoveredShare = row.montant > 0 ? roundRecouvrementCurrency((row.montant_paye * row.montant_ligne) / row.montant) : 0;
+
+    yearValue.montant_emis = roundRecouvrementCurrency(yearValue.montant_emis + emittedShare);
+    yearValue.montant_recouvre = roundRecouvrementCurrency(yearValue.montant_recouvre + recoveredShare);
+    current.values.set(row.annee, yearValue);
+    groups.set(key, current);
+  }
+
+  return Array.from(groups.values())
+    .map((group) => ({
+      key: group.key,
+      label: group.label,
+      values: years.map((year) => group.values.get(year) || { annee: year, montant_emis: 0, montant_recouvre: 0 }),
+    }))
+    .sort((left, right) => {
+      const leftCurrent = left.values[0]?.montant_emis ?? 0;
+      const rightCurrent = right.values[0]?.montant_emis ?? 0;
+      return rightCurrent - leftCurrent || left.label.localeCompare(right.label, 'fr');
+    });
+}
+
+function buildComparatifReportPayload(referenceYear: number): ComparatifReportPayload {
+  const years = buildComparatifYears(referenceYear);
+  const rows = listComparatifRawRows(years);
+  const summary = buildComparatifSummary(years, rows);
+  const breakdowns = {
+    zone: buildComparatifBreakdown(years, rows, 'zone'),
+    categorie: buildComparatifBreakdown(years, rows, 'categorie'),
+  };
+  const generatedAt = formatDateTime(new Date());
+  const evolutions = {
+    vs_n1: buildComparatifEvolution(summary[0], summary[1]),
+    vs_n2: buildComparatifEvolution(summary[0], summary[2]),
+  };
+  const hash = crypto
+    .createHash('sha256')
+    .update(
+      JSON.stringify({
+        years,
+        summary,
+        breakdowns,
+        evolutions,
+      }),
+    )
+    .digest('hex');
+
+  return {
+    generatedAt,
+    hash,
+    filters: {
+      annee: referenceYear,
+      years,
+    },
+    summary,
+    breakdowns,
+    evolutions,
+  };
+}
+
+function buildComparatifWorkbook(payload: ComparatifReportPayload): Buffer {
+  const rows: Array<Array<string | number>> = [
+    ['Comparatif pluriannuel TLPE'],
+    ['Année de référence', payload.filters.annee],
+    ['Période', payload.filters.years.join(', ')],
+    [],
+    ['Année', 'Montant émis', 'Montant recouvré', 'Nombre assujettis', 'Nombre dispositifs'],
+    ...payload.summary.map((row) => [row.annee, row.montant_emis, row.montant_recouvre, row.nombre_assujettis, row.nombre_dispositifs]),
+    [],
+    ['Évolutions vs N-1 / N-2'],
+    ['Indicateur', 'vs N-1', 'vs N-2'],
+    ['Montant émis', payload.evolutions.vs_n1.montant_emis, payload.evolutions.vs_n2.montant_emis],
+    ['Montant recouvré', payload.evolutions.vs_n1.montant_recouvre, payload.evolutions.vs_n2.montant_recouvre],
+    ['Nombre assujettis', payload.evolutions.vs_n1.nombre_assujettis, payload.evolutions.vs_n2.nombre_assujettis],
+    ['Nombre dispositifs', payload.evolutions.vs_n1.nombre_dispositifs, payload.evolutions.vs_n2.nombre_dispositifs],
+    [],
+    ['Ventilation par zone'],
+    ['Zone', 'Année', 'Montant émis', 'Montant recouvré'],
+    ...payload.breakdowns.zone.flatMap((row) => row.values.map((value) => [row.label, value.annee, value.montant_emis, value.montant_recouvre])),
+    [],
+    ['Ventilation par catégorie'],
+    ['Catégorie', 'Année', 'Montant émis', 'Montant recouvré'],
+    ...payload.breakdowns.categorie.flatMap((row) => row.values.map((value) => [row.label, value.annee, value.montant_emis, value.montant_recouvre])),
+    [],
+    ['Horodatage', payload.generatedAt],
+    ['Hash SHA-256', payload.hash],
+  ];
+
+  const worksheet = XLSX.utils.aoa_to_sheet(rows);
+  worksheet['!cols'] = [
+    { wch: 24 },
+    { wch: 16 },
+    { wch: 18 },
+    { wch: 18 },
+    { wch: 18 },
+  ];
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Comparatif TLPE');
+  return Buffer.from(XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }));
+}
+
+async function buildComparatifPdfBuffer(payload: ComparatifReportPayload): Promise<Buffer> {
+  return new Promise<Buffer>((resolve, reject) => {
+    const doc = new PDFDocument({ size: 'A4', margin: 36, bufferPages: true });
+    const chunks: Buffer[] = [];
+
+    doc.on('data', (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    doc.fontSize(18).text('Comparatif pluriannuel TLPE', { align: 'center' });
+    doc.moveDown(0.4);
+    doc.fontSize(10).fillColor('#555').text(`Exercice de référence : ${payload.filters.annee}`, { align: 'center' });
+    doc.text(`Période : ${payload.filters.years.join(' / ')}`, { align: 'center' });
+    doc.moveDown(0.6).fillColor('black');
+    doc.text(`Horodatage : ${payload.generatedAt}`);
+    doc.text(`Hash SHA-256 : ${payload.hash}`);
+    doc.moveDown();
+
+    doc.fontSize(12).text('Synthèse 3 ans glissants', { underline: true });
+    doc.moveDown(0.4);
+    doc.fontSize(10);
+    for (const row of payload.summary) {
+      doc.text(
+        `${row.annee} • Émis ${formatMoney(row.montant_emis)} • Recouvré ${formatMoney(row.montant_recouvre)} • ${row.nombre_assujettis} assujetti(s) • ${row.nombre_dispositifs} dispositif(s)`,
+      );
+      doc.moveDown(0.2);
+    }
+
+    doc.moveDown();
+    doc.fontSize(12).text('Évolutions', { underline: true });
+    doc.moveDown(0.4);
+    doc.fontSize(10)
+      .text(`Vs N-1 • Émis ${formatRecouvrementPct(payload.evolutions.vs_n1.montant_emis)} • Recouvré ${formatRecouvrementPct(payload.evolutions.vs_n1.montant_recouvre)} • Assujettis ${formatRecouvrementPct(payload.evolutions.vs_n1.nombre_assujettis)} • Dispositifs ${formatRecouvrementPct(payload.evolutions.vs_n1.nombre_dispositifs)}`)
+      .moveDown(0.2)
+      .text(`Vs N-2 • Émis ${formatRecouvrementPct(payload.evolutions.vs_n2.montant_emis)} • Recouvré ${formatRecouvrementPct(payload.evolutions.vs_n2.montant_recouvre)} • Assujettis ${formatRecouvrementPct(payload.evolutions.vs_n2.nombre_assujettis)} • Dispositifs ${formatRecouvrementPct(payload.evolutions.vs_n2.nombre_dispositifs)}`);
+
+    const writeBreakdownSection = (title: string, rows: ComparatifBreakdownRow[]) => {
+      doc.moveDown();
+      doc.fontSize(12).text(title, { underline: true });
+      doc.moveDown(0.4);
+      doc.fontSize(10);
+      if (rows.length === 0) {
+        doc.fillColor('#666').text('Aucune donnée.');
+        doc.fillColor('black');
+        return;
+      }
+      for (const row of rows) {
+        const values = row.values
+          .map((value) => `${value.annee}: émis ${formatMoney(value.montant_emis)}, recouvré ${formatMoney(value.montant_recouvre)}`)
+          .join(' • ');
+        doc.text(`${row.label} • ${values}`);
+        doc.moveDown(0.2);
+      }
+    };
+
+    writeBreakdownSection('Ventilation par zone', payload.breakdowns.zone);
+    writeBreakdownSection('Ventilation par catégorie', payload.breakdowns.categorie);
+
+    const range = doc.bufferedPageRange();
+    for (let index = range.start; index < range.start + range.count; index += 1) {
+      doc.switchToPage(index);
+      doc.fontSize(8).fillColor('#555').text(`Page ${index - range.start + 1}/${range.count}`, 36, 800, { align: 'center', width: 523 });
+      doc.fillColor('black');
+    }
+
+    doc.end();
+  });
+}
+
+async function archiveComparatifReport(params: {
+  annee: number;
+  format: 'pdf' | 'xlsx';
+  buffer: Buffer;
+  hash: string;
+  titresCount: number;
+  totalMontant: number;
+  generatedBy: number;
+}): Promise<{ filename: string; storagePath: string }> {
+  const filename = `comparatif-pluriannuel-${params.annee}.${params.format}`;
+  const storagePath = path.posix.join(
+    'rapports',
+    'comparatif_pluriannuel',
+    String(params.annee),
+    `${Date.now()}-${sanitizeFileComponent(params.hash.slice(0, 12))}.${params.format}`,
+  );
+  await saveFile(
+    storagePath,
+    params.buffer,
+    params.format === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  );
+
+  try {
+    db.prepare(
+      `INSERT INTO rapports_exports (
+        type_rapport, annee, format, filename, storage_path, content_hash, titres_count, total_montant, generated_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      'comparatif_pluriannuel',
+      params.annee,
+      params.format,
+      filename,
+      storagePath,
+      params.hash,
+      params.titresCount,
+      params.totalMontant,
+      params.generatedBy,
+    );
+  } catch (error) {
+    try {
+      await deleteStoredFile(storagePath);
+    } catch (cleanupError) {
+      console.error('[TLPE] Echec nettoyage archive comparatif pluriannuel', cleanupError);
     }
     throw error;
   }
@@ -1715,6 +2116,62 @@ rapportsRouter.get('/recouvrement', requireRole('admin', 'financier'), async (re
   } catch (error) {
     console.error('[TLPE] Erreur generation etat de recouvrement', error);
     return res.status(500).json({ error: 'Erreur interne generation etat de recouvrement' });
+  }
+});
+
+rapportsRouter.get('/comparatif', requireRole('admin', 'financier'), async (req, res) => {
+  const parsed = comparatifReportQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'Parametres du comparatif pluriannuel invalides' });
+  }
+
+  try {
+    const payload = buildComparatifReportPayload(parsed.data.annee);
+
+    if (parsed.data.format === 'json') {
+      return res.json(payload);
+    }
+
+    const buffer = parsed.data.format === 'pdf'
+      ? await buildComparatifPdfBuffer(payload)
+      : buildComparatifWorkbook(payload);
+    const titresCount = new Set(listComparatifRawRows(payload.filters.years).map((row) => row.titre_id)).size;
+    const archive = await archiveComparatifReport({
+      annee: payload.filters.annee,
+      format: parsed.data.format,
+      buffer,
+      hash: payload.hash,
+      titresCount,
+      totalMontant: payload.summary[0]?.montant_emis ?? 0,
+      generatedBy: req.user!.id,
+    });
+
+    logAudit({
+      userId: req.user!.id,
+      action: 'export-comparatif-pluriannuel',
+      entite: 'rapport',
+      details: {
+        annee: payload.filters.annee,
+        years: payload.filters.years,
+        format: parsed.data.format,
+        generated_at: payload.generatedAt,
+        hash: payload.hash,
+        titres_count: titresCount,
+        total_montant_reference: payload.summary[0]?.montant_emis ?? 0,
+        archive_path: archive.storagePath,
+      },
+      ip: req.ip ?? null,
+    });
+
+    res.setHeader(
+      'Content-Type',
+      parsed.data.format === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader('Content-Disposition', `attachment; filename="${archive.filename}"`);
+    return res.send(buffer);
+  } catch (error) {
+    console.error('[TLPE] Erreur generation comparatif pluriannuel', error);
+    return res.status(500).json({ error: 'Erreur interne generation comparatif pluriannuel' });
   }
 });
 
