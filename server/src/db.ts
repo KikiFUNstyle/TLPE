@@ -241,6 +241,28 @@ export function initSchema() {
     }
   }
 
+  const hasExportsSauvegardes = (
+    db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'exports_sauvegardes'").get() as
+      | { name: string }
+      | undefined
+  )?.name === 'exports_sauvegardes';
+  if (!hasExportsSauvegardes) {
+    db.exec(`
+      CREATE TABLE exports_sauvegardes (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id        INTEGER NOT NULL,
+        nom            TEXT NOT NULL,
+        entite         TEXT NOT NULL CHECK (entite IN ('assujettis','dispositifs','declarations','titres','paiements','contentieux')),
+        configuration  TEXT NOT NULL,
+        created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at     TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        UNIQUE (user_id, nom)
+      );
+      CREATE INDEX IF NOT EXISTS idx_exports_sauvegardes_user_updated ON exports_sauvegardes(user_id, updated_at DESC);
+    `);
+  }
+
   const hasDeclarationSequences = (
     db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'declaration_sequences'").get() as
       | { name: string }

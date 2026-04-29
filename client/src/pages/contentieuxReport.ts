@@ -27,6 +27,10 @@ export function buildContentieuxReportPath(
   return `/api/rapports/contentieux?${params.toString()}`;
 }
 
+export function buildExportsPersonnalisesPath(endpoint: 'meta' | 'templates') {
+  return `/api/exports-personnalises/${endpoint}`;
+}
+
 export function buildContentieuxExportFilename(dateReference: string, format: ContentieuxExportFormat) {
   return `synthese-contentieux-${dateReference}.${format}`;
 }
