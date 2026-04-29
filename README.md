@@ -110,7 +110,7 @@ Ouvrir ensuite http://localhost:5173.
   - un export du bordereau écrit une trace `audit_log` (`action=export-bordereau`)
   - `GET /api/rapports/role?annee=YYYY&format=pdf|xlsx` retourne la liste exhaustive des titres émis avec total, horodatage, hash SHA-256, signature ordonnateur et archivage en `rapports_exports`
   - un export du rôle écrit une trace `audit_log` (`action=export-role-tlpe`)
-  - `GET /api/rapports/recouvrement?annee=YYYY&zone=&categorie=&statut_paiement=&ventilation=&format=json|pdf|xlsx` retourne l'agrégation `montant_emis|montant_recouvre|reste_a_recouvrer|taux_recouvrement`, le graphique/tableau selon la ventilation et archive les exports PDF/Excel dans `rapports_exports`
+  - `GET /api/rapports/recouvrement?annee=YYYY&format=json|pdf|xlsx` (ajouter uniquement les filtres optionnels réellement renseignés parmi `zone`, `categorie`, `statut_paiement`, `ventilation`) retourne l'agrégation `montant_emis|montant_recouvre|reste_a_recouvrer|taux_recouvrement`, le graphique/tableau selon la ventilation et archive les exports PDF/Excel dans `rapports_exports`
   - en cas d'échec SQL lors de l'archivage d'un export de recouvrement, le fichier binaire temporairement écrit est supprimé avant réponse 500 pour éviter les archives orphelines
   - un export de recouvrement écrit une trace `audit_log` (`action=export-etat-recouvrement`) avec `hash`, `titres_count` et `archive_path`
 - Smoke test US5.4:

@@ -5,6 +5,7 @@ import {
   buildRecouvrementReportPath,
   canExportRecouvrement,
   defaultRecouvrementFilters,
+  shouldApplyRecouvrementRequestResult,
 } from './recouvrementReport';
 
 test('defaultRecouvrementFilters initialise les filtres métier attendus', () => {
@@ -41,4 +42,9 @@ test('buildRecouvrementReportPath construit la requête API complète', () => {
 
 test('buildRecouvrementExportFilename conserve la ventilation et le format', () => {
   assert.equal(buildRecouvrementExportFilename('2026', 'categorie', 'pdf'), 'etat-recouvrement-categorie-2026.pdf');
+});
+
+test('shouldApplyRecouvrementRequestResult ignore les réponses obsolètes quand un filtre plus récent a été demandé', () => {
+  assert.equal(shouldApplyRecouvrementRequestResult(3, 2), false);
+  assert.equal(shouldApplyRecouvrementRequestResult(3, 3), true);
 });

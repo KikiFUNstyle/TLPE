@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import express from 'express';
+import PDFDocument from 'pdfkit';
 import XLSX from 'xlsx';
 import type { AuthUser } from './auth';
 
@@ -13,6 +14,8 @@ type RecouvrementTestContext = {
   hashPassword: typeof import('./auth').hashPassword;
   signToken: typeof import('./auth').signToken;
   rapportsRouter: typeof import('./routes/rapports').rapportsRouter;
+  measureRecouvrementReportRowHeight: typeof import('./routes/rapports').measureRecouvrementReportRowHeight;
+  shouldRecouvrementReportStartNewPage: typeof import('./routes/rapports').shouldRecouvrementReportStartNewPage;
   cleanup: () => void;
 };
 
@@ -45,6 +48,8 @@ function createRecouvrementTestContext(): RecouvrementTestContext {
     hashPassword: authModule.hashPassword,
     signToken: authModule.signToken,
     rapportsRouter: rapportsModule.rapportsRouter,
+    measureRecouvrementReportRowHeight: rapportsModule.measureRecouvrementReportRowHeight,
+    shouldRecouvrementReportStartNewPage: rapportsModule.shouldRecouvrementReportStartNewPage,
     cleanup: () => {
       try {
         dbModule.db.close();
@@ -286,6 +291,53 @@ test('GET /api/rapports/recouvrement retourne les totaux et ventilations filtrab
   });
 });
 
+test('GET /api/rapports/recouvrement sépare les assujettis homonymes dans la ventilation', async () => {
+  await withRecouvrementTestContext(async (ctx) => {
+    const fx = resetFixtures(ctx);
+
+    const duplicateAssujettiId = Number(
+      ctx.db
+        .prepare(`INSERT INTO assujettis (identifiant_tlpe, raison_sociale, statut) VALUES ('TLPE-REC-004', 'Alpha Médias', 'actif')`)
+        .run().lastInsertRowid,
+    );
+    const duplicateDeclarationId = Number(
+      ctx.db
+        .prepare(`INSERT INTO declarations (numero, assujetti_id, annee, statut, montant_total) VALUES ('DEC-REC-004', ?, 2026, 'validee', 50)`)
+        .run(duplicateAssujettiId).lastInsertRowid,
+    );
+    const duplicateDeviceId = Number(
+      ctx.db
+        .prepare(`INSERT INTO dispositifs (identifiant, assujetti_id, type_id, zone_id, surface, nombre_faces, statut)
+                  VALUES ('DSP-REC-005', ?, (SELECT id FROM types_dispositifs WHERE code = 'ENS-1'), (SELECT id FROM zones WHERE code = 'ZC'), 2, 1, 'declare')`)
+        .run(duplicateAssujettiId).lastInsertRowid,
+    );
+
+    ctx.db
+      .prepare(`INSERT INTO lignes_declaration (declaration_id, dispositif_id, surface_declaree, nombre_faces, date_pose, montant_ligne) VALUES (?, ?, 2, 1, '2026-01-01', 50)`)
+      .run(duplicateDeclarationId, duplicateDeviceId);
+    ctx.db
+      .prepare(`INSERT INTO titres (numero, declaration_id, assujetti_id, annee, montant, montant_paye, date_emission, date_echeance, statut)
+                VALUES ('TIT-REC-004', ?, ?, 2026, 50, 0, '2026-04-01', '2026-06-01', 'emis')`)
+      .run(duplicateDeclarationId, duplicateAssujettiId);
+
+    const res = await requestReport(ctx, {
+      path: '/api/rapports/recouvrement?annee=2026&ventilation=assujetti',
+      headers: makeAuthHeader(ctx, fx.financier),
+    });
+
+    assert.equal(res.status, 200);
+    const alphaRows = res.json?.breakdowns.assujetti.filter((row: { label: string }) => row.label === 'Alpha Médias') || [];
+    assert.equal(alphaRows.length, 2);
+    assert.deepEqual(
+      alphaRows.map((row: { montant_emis: number; montant_recouvre: number; reste_a_recouvrer: number }) => [row.montant_emis, row.montant_recouvre, row.reste_a_recouvrer]),
+      [
+        [700, 350, 350],
+        [50, 0, 50],
+      ],
+    );
+  });
+});
+
 test('GET /api/rapports/recouvrement exporte en XLSX et PDF avec audit dédié', async () => {
   await withRecouvrementTestContext(async (ctx) => {
     const fx = resetFixtures(ctx);
@@ -350,6 +402,55 @@ test('GET /api/rapports/recouvrement exporte en XLSX et PDF avec audit dédié',
     assert.match(archives[0].content_hash, /^[a-f0-9]{64}$/);
     assert.equal(archives[0].titres_count, 3);
     assert.equal(archives[0].total_montant, 1100);
+  });
+});
+
+test('measureRecouvrementReportRowHeight utilise la cellule la plus haute quand le libellé retourne à la ligne', async () => {
+  await withRecouvrementTestContext(async (ctx) => {
+    const doc = new PDFDocument({ size: 'A4', margin: 36 });
+    doc.fontSize(8);
+
+    const compactHeight = ctx.measureRecouvrementReportRowHeight(doc, {
+      key: 'zone-centre',
+      label: 'Zone Centre',
+      montant_emis: 800,
+      montant_recouvre: 550,
+      reste_a_recouvrer: 250,
+      taux_recouvrement: 0.6875,
+    });
+    const wrappedHeight = ctx.measureRecouvrementReportRowHeight(doc, {
+      key: 'assujetti-alpha',
+      label:
+        'Alpha Médias et Publicité Urbaine Grand Format — secteur centre historique rive gauche, dossier de recouvrement prioritaire avec ventilation détaillée par enseigne, mobilier, préenseigne et observations complémentaires pour retour à la ligne explicite',
+      montant_emis: 700,
+      montant_recouvre: 350,
+      reste_a_recouvrer: 350,
+      taux_recouvrement: 0.5,
+    });
+
+    assert.ok(wrappedHeight > compactHeight);
+    doc.end();
+  });
+});
+
+test('shouldRecouvrementReportStartNewPage tient compte de la hauteur de la prochaine ligne et du footer', async () => {
+  await withRecouvrementTestContext(async (ctx) => {
+    const doc = new PDFDocument({ size: 'A4', margin: 36 });
+    doc.fontSize(8);
+
+    const wrappedHeight = ctx.measureRecouvrementReportRowHeight(doc, {
+      key: 'assujetti-alpha',
+      label:
+        'Alpha Médias et Publicité Urbaine Grand Format — secteur centre historique rive gauche, dossier de recouvrement prioritaire avec ventilation détaillée par enseigne, mobilier, préenseigne et observations complémentaires pour retour à la ligne explicite',
+      montant_emis: 700,
+      montant_recouvre: 350,
+      reste_a_recouvrer: 350,
+      taux_recouvrement: 0.5,
+    });
+
+    assert.equal(ctx.shouldRecouvrementReportStartNewPage(36, wrappedHeight), false);
+    assert.equal(ctx.shouldRecouvrementReportStartNewPage(740, wrappedHeight), true);
+    doc.end();
   });
 });
 

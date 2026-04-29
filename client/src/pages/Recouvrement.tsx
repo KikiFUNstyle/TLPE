@@ -1,8 +1,8 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { api, apiBlobWithMetadata } from '../api';
 import { formatEuro, formatPct } from '../format';
-import { buildRecouvrementExportFilename, buildRecouvrementReportPath, canExportRecouvrement, defaultRecouvrementFilters, type RecouvrementExportFormat, type RecouvrementFiltersForm, type RecouvrementVentilation } from './recouvrementReport';
+import { buildRecouvrementExportFilename, buildRecouvrementReportPath, canExportRecouvrement, defaultRecouvrementFilters, shouldApplyRecouvrementRequestResult, type RecouvrementExportFormat, type RecouvrementFiltersForm, type RecouvrementVentilation } from './recouvrementReport';
 
 type ZoneOption = {
   id: number;
@@ -82,6 +82,7 @@ export default function Recouvrement() {
   const [info, setInfo] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState<RecouvrementExportFormat | null>(null);
+  const requestIdRef = useRef(0);
 
   useEffect(() => {
     api<ZoneOption[]>('/api/referentiels/zones')
@@ -90,15 +91,25 @@ export default function Recouvrement() {
   }, []);
 
   const load = async () => {
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
     setLoading(true);
     setErr(null);
     try {
       const payload = await api<RecouvrementPayload>(buildRecouvrementReportPath(filters));
+      if (!shouldApplyRecouvrementRequestResult(requestIdRef.current, requestId)) {
+        return;
+      }
       setData(payload);
     } catch (error) {
+      if (!shouldApplyRecouvrementRequestResult(requestIdRef.current, requestId)) {
+        return;
+      }
       setErr((error as Error).message);
     } finally {
-      setLoading(false);
+      if (shouldApplyRecouvrementRequestResult(requestIdRef.current, requestId)) {
+        setLoading(false);
+      }
     }
   };
 

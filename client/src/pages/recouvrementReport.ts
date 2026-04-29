@@ -1,13 +1,15 @@
 export type RecouvrementVentilation = 'assujetti' | 'zone' | 'categorie';
 export type RecouvrementExportFormat = 'pdf' | 'xlsx';
 
-export type RecouvrementFiltersForm = {
+type RecouvrementFiltersForm = {
   annee: string;
   zone: string;
   categorie: string;
   statut_paiement: string;
   ventilation: RecouvrementVentilation;
 };
+
+export type { RecouvrementFiltersForm };
 
 export function defaultRecouvrementFilters(year: number): RecouvrementFiltersForm {
   return {
@@ -40,4 +42,8 @@ export function buildRecouvrementExportFilename(
   format: RecouvrementExportFormat,
 ) {
   return `etat-recouvrement-${ventilation}-${annee}.${format}`;
+}
+
+export function shouldApplyRecouvrementRequestResult(latestRequestId: number, completedRequestId: number): boolean {
+  return latestRequestId === completedRequestId;
 }

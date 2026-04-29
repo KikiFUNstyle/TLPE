@@ -71,6 +71,7 @@ type RoleReportColumn = {
 
 type RecouvrementRowBase = {
   titre_id: number;
+  assujetti_id: number;
   montant: number;
   montant_paye: number;
   montant_ligne: number;
@@ -260,6 +261,43 @@ export function measureRoleReportRowHeight(doc: InstanceType<typeof PDFDocument>
 
 export function shouldRoleReportStartNewPage(currentY: number, rowHeight: number): boolean {
   return currentY + rowHeight + ROLE_REPORT_ROW_SPACING > ROLE_REPORT_FOOTER_Y;
+}
+
+const RECOUVREMENT_REPORT_ROW_SPACING = 8;
+const RECOUVREMENT_REPORT_FOOTER_Y = 792 - 36 - 14;
+const RECOUVREMENT_REPORT_COLUMNS = [
+  { width: 200, align: 'left' as const },
+  { width: 90, align: 'right' as const },
+  { width: 90, align: 'right' as const },
+  { width: 90, align: 'right' as const },
+  { width: 60, align: 'right' as const },
+] as const;
+
+export function measureRecouvrementReportRowHeight(
+  doc: InstanceType<typeof PDFDocument>,
+  row: RecouvrementSummaryRow,
+): number {
+  const values = [
+    row.label,
+    formatMoney(row.montant_emis),
+    formatMoney(row.montant_recouvre),
+    formatMoney(row.reste_a_recouvrer),
+    formatRecouvrementPct(row.taux_recouvrement),
+  ] as const;
+
+  const height = RECOUVREMENT_REPORT_COLUMNS.reduce((maxHeight, column, index) => {
+    const textHeight = doc.heightOfString(values[index], {
+      width: column.width,
+      align: column.align,
+    });
+    return Math.max(maxHeight, textHeight);
+  }, 0);
+
+  return Math.max(height, 20);
+}
+
+export function shouldRecouvrementReportStartNewPage(currentY: number, rowHeight: number): boolean {
+  return currentY + rowHeight + RECOUVREMENT_REPORT_ROW_SPACING > RECOUVREMENT_REPORT_FOOTER_Y;
 }
 
 async function buildRoleReportPdfBuffer(payload: RoleReportPayload): Promise<Buffer> {
@@ -454,6 +492,7 @@ function listRecouvrementRows(filters: RecouvrementFilters): RecouvrementRowBase
     .prepare(
       `SELECT
          t.id AS titre_id,
+         t.assujetti_id,
          t.montant,
          t.montant_paye,
          ld.montant_ligne,
@@ -480,7 +519,7 @@ function aggregateRecouvrementRows(rows: RecouvrementRowBase[], ventilation: Rec
   for (const row of rows) {
     const key =
       ventilation === 'assujetti'
-        ? row.assujetti_label
+        ? String(row.assujetti_id)
         : ventilation === 'zone'
           ? row.zone_id
             ? String(row.zone_id)
@@ -645,7 +684,8 @@ async function buildRecouvrementPdfBuffer(payload: RecouvrementReportPayload): P
     doc.fontSize(8);
 
     for (const row of payload.chart) {
-      if (doc.y > 760) {
+      const rowHeight = measureRecouvrementReportRowHeight(doc, row);
+      if (shouldRecouvrementReportStartNewPage(doc.y, rowHeight)) {
         doc.addPage();
         drawHeader();
       }
@@ -655,7 +695,9 @@ async function buildRecouvrementPdfBuffer(payload: RecouvrementReportPayload): P
       doc.text(formatMoney(row.montant_recouvre), headers[2].x, y, { width: headers[2].width, align: 'right' });
       doc.text(formatMoney(row.reste_a_recouvrer), headers[3].x, y, { width: headers[3].width, align: 'right' });
       doc.text(formatRecouvrementPct(row.taux_recouvrement), headers[4].x, y, { width: headers[4].width, align: 'right' });
-      doc.moveDown(0.8);
+      const rowBottom = y + rowHeight;
+      doc.moveTo(36, rowBottom + 4).lineTo(560, rowBottom + 4).strokeColor('#d8d8d8').stroke().strokeColor('black');
+      doc.y = rowBottom + 8;
     }
 
     const range = doc.bufferedPageRange();

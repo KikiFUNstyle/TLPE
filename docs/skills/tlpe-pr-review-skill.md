@@ -73,7 +73,8 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
   - en cas d'échec de persistance SQL après écriture du binaire archivé, vérifier le nettoyage immédiat du fichier temporaire/stocké pour éviter les archives orphelines,
   - si l'US mentionne un déclencheur utilisateur (bouton, sélecteur année, action toolbar), vérifier que le wiring UI existe réellement dans la page cible et pas seulement des helpers/tests isolés,
   - pour tout rendu tabulaire PDF multi-colonnes, calcul de hauteur de ligne basé sur la cellule la plus haute (pas seulement la dernière colonne dessinée) afin d'éviter les chevauchements de lignes,
-  - pour toute pagination de tableau PDF, décider le saut de page à partir de la hauteur de la prochaine ligne + espace de séparation/footer (pas uniquement sur le `doc.y` courant), avec test de non-régression sur une ligne haute proche du bas de page.
+  - pour toute pagination de tableau PDF, décider le saut de page à partir de la hauteur de la prochaine ligne + espace de séparation/footer (pas uniquement sur le `doc.y` courant), avec test de non-régression sur une ligne haute proche du bas de page,
+  - pour toute ventilation/agrégation métier par assujetti, grouper sur une clé stable technique (`assujetti_id`) et non sur un libellé affiché (`raison_sociale`) afin d'éviter les collisions d'homonymes.
 
 - Pour tout export XML métier (PESV2, pain.008, flux DGFiP), vérifier en review:
   - sélection métier exclusive et explicite (campagne **ou** période, jamais les deux),
