@@ -781,8 +781,12 @@ function buildRecouvrementWhereClause(filters: RecouvrementFilters): { whereSql:
   };
 }
 
-function listRecouvrementRows(filters: RecouvrementFilters): RecouvrementRowBase[] {
+function listRecouvrementRows(
+  filters: RecouvrementFilters,
+  options: { includeZoneGeometry?: boolean } = {},
+): RecouvrementRowBase[] {
   const { whereSql, params } = buildRecouvrementWhereClause(filters);
+  const zoneGeometrySelect = options.includeZoneGeometry ? 'z.geometry AS zone_geometry' : 'NULL AS zone_geometry';
   return db
     .prepare(
       `SELECT
@@ -795,7 +799,7 @@ function listRecouvrementRows(filters: RecouvrementFilters): RecouvrementRowBase
          d.zone_id,
          z.code AS zone_code,
          z.libelle AS zone_label,
-         z.geometry AS zone_geometry,
+         ${zoneGeometrySelect},
          td.categorie,
          a.raison_sociale AS assujetti_label
        FROM titres t
@@ -926,7 +930,7 @@ function buildRecettesGeographiquesReportPayload(
     categorie: null,
     statutPaiement: null,
     ventilation: 'zone',
-  });
+  }, { includeZoneGeometry: true });
 
   type MutableZoneAggregation = {
     zone_id: number;
@@ -949,18 +953,24 @@ function buildRecettesGeographiquesReportPayload(
       throw new Error(`Zone ${row.zone_id} incomplete: code, libellé ou géométrie manquant`);
     }
 
+    const existingZone = zoneGroups.get(row.zone_id);
+
     let geometry: GeoJsonGeometry;
-    try {
-      geometry = normalizeGeometry(JSON.parse(row.zone_geometry));
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : 'géométrie illisible';
-      throw new Error(`Zone ${row.zone_id} invalide pour la carte des recettes: ${reason}`);
+    if (existingZone) {
+      geometry = existingZone.geometry;
+    } else {
+      try {
+        geometry = normalizeGeometry(JSON.parse(row.zone_geometry));
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : 'géométrie illisible';
+        throw new Error(`Zone ${row.zone_id} invalide pour la carte des recettes: ${reason}`);
+      }
     }
 
     const emittedShare = row.montant > 0 ? roundRecouvrementCurrency((row.montant * row.montant_ligne) / row.montant) : 0;
     const recoveredShare = row.montant > 0 ? roundRecouvrementCurrency((row.montant_paye * row.montant_ligne) / row.montant) : 0;
 
-    const currentZone = zoneGroups.get(row.zone_id) ?? {
+    const currentZone = existingZone ?? {
       zone_id: row.zone_id,
       zone_code: row.zone_code,
       zone_label: row.zone_label,
