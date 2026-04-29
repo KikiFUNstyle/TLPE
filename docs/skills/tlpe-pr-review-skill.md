@@ -238,6 +238,13 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
   - pour toute US de rapport de contrôle / rectification / redressement, refuser explicitement les constats non `cloture` avant export PDF/XLSX, génération de déclaration d’office/demande contribuable ou ouverture de contentieux, avec test 409 de non-régression.
   - toute numérotation métier créée en lot depuis ces actions (`DEC-*`, `CTX-*`) doit être réservée via une table de séquence/persistance dédiée plutôt qu’un `COUNT(*) + 1`, avec backfill legacy et couverture de test.
 
+### 18) Double authentification TOTP portail contribuable (appris sur US9.1)
+- Vérifier qu'une US 2FA n'est pas considérée livrée si seuls les endpoints backend existent : exiger aussi un **point d'entrée UI réel** (menu/sidebar + route dédiée) vers l'écran paramètres du compte.
+- Vérifier que l'écran frontend expose bien tout le parcours métier demandé : génération du QR code, secret manuel de secours, activation par code TOTP, affichage des 10 codes de récupération et désactivation confirmée par code.
+- Vérifier qu'au moins un test frontend couvre le wiring UI principal (présence de la route/entrée de navigation et rendu du panneau 2FA) ; des helpers/test unitaires isolés côté auth ne suffisent pas.
+- Vérifier que la route de login gère un état intermédiaire `requires_two_factor` typé explicitement côté TypeScript pour éviter les régressions de build (`union` discriminée / type guard) quand le backend peut renvoyer soit un JWT, soit un challenge 2FA.
+- Vérifier que les messages d'erreur/confirmation 2FA sont exploitables côté utilisateur (activation, désactivation, fallback presse-papiers indisponible) et qu'aucune action sensible ne dépend uniquement d'une copie automatique dans le clipboard.
+
 ## Format de sortie review
 
 1. **Résumé**
