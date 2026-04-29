@@ -1,0 +1,74 @@
+name: backup-maintenance
+
+on:
+  schedule:
+    - cron: '17 1 * * *'
+    - cron: '33 2 1 * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'backup ou restore-test'
+        required: true
+        default: backup
+        type: choice
+        options:
+          - backup
+          - restore-test
+
+jobs:
+  backup:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'backup' || github.event_name == 'schedule' && github.event.schedule == '17 1 * * *'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - name: Daily encrypted backup
+        env:
+          TLPE_BACKUP_STORAGE_MODE: ${{ secrets.TLPE_BACKUP_STORAGE_MODE }}
+          TLPE_BACKUP_LOCAL_DIR: ${{ secrets.TLPE_BACKUP_LOCAL_DIR }}
+          TLPE_BACKUP_STORAGE_PREFIX: ${{ secrets.TLPE_BACKUP_STORAGE_PREFIX }}
+          TLPE_BACKUP_PUBLIC_KEY: ${{ secrets.TLPE_BACKUP_PUBLIC_KEY }}
+          TLPE_BACKUP_ALERT_WEBHOOK_URL: ${{ secrets.TLPE_BACKUP_ALERT_WEBHOOK_URL }}
+          TLPE_BACKUP_S3_BUCKET: ${{ secrets.TLPE_BACKUP_S3_BUCKET }}
+          TLPE_BACKUP_S3_REGION: ${{ secrets.TLPE_BACKUP_S3_REGION }}
+          TLPE_BACKUP_S3_ENDPOINT: ${{ secrets.TLPE_BACKUP_S3_ENDPOINT }}
+          TLPE_BACKUP_S3_FORCE_PATH_STYLE: ${{ secrets.TLPE_BACKUP_S3_FORCE_PATH_STYLE }}
+          TLPE_BACKUP_S3_ACCESS_KEY_ID: ${{ secrets.TLPE_BACKUP_S3_ACCESS_KEY_ID }}
+          TLPE_BACKUP_S3_SECRET_ACCESS_KEY: ${{ secrets.TLPE_BACKUP_S3_SECRET_ACCESS_KEY }}
+          TLPE_BACKUP_RETENTION_DAILY_DAYS: '35'
+          TLPE_BACKUP_RETENTION_WEEKLY_WEEKS: '26'
+          TLPE_BACKUP_RETENTION_MONTHLY_MONTHS: '12'
+        run: npm run backup:run --workspace=server
+
+  restore-test:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'restore-test' || github.event_name == 'schedule' && github.event.schedule == '33 2 1 * *'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - name: Monthly restore drill
+        env:
+          TLPE_BACKUP_STORAGE_MODE: ${{ secrets.TLPE_BACKUP_STORAGE_MODE }}
+          TLPE_BACKUP_LOCAL_DIR: ${{ secrets.TLPE_BACKUP_LOCAL_DIR }}
+          TLPE_BACKUP_STORAGE_PREFIX: ${{ secrets.TLPE_BACKUP_STORAGE_PREFIX }}
+          TLPE_BACKUP_PUBLIC_KEY: ${{ secrets.TLPE_BACKUP_PUBLIC_KEY }}
+          TLPE_BACKUP_PRIVATE_KEY: ${{ secrets.TLPE_BACKUP_PRIVATE_KEY }}
+          TLPE_BACKUP_ALERT_WEBHOOK_URL: ${{ secrets.TLPE_BACKUP_ALERT_WEBHOOK_URL }}
+          TLPE_BACKUP_S3_BUCKET: ${{ secrets.TLPE_BACKUP_S3_BUCKET }}
+          TLPE_BACKUP_S3_REGION: ${{ secrets.TLPE_BACKUP_S3_REGION }}
+          TLPE_BACKUP_S3_ENDPOINT: ${{ secrets.TLPE_BACKUP_S3_ENDPOINT }}
+          TLPE_BACKUP_S3_FORCE_PATH_STYLE: ${{ secrets.TLPE_BACKUP_S3_FORCE_PATH_STYLE }}
+          TLPE_BACKUP_S3_ACCESS_KEY_ID: ${{ secrets.TLPE_BACKUP_S3_ACCESS_KEY_ID }}
+          TLPE_BACKUP_S3_SECRET_ACCESS_KEY: ${{ secrets.TLPE_BACKUP_S3_SECRET_ACCESS_KEY }}
+          TLPE_BACKUP_RETENTION_DAILY_DAYS: '35'
+          TLPE_BACKUP_RETENTION_WEEKLY_WEEKS: '26'
+          TLPE_BACKUP_RETENTION_MONTHLY_MONTHS: '12'
+        run: npm run backup:restore-test --workspace=server
