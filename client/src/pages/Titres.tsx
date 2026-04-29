@@ -4,6 +4,7 @@ import { formatDate, formatEuro } from '../format';
 import { useAuth } from '../auth';
 import { TitreRecouvrementHistory, type RecouvrementAction } from './TitreRecouvrementHistory';
 import { buildBordereauFilename, buildBordereauPath, canExportBordereau } from './titresBordereau';
+import { buildRoleTlpeFilename, buildRoleTlpePath, canExportRoleTlpe } from './roleTlpeReport';
 import {
   canGenerateMiseEnDemeure,
   getBatchEligibleTitreIds,
@@ -56,7 +57,9 @@ export default function Titres() {
   const [statut, setStatut] = useState('');
   const [err, setErr] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
-  const [exporting, setExporting] = useState<null | 'pdf' | 'xlsx' | 'pesv2' | 'mise-en-demeure-batch'>(null);
+  const [exporting, setExporting] = useState<
+    null | 'bordereau-pdf' | 'bordereau-xlsx' | 'role-pdf' | 'role-xlsx' | 'pesv2' | 'mise-en-demeure-batch'
+  >(null);
   const [downloadingMiseEnDemeureId, setDownloadingMiseEnDemeureId] = useState<number | null>(null);
   const [paiementFor, setPaiementFor] = useState<Titre | null>(null);
   const [historyFor, setHistoryFor] = useState<Titre | null>(null);
@@ -104,6 +107,7 @@ export default function Titres() {
   const selectedMiseEnDemeureTitreIds = getBatchEligibleTitreIds(rows, canManageTitres);
   const canRunMiseEnDemeureBatch = canManageTitres && exporting === null && selectedMiseEnDemeureTitreIds.length > 0;
   const canExport = canExportBordereau({ annee, canManage: canManageTitres });
+  const canExportRole = canExportRoleTlpe({ annee, canManage: canManageTitres });
   const canExportPesv2 =
     canManageTitres &&
     exporting === null &&
@@ -112,7 +116,7 @@ export default function Titres() {
 
   const downloadBordereau = async (format: 'pdf' | 'xlsx') => {
     if (!canExport) return;
-    setExporting(format);
+    setExporting(format === 'pdf' ? 'bordereau-pdf' : 'bordereau-xlsx');
     setErr(null);
     setInfo(null);
     try {
@@ -126,6 +130,29 @@ export default function Titres() {
       anchor.remove();
       window.URL.revokeObjectURL(href);
       setInfo(`Bordereau ${format.toUpperCase()} téléchargé.`);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setExporting(null);
+    }
+  };
+
+  const downloadRoleTlpe = async (format: 'pdf' | 'xlsx') => {
+    if (!canExportRole) return;
+    setExporting(format === 'pdf' ? 'role-pdf' : 'role-xlsx');
+    setErr(null);
+    setInfo(null);
+    try {
+      const blob = await apiBlob(buildRoleTlpePath(annee, format));
+      const href = window.URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = href;
+      anchor.download = buildRoleTlpeFilename(annee, format);
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(href);
+      setInfo(`Rôle TLPE ${format.toUpperCase()} téléchargé.`);
     } catch (e) {
       setErr((e as Error).message);
     } finally {
@@ -368,7 +395,7 @@ export default function Titres() {
               }}
               title={canExport ? 'Exporter le bordereau PDF' : 'Sélectionner une année pour exporter le bordereau'}
             >
-              {exporting === 'pdf' ? 'Export PDF...' : 'Bordereau PDF'}
+              {exporting === 'bordereau-pdf' ? 'Export PDF...' : 'Bordereau PDF'}
             </button>
             <button
               className="btn secondary"
@@ -378,7 +405,27 @@ export default function Titres() {
               }}
               title={canExport ? 'Exporter le bordereau Excel' : 'Sélectionner une année pour exporter le bordereau'}
             >
-              {exporting === 'xlsx' ? 'Export Excel...' : 'Bordereau Excel'}
+              {exporting === 'bordereau-xlsx' ? 'Export Excel...' : 'Bordereau Excel'}
+            </button>
+            <button
+              className="btn secondary"
+              disabled={!canExportRole || exporting !== null}
+              onClick={() => {
+                void downloadRoleTlpe('pdf');
+              }}
+              title={canExportRole ? 'Générer le rôle TLPE PDF' : 'Sélectionner une année pour générer le rôle TLPE'}
+            >
+              {exporting === 'role-pdf' ? 'Export rôle PDF...' : 'Rôle TLPE PDF'}
+            </button>
+            <button
+              className="btn secondary"
+              disabled={!canExportRole || exporting !== null}
+              onClick={() => {
+                void downloadRoleTlpe('xlsx');
+              }}
+              title={canExportRole ? 'Générer le rôle TLPE Excel' : 'Sélectionner une année pour générer le rôle TLPE'}
+            >
+              {exporting === 'role-xlsx' ? 'Export rôle Excel...' : 'Rôle TLPE Excel'}
             </button>
             <select value={pesv2SelectionMode} onChange={(e) => setPesv2SelectionMode(e.target.value as 'campagne' | 'periode')} title="Mode de sélection PESV2">
               <option value="campagne">PESV2 par campagne</option>
