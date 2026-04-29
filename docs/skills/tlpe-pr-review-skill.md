@@ -128,6 +128,14 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
   - nettoyage explicite des nouvelles tables dans les fixtures de tests qui purgent `campagnes`/tables parentes,
   - ordre de purge compatible FK dans les fixtures (supprimer d'abord les tables enfants, ex. `evenements_contentieux` puis `contentieux`, puis `titres`),
   - non-régression sur une base locale préexistante (pas seulement sur une base de test vierge).
+- Pour toute US de sauvegarde / restauration chiffrée, vérifier explicitement :
+  - snapshot SQLite cohérent (API `backup()` ou équivalent) plutôt qu'une simple copie brute du fichier `.db` quand WAL est actif,
+  - manifest de sauvegarde embarquant au minimum les chemins restaurables + hash SHA-256 par fichier,
+  - chiffrement hybride correctement séparé (clé de session aléatoire + chiffrement asymétrique de la clé, jamais la clé privée embarquée côté job de backup),
+  - rétention testée avec déduplication des buckets daily/weekly/monthly pour éviter de conserver plusieurs backups du même jour quand le bucket daily a déjà réservé la période,
+  - drill de restauration capable de valider `PRAGMA integrity_check` sur la base restaurée et de nettoyer le répertoire temporaire ensuite,
+  - si l'US promet un stockage S3-compatible, couvrir aussi le fallback/local mode pour les tests hermétiques sans réseau,
+  - alerte d'échec branchée dans le flux runtime (webhook/mail/etc.) sans masquer l'erreur initiale.
 - Pour toute US de timeline / chronologie métier (contentieux, workflow, notifications), vérifier explicitement:
   - alimentation automatique des événements système (création, changement de statut, décision),
   - les événements système utilisent leur **date métier réelle** (ex. décision/statut = date du jour ou date explicitement fournie), sans se décaler artificiellement sur la date d'un événement futur déjà saisi dans la timeline,

@@ -324,6 +324,69 @@ Notes d'exploitation :
 - rotation batch disponible via `npm run crypto:rotate --workspace=server [-- --dry-run]`,
 - inventaire courant des champs sensibles : secrets TOTP, IBAN SEPA et fichiers binaires stockés ; aucun champ NIR dédié n'est présent dans le schéma applicatif actuel.
 
+## Sauvegardes quotidiennes chiffrées + test de restauration mensuel (US10.3)
+
+Le backend embarque désormais un pipeline de sauvegarde chiffrée piloté par `server/src/services/backup.ts` :
+
+- snapshot SQLite cohérent via l'API `better-sqlite3.backup()` (`db/tlpe.db`),
+- archivage des répertoires runtime sensibles `uploads/`, `receipts/` et `mises_en_demeure/`,
+- manifest JSON embarqué (`manifest.json`) avec hash SHA-256 de chaque fichier restaurable,
+- chiffrement hybride : archive `tar.gz` chiffrée en AES-256-GCM avec clé de session aléatoire, elle-même chiffrée par clé publique RSA-OAEP SHA-256,
+- stockage local ou S3-compatible selon `TLPE_BACKUP_STORAGE_MODE=local|s3`,
+- rotation de rétention 12 mois avec conservation quotidienne / hebdomadaire / mensuelle,
+- exercice mensuel de restauration via `restoreLatestBackup()` avec contrôle `PRAGMA integrity_check`,
+- webhook d'alerte optionnel en cas d'échec backup/restauration (`TLPE_BACKUP_ALERT_WEBHOOK_URL`).
+
+Scripts disponibles :
+
+```bash
+npm run backup:run --workspace=server
+npm run backup:restore-test --workspace=server
+./scripts/backup.sh
+./scripts/restore-test.sh
+```
+
+Variables d'environnement minimales :
+
+```bash
+export TLPE_BACKUP_PUBLIC_KEY="-----BEGIN PUBLIC KEY-----..."
+export TLPE_BACKUP_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----..." # requis pour restore-test
+export TLPE_BACKUP_STORAGE_MODE=local
+export TLPE_BACKUP_LOCAL_DIR=/var/backups/tlpe
+export TLPE_BACKUP_STORAGE_PREFIX=backups
+export TLPE_BACKUP_RETENTION_DAILY_DAYS=35
+export TLPE_BACKUP_RETENTION_WEEKLY_WEEKS=26
+export TLPE_BACKUP_RETENTION_MONTHLY_MONTHS=12
+export TLPE_BACKUP_ALERT_WEBHOOK_URL=https://hooks.example/tlpe-backup
+```
+
+Mode S3-compatible :
+
+```bash
+export TLPE_BACKUP_STORAGE_MODE=s3
+export TLPE_BACKUP_S3_BUCKET=tlpe-backups
+export TLPE_BACKUP_S3_REGION=eu-west-3
+export TLPE_BACKUP_S3_ENDPOINT=https://s3.example
+export TLPE_BACKUP_S3_FORCE_PATH_STYLE=true
+export TLPE_BACKUP_S3_ACCESS_KEY_ID=***
+export TLPE_BACKUP_S3_SECRET_ACCESS_KEY=***
+```
+
+Automatisation GitHub Actions :
+
+- `.github/workflows/backup-maintenance.yml`
+  - backup quotidien à `01:17 UTC`,
+  - drill de restauration mensuel le 1er du mois à `02:33 UTC`,
+  - mode manuel `workflow_dispatch` (`backup` ou `restore-test`).
+
+Procédure manuelle de restauration :
+
+1. Exporter `TLPE_BACKUP_PRIVATE_KEY` et la même configuration de stockage que la production.
+2. Lancer `npm run backup:restore-test --workspace=server` pour extraire la dernière archive dans un répertoire temporaire.
+3. Vérifier `integrity.ok=true` et inspecter `payload/db/tlpe.db`, `payload/uploads/`, `payload/receipts/`, `payload/mises_en_demeure/`.
+4. Stopper l'application cible, remplacer la base et les répertoires restaurés, puis redémarrer.
+5. Contrôler `GET /api/health` et les écrans métier clés.
+
 Tests couverts :
 
 - roundtrip texte + binaire AES-256-GCM,
