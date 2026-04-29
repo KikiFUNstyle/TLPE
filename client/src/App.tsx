@@ -20,6 +20,7 @@ import Recouvrement from './pages/Recouvrement';
 import Comparatif from './pages/Comparatif';
 import Relances from './pages/Relances';
 import RecettesGeographiques from './pages/RecettesGeographiques';
+import ExportsPersonnalises from './pages/ExportsPersonnalises';
 
 export default function App() {
   const { user, loading, logout } = useAuth();
@@ -44,6 +45,7 @@ export default function App() {
   const isContribuable = user.role === 'contribuable';
   const canAccessRapprochement = user.role === 'admin' || user.role === 'financier';
   const canAccessRecouvrement = user.role === 'admin' || user.role === 'financier';
+  const canAccessExportsPersonnalises = user.role === 'admin' || user.role === 'gestionnaire' || user.role === 'financier';
   const canAccessRelances = user.role === 'admin' || user.role === 'gestionnaire';
   const canAccessControles = user.role === 'admin' || user.role === 'gestionnaire' || user.role === 'controleur';
 
@@ -74,6 +76,7 @@ export default function App() {
               {canAccessRecouvrement && <NavLink to="/recouvrement">État de recouvrement</NavLink>}
               {canAccessRecouvrement && <NavLink to="/comparatif">Comparatif pluriannuel</NavLink>}
               {canAccessRecouvrement && <NavLink to="/recettes-geographiques">Carte des recettes</NavLink>}
+              {canAccessExportsPersonnalises && <NavLink to="/exports-personnalises">Exports personnalisés</NavLink>}
               {canAccessRelances && <NavLink to="/relances">Suivi des relances</NavLink>}
               <NavLink to="/contentieux">Contentieux</NavLink>
               {canAccessControles && <NavLink to="/controles">Contrôles terrain</NavLink>}
@@ -110,6 +113,7 @@ export default function App() {
           <Route path="/recouvrement" element={canAccessRecouvrement ? <Recouvrement /> : <Navigate to="/" replace />} />
           <Route path="/comparatif" element={canAccessRecouvrement ? <Comparatif /> : <Navigate to="/" replace />} />
           <Route path="/recettes-geographiques" element={canAccessRecouvrement ? <RecettesGeographiques /> : <Navigate to="/" replace />} />
+          <Route path="/exports-personnalises" element={canAccessExportsPersonnalises ? <ExportsPersonnalises /> : <Navigate to="/" replace />} />
           <Route path="/relances" element={canAccessRelances ? <Relances /> : <Navigate to="/" replace />} />
           <Route path="/contentieux" element={<Contentieux />} />
           <Route path="/controles" element={canAccessControles ? <Controles /> : <Navigate to="/" replace />} />
