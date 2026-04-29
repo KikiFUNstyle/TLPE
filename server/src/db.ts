@@ -1222,6 +1222,10 @@ export function initSchema() {
     db.exec('CREATE INDEX IF NOT EXISTS idx_rapprochements_log_created_at ON rapprochements_log(created_at DESC, id DESC)');
   }
 
+  db.exec('CREATE INDEX IF NOT EXISTS idx_audit_entite ON audit_log(entite, entite_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(user_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_audit_created_at ON audit_log(created_at DESC, id DESC)');
+
   const hasRecouvrementActions = (
     db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'recouvrement_actions'").get() as
       | { name: string }

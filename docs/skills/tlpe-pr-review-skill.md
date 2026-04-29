@@ -237,6 +237,12 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
   - la création du dispositif, l’insertion du contrôle, la mise à jour de statut et les audits associés doivent être enveloppés dans une transaction SQLite unique pour éviter tout write partiel si une étape aval échoue,
   - pour toute US de rapport de contrôle / rectification / redressement, refuser explicitement les constats non `cloture` avant export PDF/XLSX, génération de déclaration d’office/demande contribuable ou ouverture de contentieux, avec test 409 de non-régression.
   - toute numérotation métier créée en lot depuis ces actions (`DEC-*`, `CTX-*`) doit être réservée via une table de séquence/persistance dédiée plutôt qu’un `COUNT(*) + 1`, avec backfill legacy et couverture de test.
+- Pour toute US de consultation du `audit_log`, vérifier explicitement :
+  - route backend réservée à `admin` avec `authMiddleware` + `requireRole('admin')`, validation Zod stricte des filtres et rejet 4xx des plages/calendriers invalides,
+  - pagination stable triée par `created_at DESC, id DESC` et présence d’un index dédié (`created_at` ou équivalent) pour éviter un scan intégral sur un journal volumineux,
+  - recherche plein texte réellement branchée sur `details` **et** sur les métadonnées utiles d’enquête (action, entité, utilisateur/email), avec test dédié,
+  - export CSV protégé contre l’injection de formules tableur et journalisé via une trace `audit_log` dédiée (`export-audit-log`),
+  - côté UI, ne pas se contenter d’helpers/tests isolés : vérifier la page réelle, le lien de navigation, le garde de rôle admin-only, le message explicite d’immutabilité/lecture seule et le wiring du téléchargement CSV.
 
 ## Format de sortie review
 
