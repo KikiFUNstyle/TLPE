@@ -163,7 +163,7 @@ export function initSchema() {
     db.exec(`
       CREATE TABLE rapports_exports (
         id            INTEGER PRIMARY KEY AUTOINCREMENT,
-        type_rapport  TEXT NOT NULL CHECK (type_rapport IN ('role_tlpe','etat_recouvrement','suivi_relances','synthese_contentieux')),
+        type_rapport  TEXT NOT NULL CHECK (type_rapport IN ('role_tlpe','etat_recouvrement','comparatif_pluriannuel','suivi_relances','synthese_contentieux')),
         annee         INTEGER NOT NULL,
         format        TEXT NOT NULL CHECK (format IN ('pdf','xlsx')),
         filename      TEXT NOT NULL,
@@ -190,10 +190,13 @@ export function initSchema() {
   const hasSuiviRelancesReport = /type_rapport\s+TEXT\s+NOT\s+NULL\s+CHECK\s*\(\s*type_rapport\s+IN\s*\([^)]*'suivi_relances'[^)]*\)\s*\)/i.test(
     rapportsExportsSql ?? '',
   );
+  const hasComparatifPluriannuelReport = /type_rapport\s+TEXT\s+NOT\s+NULL\s+CHECK\s*\(\s*type_rapport\s+IN\s*\([^)]*'comparatif_pluriannuel'[^)]*\)\s*\)/i.test(
+    rapportsExportsSql ?? '',
+  );
   const hasSyntheseContentieuxReport = /type_rapport\s+TEXT\s+NOT\s+NULL\s+CHECK\s*\(\s*type_rapport\s+IN\s*\([^)]*'synthese_contentieux'[^)]*\)\s*\)/i.test(
     rapportsExportsSql ?? '',
   );
-  if (rapportsExportsSql && (!hasEtatRecouvrementReport || !hasSuiviRelancesReport || !hasSyntheseContentieuxReport)) {
+  if (rapportsExportsSql && (!hasEtatRecouvrementReport || !hasSuiviRelancesReport || !hasComparatifPluriannuelReport || !hasSyntheseContentieuxReport)) {
     db.pragma('foreign_keys = OFF');
     try {
       db.exec('BEGIN TRANSACTION');
@@ -201,7 +204,7 @@ export function initSchema() {
         db.exec(`
           CREATE TABLE rapports_exports_new (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
-            type_rapport  TEXT NOT NULL CHECK (type_rapport IN ('role_tlpe','etat_recouvrement','suivi_relances','synthese_contentieux')),
+            type_rapport  TEXT NOT NULL CHECK (type_rapport IN ('role_tlpe','etat_recouvrement','comparatif_pluriannuel','suivi_relances','synthese_contentieux')),
             annee         INTEGER NOT NULL,
             format        TEXT NOT NULL CHECK (format IN ('pdf','xlsx')),
             filename      TEXT NOT NULL,

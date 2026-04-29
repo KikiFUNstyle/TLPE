@@ -681,7 +681,7 @@ CREATE TABLE IF NOT EXISTS titre_mises_en_demeure_sequences (
 
 CREATE TABLE IF NOT EXISTS rapports_exports (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
-  type_rapport  TEXT NOT NULL CHECK (type_rapport IN ('role_tlpe','etat_recouvrement','suivi_relances','synthese_contentieux')),
+  type_rapport  TEXT NOT NULL CHECK (type_rapport IN ('role_tlpe','etat_recouvrement','comparatif_pluriannuel','suivi_relances','synthese_contentieux')),
   annee         INTEGER NOT NULL,
   format        TEXT NOT NULL CHECK (format IN ('pdf','xlsx')),
   filename      TEXT NOT NULL,

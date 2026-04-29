@@ -74,7 +74,10 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
   - si l'US mentionne un déclencheur utilisateur (bouton, sélecteur année, action toolbar), vérifier que le wiring UI existe réellement dans la page cible et pas seulement des helpers/tests isolés,
   - pour tout rendu tabulaire PDF multi-colonnes, calcul de hauteur de ligne basé sur la cellule la plus haute (pas seulement la dernière colonne dessinée) afin d'éviter les chevauchements de lignes,
   - pour toute pagination de tableau PDF, décider le saut de page à partir de la hauteur de la prochaine ligne + espace de séparation/footer (pas uniquement sur le `doc.y` courant), avec test de non-régression sur une ligne haute proche du bas de page,
-  - pour toute ventilation/agrégation métier par assujetti, grouper sur une clé stable technique (`assujetti_id`) et non sur un libellé affiché (`raison_sociale`) afin d'éviter les collisions d'homonymes.
+  - pour toute ventilation/agrégation métier par assujetti, grouper sur une clé stable technique (`assujetti_id`) et non sur un libellé affiché (`raison_sociale`) afin d'éviter les collisions d'homonymes,
+  - pour tout export issu d'un payload déjà agrégé, vérifier qu'aucune seconde requête brute identique n'est relancée uniquement pour recalculer un compteur dérivable (`titresCount`, `rows.length`, etc.) : réutiliser la donnée préparée et ajouter un test de non-régression si besoin,
+  - pour toute page pilotée par un filtre texte/année déclenchant un chargement automatique, vérifier que l'UI n'envoie pas de requête sur saisie partielle (`2`, `20`, `202`) : attendre un filtre complet/valide avant auto-fetch et couvrir ce garde-fou par un test helper.
+
   - pour toute synthèse financière contentieuse, vérifier que les montants dérivés nécessaires au reporting (ex. `montant_degreve`) sont portés de bout en bout : schéma SQL + migration runtime legacy + mutation métier qui alimente la donnée (`POST /api/contentieux/:id/decider`) + restitution UI/export/tests, sinon la synthèse PDF/XLSX sous-estime silencieusement l'exposition réelle.
 
 - Pour tout export XML métier (PESV2, pain.008, flux DGFiP), vérifier en review:
