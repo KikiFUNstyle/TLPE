@@ -592,8 +592,12 @@ contentieuxRouter.post('/:id/decider', requireRole('admin', 'gestionnaire', 'fin
   const eventDate = timelineDecisionEventDate();
   const shouldStoreDegrevement = parsed.data.statut === 'degrevement_partiel' || parsed.data.statut === 'degrevement_total';
   const montantLitige = contentieux.montant_litige ?? null;
-  const fallbackDegrevement = parsed.data.statut === 'degrevement_total' ? montantLitige : null;
-  const montantDegreve = shouldStoreDegrevement ? parsed.data.montant_degreve ?? fallbackDegrevement : null;
+  const montantDegreve =
+    parsed.data.statut === 'degrevement_total'
+      ? montantLitige
+      : shouldStoreDegrevement
+        ? parsed.data.montant_degreve ?? null
+        : null;
 
   if (parsed.data.statut === 'degrevement_partiel' && montantDegreve === null) {
     return res.status(400).json({ error: 'Le montant dégrevé est obligatoire pour un dégrèvement partiel' });

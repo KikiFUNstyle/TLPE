@@ -778,6 +778,7 @@ test('POST /api/contentieux/:id/decider valide et persiste le montant dégrevé 
     body: {
       statut: 'degrevement_total',
       decision: 'Annulation totale.',
+      montant_degreve: 210,
     },
   });
   assert.equal(totalDecision.status, 200);
@@ -789,6 +790,7 @@ test('POST /api/contentieux/:id/decider valide et persiste le montant dégrevé 
   };
   assert.equal(storedTotal.statut, 'degrevement_total');
   assert.equal(storedTotal.montant_degreve, storedTotal.montant_litige);
+  assert.equal(storedTotal.montant_degreve, 830);
 });
 
 test('POST /api/contentieux/:id/evenements refuse une pièce jointe qui appartient à une autre entité ou est inaccessible', async () => {

@@ -113,6 +113,7 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
   - les événements système utilisent leur **date métier réelle** (ex. décision/statut = date du jour ou date explicitement fournie), sans se décaler artificiellement sur la date d'un événement futur déjà saisi dans la timeline,
   - ordre chronologique stable quand des événements manuels antérieurs ou futurs sont saisis après coup (tri par date métier, pas seulement par date de création),
   - export documentaire (PDF) cohérent avec la timeline affichée et journalisé dans `audit_log`,
+  - pour toute décision `degrevement_total`, ignorer/écraser toute valeur partielle fournie par le client et persister automatiquement `montant_degreve = montant_litige`, avec test de non-régression pour éviter un mismatch statut/montant,
   - UI sans prompt navigateur bloquant si une saisie métier structurée est attendue,
   - pour tout chargement asynchrone UI par ligne/dossier, vérifier qu'un retour tardif d'une requête précédente ne réinitialise pas l'état de chargement du dossier actuellement ouvert (loading state clé par id, ou nettoyage conditionnel),
   - champs `input[type=date]` préremplis avec une date locale (pas `toISOString().slice(0, 10)` brut, sensible à l'UTC),
