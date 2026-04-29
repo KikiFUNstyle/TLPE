@@ -9,6 +9,7 @@ import { db, initSchema } from './db';
 import { hashPassword, signToken, type AuthUser } from './auth';
 import { assujettisRouter } from './routes/assujettis';
 import { sepaRouter } from './routes/sepa';
+import { decryptText } from './services/crypto';
 
 function createApp() {
   const app = express();
@@ -283,7 +284,8 @@ test('POST /api/assujettis/:id/mandats-sepa valide IBAN/BIC et journalise la cr√
   assert.ok(stored);
   assert.equal(stored!.rum, 'RUM-ALPHA-001');
   assert.equal(stored!.statut, 'actif');
-  assert.equal(stored!.iban, 'FR7630006000011234567890189');
+  assert.notEqual(stored!.iban, 'FR7630006000011234567890189');
+  assert.equal(decryptText(stored!.iban), 'FR7630006000011234567890189');
   assert.equal(stored!.bic, 'AGRIFRPPXXX');
 
   assert.throws(

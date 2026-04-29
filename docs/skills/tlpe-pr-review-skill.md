@@ -19,6 +19,9 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
 - Échec de validation = erreur 4xx (pas 500).
 - Pour tout téléchargement de fichier, interdire les contrôles de type `startsWith(...)` seuls: vérifier l'enracinement avec `path.relative(root, absolutePath)` et rejeter si `..` ou chemin absolu.
 - Pour tout stream de fichier (`createReadStream`), imposer un handler d'erreur explicite qui journalise et termine proprement la réponse.
+- Pour toute US sécurité/chiffrement au repos, vérifier explicitement l'inventaire des champs sensibles réellement présents dans le schéma et documenter aussi les absences (ex: NIR non implémenté) pour éviter un faux sentiment de couverture.
+- Si un service de chiffrement prévoit un fallback de développement, exiger qu'il soit explicitement interdit en production (`NODE_ENV=production`) avec test ou garde runtime.
+- Si une rotation de clé est annoncée comme livrée, exiger un point d'entrée batch opérable (script CLI/documentation) et une option `--dry-run` ou équivalent pour audit préalable.
 
 ### 3) DB & audit
 - Toute mutation métier sensible appelle `logAudit()`.

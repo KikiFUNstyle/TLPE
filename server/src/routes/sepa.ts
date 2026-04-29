@@ -8,6 +8,7 @@ import { execFileSync } from 'node:child_process';
 import { electronicFormatIBAN, isValidBIC, isValidIBAN } from 'ibantools';
 import { authMiddleware, requireRole } from '../auth';
 import { db, logAudit } from '../db';
+import { decryptTextOrLegacy, encryptText } from '../services/crypto';
 
 export const sepaRouter = Router();
 sepaRouter.use(authMiddleware);
@@ -193,7 +194,7 @@ function nextSepaNumeroLot(): number {
 }
 
 function loadDueTitres(dateReference: string): DueTitreRow[] {
-  return db
+  const rows = db
     .prepare(
       `SELECT
          t.id AS titre_id,
@@ -220,6 +221,11 @@ function loadDueTitres(dateReference: string): DueTitreRow[] {
        ORDER BY t.date_echeance, t.numero`,
     )
     .all(dateReference) as DueTitreRow[];
+
+  return rows.map((row) => ({
+    ...row,
+    iban: decryptTextOrLegacy(row.iban),
+  }));
 }
 
 function buildSepaOrders(dateReference: string): SepaOrder[] {
@@ -373,15 +379,29 @@ function buildSepaXml(orders: SepaOrder[], numeroLot: number, datePrelevement: s
 }
 
 export function listMandatsForAssujetti(assujettiId: number) {
-  return db
+  const rows = db
     .prepare(
-      `SELECT id, rum, bic, date_signature, statut, date_revocation, created_at, updated_at,
-              '****' || substr(iban, length(iban) - 3, 4) AS iban_masked
+      `SELECT id, rum, iban, bic, date_signature, statut, date_revocation, created_at, updated_at
        FROM mandats_sepa
        WHERE assujetti_id = ?
        ORDER BY created_at DESC, id DESC`,
     )
-    .all(assujettiId);
+    .all(assujettiId) as Array<{
+      id: number;
+      rum: string;
+      iban: string;
+      bic: string;
+      date_signature: string;
+      statut: 'actif' | 'revoque';
+      date_revocation: string | null;
+      created_at: string;
+      updated_at: string;
+    }>;
+
+  return rows.map((row) => ({
+    ...row,
+    iban_masked: maskIban(decryptTextOrLegacy(row.iban)),
+  }));
 }
 
 function getActiveMandatForAssujetti(assujettiId: number, excludeMandatId?: number) {
@@ -430,7 +450,7 @@ export function createMandatSepa(params: {
         `INSERT INTO mandats_sepa (assujetti_id, rum, iban, bic, date_signature, statut)
          VALUES (?, ?, ?, ?, ?, 'actif')`,
       )
-      .run(params.assujettiId, rum, iban, bic, dateSignature);
+      .run(params.assujettiId, rum, encryptText(iban), bic, dateSignature);
 
     const mandatId = Number(info.lastInsertRowid);
     logAudit({
