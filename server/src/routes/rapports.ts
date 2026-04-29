@@ -6,6 +6,15 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { authMiddleware, requireRole } from '../auth';
 import { db, logAudit } from '../db';
+import {
+  buildRecouvrementFilename,
+  computeRate as computeRecouvrementRate,
+  roundCurrency as roundRecouvrementCurrency,
+  type RecouvrementFilters,
+  type RecouvrementReportPayload,
+  type RecouvrementSummaryRow,
+  type RecouvrementVentilation,
+} from '../recouvrementReport';
 import { deleteStoredFile, saveFile } from './piecesJointes';
 
 export const rapportsRouter = Router();
@@ -18,6 +27,17 @@ const ROLE_TLPE_ORDONNATEUR = process.env.TLPE_ORDONNATEUR || 'Ordonnateur TLPE'
 const roleReportQuerySchema = z.object({
   annee: z.coerce.number().int().min(2000).max(2100),
   format: z.enum(['pdf', 'xlsx']),
+});
+
+const recouvrementReportQuerySchema = z.object({
+  annee: z.coerce.number().int().min(2000).max(2100),
+  zone: z.coerce.number().int().positive().optional(),
+  categorie: z.enum(['enseigne', 'publicitaire', 'preenseigne']).optional(),
+  statut_paiement: z
+    .enum(['emis', 'paye_partiel', 'paye', 'impaye', 'mise_en_demeure', 'transmis_comptable', 'admis_en_non_valeur'])
+    .optional(),
+  ventilation: z.enum(['assujetti', 'zone', 'categorie']).optional().default('assujetti'),
+  format: z.enum(['json', 'pdf', 'xlsx']).optional().default('json'),
 });
 
 type RoleReportRow = {
@@ -49,12 +69,27 @@ type RoleReportColumn = {
   width: number;
 };
 
+type RecouvrementRowBase = {
+  titre_id: number;
+  montant: number;
+  montant_paye: number;
+  montant_ligne: number;
+  zone_id: number | null;
+  zone_label: string | null;
+  categorie: string;
+  assujetti_label: string;
+};
+
 function formatDateTime(date: Date): string {
   return date.toISOString().replace('T', ' ').slice(0, 19);
 }
 
 function formatMoney(value: number): string {
   return `${value.toFixed(2)} EUR`;
+}
+
+function formatRecouvrementPct(value: number): string {
+  return `${(value * 100).toFixed(1)} %`;
 }
 
 function sanitizeFileComponent(value: string): string {
@@ -67,7 +102,7 @@ function sanitizeFileComponent(value: string): string {
     .slice(0, 120);
 }
 
-function paymentStatusLabel(statut: string): string {
+function paymentStatusLabel(statut: string) {
   switch (statut) {
     case 'paye':
       return 'Paye';
@@ -390,6 +425,303 @@ async function archiveRoleReport(params: {
   return { filename, storagePath };
 }
 
+function buildRecouvrementWhereClause(filters: RecouvrementFilters): { whereSql: string; params: unknown[] } {
+  const conditions = ['t.annee = ?'];
+  const params: unknown[] = [filters.annee];
+
+  if (filters.zoneId) {
+    conditions.push('d.zone_id = ?');
+    params.push(filters.zoneId);
+  }
+  if (filters.categorie) {
+    conditions.push('td.categorie = ?');
+    params.push(filters.categorie);
+  }
+  if (filters.statutPaiement) {
+    conditions.push('t.statut = ?');
+    params.push(filters.statutPaiement);
+  }
+
+  return {
+    whereSql: conditions.join(' AND '),
+    params,
+  };
+}
+
+function listRecouvrementRows(filters: RecouvrementFilters): RecouvrementRowBase[] {
+  const { whereSql, params } = buildRecouvrementWhereClause(filters);
+  return db
+    .prepare(
+      `SELECT
+         t.id AS titre_id,
+         t.montant,
+         t.montant_paye,
+         ld.montant_ligne,
+         d.zone_id,
+         z.libelle AS zone_label,
+         td.categorie,
+         a.raison_sociale AS assujetti_label
+       FROM titres t
+       JOIN assujettis a ON a.id = t.assujetti_id
+       JOIN declarations dec ON dec.id = t.declaration_id
+       JOIN lignes_declaration ld ON ld.declaration_id = dec.id
+       JOIN dispositifs d ON d.id = ld.dispositif_id
+       JOIN types_dispositifs td ON td.id = d.type_id
+       LEFT JOIN zones z ON z.id = d.zone_id
+       WHERE ${whereSql}
+       ORDER BY t.numero, ld.id`,
+    )
+    .all(...params) as RecouvrementRowBase[];
+}
+
+function aggregateRecouvrementRows(rows: RecouvrementRowBase[], ventilation: RecouvrementVentilation): RecouvrementSummaryRow[] {
+  const groups = new Map<string, RecouvrementSummaryRow>();
+
+  for (const row of rows) {
+    const key =
+      ventilation === 'assujetti'
+        ? row.assujetti_label
+        : ventilation === 'zone'
+          ? row.zone_id
+            ? String(row.zone_id)
+            : 'sans-zone'
+          : row.categorie;
+    const label =
+      ventilation === 'assujetti'
+        ? row.assujetti_label
+        : ventilation === 'zone'
+          ? row.zone_label || 'Sans zone'
+          : row.categorie === 'enseigne'
+            ? 'Enseigne'
+            : row.categorie === 'preenseigne'
+              ? 'Préenseigne'
+              : 'Publicitaire';
+    const current = groups.get(key) || {
+      key,
+      label,
+      montant_emis: 0,
+      montant_recouvre: 0,
+      reste_a_recouvrer: 0,
+      taux_recouvrement: 0,
+    };
+    const emittedShare = row.montant > 0 ? roundRecouvrementCurrency((row.montant * row.montant_ligne) / row.montant) : 0;
+    const recoveredShare = row.montant > 0 ? roundRecouvrementCurrency((row.montant_paye * row.montant_ligne) / row.montant) : 0;
+
+    current.montant_emis = roundRecouvrementCurrency(current.montant_emis + emittedShare);
+    current.montant_recouvre = roundRecouvrementCurrency(current.montant_recouvre + recoveredShare);
+    current.reste_a_recouvrer = roundRecouvrementCurrency(current.montant_emis - current.montant_recouvre);
+    current.taux_recouvrement = computeRecouvrementRate(current.montant_recouvre, current.montant_emis);
+    groups.set(key, current);
+  }
+
+  return Array.from(groups.values()).sort((a, b) => b.montant_emis - a.montant_emis || a.label.localeCompare(b.label, 'fr'));
+}
+
+function resolveZoneLabel(zoneId: number | null): { id: number; label: string } | null {
+  if (!zoneId) return null;
+  const row = db.prepare(`SELECT id, libelle FROM zones WHERE id = ?`).get(zoneId) as { id: number; libelle: string } | undefined;
+  return row ? { id: row.id, label: row.libelle } : null;
+}
+
+function buildRecouvrementReportPayload(filters: RecouvrementFilters): RecouvrementReportPayload {
+  const rows = listRecouvrementRows(filters);
+  const titresCount = new Set(rows.map((row) => row.titre_id)).size;
+  const byAssujetti = aggregateRecouvrementRows(rows, 'assujetti');
+  const byZone = aggregateRecouvrementRows(rows, 'zone');
+  const byCategorie = aggregateRecouvrementRows(rows, 'categorie');
+  const montantEmis = roundRecouvrementCurrency(byAssujetti.reduce((sum, row) => sum + row.montant_emis, 0));
+  const montantRecouvre = roundRecouvrementCurrency(byAssujetti.reduce((sum, row) => sum + row.montant_recouvre, 0));
+  const reste = roundRecouvrementCurrency(montantEmis - montantRecouvre);
+  const generatedAt = formatDateTime(new Date());
+  const hash = crypto
+    .createHash('sha256')
+    .update(
+      JSON.stringify({
+        filters,
+        generatedAt,
+        rows: {
+          assujetti: byAssujetti,
+          zone: byZone,
+          categorie: byCategorie,
+        },
+        totals: {
+          montantEmis,
+          montantRecouvre,
+          reste,
+        },
+      }),
+    )
+    .digest('hex');
+
+  return {
+    generatedAt,
+    hash,
+    titresCount,
+    filters: {
+      annee: filters.annee,
+      zone: resolveZoneLabel(filters.zoneId),
+      categorie: filters.categorie,
+      statut_paiement: filters.statutPaiement,
+      ventilation: filters.ventilation,
+    },
+    totals: {
+      montant_emis: montantEmis,
+      montant_recouvre: montantRecouvre,
+      reste_a_recouvrer: reste,
+      taux_recouvrement: computeRecouvrementRate(montantRecouvre, montantEmis),
+    },
+    breakdowns: {
+      assujetti: byAssujetti,
+      zone: byZone,
+      categorie: byCategorie,
+    },
+    chart: filters.ventilation === 'zone' ? byZone : filters.ventilation === 'categorie' ? byCategorie : byAssujetti,
+  };
+}
+
+function buildRecouvrementWorkbook(payload: RecouvrementReportPayload): Buffer {
+  const rows: Array<Array<string | number>> = [
+    ['État de recouvrement TLPE'],
+    ['Année', payload.filters.annee],
+    ['Ventilation', payload.filters.ventilation],
+    ['Horodatage', payload.generatedAt],
+    ['Hash SHA-256', payload.hash],
+    [],
+    ['Libellé', 'Montant émis', 'Montant recouvré', 'Reste à recouvrer', 'Taux'],
+    ...payload.chart.map((row) => [row.label, row.montant_emis, row.montant_recouvre, row.reste_a_recouvrer, row.taux_recouvrement]),
+    ['TOTAL', payload.totals.montant_emis, payload.totals.montant_recouvre, payload.totals.reste_a_recouvrer, payload.totals.taux_recouvrement],
+  ];
+
+  const worksheet = XLSX.utils.aoa_to_sheet(rows);
+  worksheet['!cols'] = [{ wch: 28 }, { wch: 16 }, { wch: 18 }, { wch: 18 }, { wch: 12 }];
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Recouvrement');
+  return Buffer.from(XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }));
+}
+
+async function buildRecouvrementPdfBuffer(payload: RecouvrementReportPayload): Promise<Buffer> {
+  return new Promise<Buffer>((resolve, reject) => {
+    const doc = new PDFDocument({ size: 'A4', margin: 36, bufferPages: true });
+    const chunks: Buffer[] = [];
+
+    doc.on('data', (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    doc.fontSize(18).text('État de recouvrement TLPE', { align: 'center' });
+    doc.moveDown(0.4);
+    doc.fontSize(10).fillColor('#555').text(`Exercice : ${payload.filters.annee}`, { align: 'center' });
+    doc.text(`Ventilation : ${payload.filters.ventilation}`, { align: 'center' });
+    doc.moveDown(0.8).fillColor('black');
+    doc.fontSize(10).text(`Horodatage : ${payload.generatedAt}`);
+    doc.text(`Hash SHA-256 : ${payload.hash}`);
+    doc.moveDown();
+    doc.text(`Montant émis : ${formatMoney(payload.totals.montant_emis)}`);
+    doc.text(`Montant recouvré : ${formatMoney(payload.totals.montant_recouvre)}`);
+    doc.text(`Reste à recouvrer : ${formatMoney(payload.totals.reste_a_recouvrer)}`);
+    doc.text(`Taux de recouvrement : ${formatRecouvrementPct(payload.totals.taux_recouvrement)}`);
+    doc.moveDown();
+
+    const headers = [
+      { label: 'Libellé', x: 36, width: 200, align: 'left' as const },
+      { label: 'Émis', x: 236, width: 90, align: 'right' as const },
+      { label: 'Recouvré', x: 326, width: 90, align: 'right' as const },
+      { label: 'Reste', x: 416, width: 90, align: 'right' as const },
+      { label: 'Taux', x: 506, width: 60, align: 'right' as const },
+    ];
+
+    const drawHeader = () => {
+      const y = doc.y;
+      doc.fontSize(8).fillColor('#333');
+      for (const header of headers) {
+        doc.text(header.label, header.x, y, { width: header.width, align: header.align });
+      }
+      doc.moveTo(36, y + 14).lineTo(560, y + 14).stroke();
+      doc.y = y + 18;
+      doc.fillColor('black');
+    };
+
+    drawHeader();
+    doc.fontSize(8);
+
+    for (const row of payload.chart) {
+      if (doc.y > 760) {
+        doc.addPage();
+        drawHeader();
+      }
+      const y = doc.y;
+      doc.text(row.label, headers[0].x, y, { width: headers[0].width });
+      doc.text(formatMoney(row.montant_emis), headers[1].x, y, { width: headers[1].width, align: 'right' });
+      doc.text(formatMoney(row.montant_recouvre), headers[2].x, y, { width: headers[2].width, align: 'right' });
+      doc.text(formatMoney(row.reste_a_recouvrer), headers[3].x, y, { width: headers[3].width, align: 'right' });
+      doc.text(formatRecouvrementPct(row.taux_recouvrement), headers[4].x, y, { width: headers[4].width, align: 'right' });
+      doc.moveDown(0.8);
+    }
+
+    const range = doc.bufferedPageRange();
+    for (let index = range.start; index < range.start + range.count; index += 1) {
+      doc.switchToPage(index);
+      doc.fontSize(8).fillColor('#555').text(`Page ${index - range.start + 1}/${range.count}`, 36, 800, { align: 'center', width: 523 });
+      doc.fillColor('black');
+    }
+
+    doc.end();
+  });
+}
+
+async function archiveRecouvrementReport(params: {
+  annee: number;
+  ventilation: RecouvrementVentilation;
+  format: 'pdf' | 'xlsx';
+  buffer: Buffer;
+  hash: string;
+  titresCount: number;
+  totalMontant: number;
+  generatedBy: number;
+}): Promise<{ filename: string; storagePath: string }> {
+  const filename = buildRecouvrementFilename(String(params.annee), params.ventilation, params.format);
+  const storagePath = path.posix.join(
+    'rapports',
+    'etat_recouvrement',
+    String(params.annee),
+    `${Date.now()}-${sanitizeFileComponent(params.hash.slice(0, 12))}.${params.format}`,
+  );
+  await saveFile(
+    storagePath,
+    params.buffer,
+    params.format === 'pdf'
+      ? 'application/pdf'
+      : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  );
+
+  try {
+    db.prepare(
+      `INSERT INTO rapports_exports (
+        type_rapport, annee, format, filename, storage_path, content_hash, titres_count, total_montant, generated_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      'etat_recouvrement',
+      params.annee,
+      params.format,
+      filename,
+      storagePath,
+      params.hash,
+      params.titresCount,
+      params.totalMontant,
+      params.generatedBy,
+    );
+  } catch (error) {
+    try {
+      await deleteStoredFile(storagePath);
+    } catch (cleanupError) {
+      console.error('[TLPE] Echec nettoyage archive etat recouvrement', cleanupError);
+    }
+    throw error;
+  }
+
+  return { filename, storagePath };
+}
+
 rapportsRouter.get('/role', requireRole('admin', 'financier'), async (req, res) => {
   const parsed = roleReportQuerySchema.safeParse(req.query);
   if (!parsed.success) {
@@ -398,10 +730,7 @@ rapportsRouter.get('/role', requireRole('admin', 'financier'), async (req, res) 
 
   try {
     const payload = buildRoleReportPayload(parsed.data.annee);
-    const buffer =
-      parsed.data.format === 'pdf'
-        ? await buildRoleReportPdfBuffer(payload)
-        : buildRoleReportWorkbook(payload);
+    const buffer = parsed.data.format === 'pdf' ? await buildRoleReportPdfBuffer(payload) : buildRoleReportWorkbook(payload);
 
     const archive = await archiveRoleReport({
       annee: payload.annee,
@@ -431,14 +760,79 @@ rapportsRouter.get('/role', requireRole('admin', 'financier'), async (req, res) 
 
     res.setHeader(
       'Content-Type',
-      parsed.data.format === 'pdf'
-        ? 'application/pdf'
-        : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      parsed.data.format === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     );
     res.setHeader('Content-Disposition', `attachment; filename="${archive.filename}"`);
     return res.send(buffer);
   } catch (error) {
     console.error('[TLPE] Erreur generation role TLPE', error);
     return res.status(500).json({ error: 'Erreur interne generation role TLPE' });
+  }
+});
+
+rapportsRouter.get('/recouvrement', requireRole('admin', 'financier'), async (req, res) => {
+  const parsed = recouvrementReportQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'Parametres de recouvrement invalides' });
+  }
+
+  const filters: RecouvrementFilters = {
+    annee: parsed.data.annee,
+    zoneId: parsed.data.zone ?? null,
+    categorie: parsed.data.categorie ?? null,
+    statutPaiement: parsed.data.statut_paiement ?? null,
+    ventilation: parsed.data.ventilation,
+  };
+
+  try {
+    const payload = buildRecouvrementReportPayload(filters);
+
+    if (parsed.data.format === 'json') {
+      return res.json(payload);
+    }
+
+    const buffer = parsed.data.format === 'pdf' ? await buildRecouvrementPdfBuffer(payload) : buildRecouvrementWorkbook(payload);
+    const archive = await archiveRecouvrementReport({
+      annee: filters.annee,
+      ventilation: filters.ventilation,
+      format: parsed.data.format,
+      buffer,
+      hash: payload.hash,
+      titresCount: payload.titresCount,
+      totalMontant: payload.totals.montant_emis,
+      generatedBy: req.user!.id,
+    });
+
+    logAudit({
+      userId: req.user!.id,
+      action: 'export-etat-recouvrement',
+      entite: 'rapport',
+      details: {
+        annee: filters.annee,
+        format: parsed.data.format,
+        ventilation: filters.ventilation,
+        zone_id: filters.zoneId,
+        categorie: filters.categorie,
+        statut_paiement: filters.statutPaiement,
+        generated_at: payload.generatedAt,
+        hash: payload.hash,
+        titres_count: payload.titresCount,
+        montant_emis: payload.totals.montant_emis,
+        montant_recouvre: payload.totals.montant_recouvre,
+        reste_a_recouvrer: payload.totals.reste_a_recouvrer,
+        archive_path: archive.storagePath,
+      },
+      ip: req.ip ?? null,
+    });
+
+    res.setHeader(
+      'Content-Type',
+      parsed.data.format === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader('Content-Disposition', `attachment; filename="${archive.filename}"`);
+    return res.send(buffer);
+  } catch (error) {
+    console.error('[TLPE] Erreur generation etat de recouvrement', error);
+    return res.status(500).json({ error: 'Erreur interne generation etat de recouvrement' });
   }
 });

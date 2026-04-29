@@ -69,6 +69,8 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
   - filtrage métier exact des données exportées,
   - présence d'un horodatage + hash du contenu restitué,
   - écriture d'une trace `audit_log` dédiée à l'export,
+  - si l'US exige un archivage d'export (`rapports_exports`, pièce jointe, stockage disque/S3), vérifier aussi la persistance métier associée (`filename`, `storage_path`, `content_hash`, compte/totaux`) avec test dédié,
+  - en cas d'échec de persistance SQL après écriture du binaire archivé, vérifier le nettoyage immédiat du fichier temporaire/stocké pour éviter les archives orphelines,
   - si l'US mentionne un déclencheur utilisateur (bouton, sélecteur année, action toolbar), vérifier que le wiring UI existe réellement dans la page cible et pas seulement des helpers/tests isolés,
   - pour tout rendu tabulaire PDF multi-colonnes, calcul de hauteur de ligne basé sur la cellule la plus haute (pas seulement la dernière colonne dessinée) afin d'éviter les chevauchements de lignes,
   - pour toute pagination de tableau PDF, décider le saut de page à partir de la hauteur de la prochaine ligne + espace de séparation/footer (pas uniquement sur le `doc.y` courant), avec test de non-régression sur une ligne haute proche du bas de page.
