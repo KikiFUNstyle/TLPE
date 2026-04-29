@@ -244,6 +244,13 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
   - export CSV protégé contre l’injection de formules tableur et journalisé via une trace `audit_log` dédiée (`export-audit-log`),
   - côté UI, ne pas se contenter d’helpers/tests isolés : vérifier la page réelle, le lien de navigation, le garde de rôle admin-only, le message explicite d’immutabilité/lecture seule et le wiring du téléchargement CSV.
 
+### 18) Double authentification TOTP portail contribuable (appris sur US9.1)
+- Vérifier qu'une US 2FA n'est pas considérée livrée si seuls les endpoints backend existent : exiger aussi un **point d'entrée UI réel** (menu/sidebar + route dédiée) vers l'écran paramètres du compte.
+- Vérifier que l'écran frontend expose bien tout le parcours métier demandé : génération du QR code, secret manuel de secours, activation par code TOTP, affichage des 10 codes de récupération et désactivation confirmée par code.
+- Vérifier qu'au moins un test frontend couvre le wiring UI principal (présence de la route/entrée de navigation et rendu du panneau 2FA) ; des helpers/test unitaires isolés côté auth ne suffisent pas.
+- Vérifier que la route de login gère un état intermédiaire `requires_two_factor` typé explicitement côté TypeScript pour éviter les régressions de build (`union` discriminée / type guard) quand le backend peut renvoyer soit un JWT, soit un challenge 2FA.
+- Vérifier que les messages d'erreur/confirmation 2FA sont exploitables côté utilisateur (activation, désactivation, fallback presse-papiers indisponible) et qu'aucune action sensible ne dépend uniquement d'une copie automatique dans le clipboard.
+
 ## Format de sortie review
 
 1. **Résumé**

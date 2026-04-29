@@ -67,10 +67,17 @@ function extractApiErrorMessage(error: unknown): string | null {
   return null;
 }
 
-async function throwApiError(res: Response): Promise<never> {
+type ApiRequestOptions = {
+  redirectOnUnauthorized?: boolean;
+};
+
+async function throwApiError(res: Response, requestOptions: ApiRequestOptions = {}): Promise<never> {
+  const { redirectOnUnauthorized = true } = requestOptions;
   if (res.status === 401) {
     clearToken();
-    window.location.href = '/login';
+    if (redirectOnUnauthorized) {
+      window.location.href = '/login';
+    }
   }
 
   const contentType = res.headers.get('content-type') || '';
@@ -86,11 +93,12 @@ async function throwApiError(res: Response): Promise<never> {
 export async function api<T = unknown>(
   path: string,
   options: RequestInit = {},
+  requestOptions: ApiRequestOptions = {},
 ): Promise<T> {
   const res = await fetch(path, { ...options, headers: buildHeaders(options, shouldSendJsonContentType(options)) });
   const contentType = res.headers.get('content-type') || '';
   if (!res.ok) {
-    await throwApiError(res);
+    await throwApiError(res, requestOptions);
   }
   if (res.status === 204) return undefined as T;
   if (contentType.includes('application/json')) return res.json() as Promise<T>;

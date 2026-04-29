@@ -21,6 +21,7 @@
     "ibantools": "^4.5.4",
     "jsonwebtoken": "^9.0.2",
     "multer": "^1.4.5-lts.2",
+    "otplib": "^13.4.0",
     "pdfkit": "^0.15.1",
     "qrcode": "^1.5.4",
     "xlsx": "^0.18.5",

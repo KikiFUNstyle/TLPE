@@ -295,6 +295,26 @@ Audit :
 
 - `logAudit()` sur création de dossier, ajout manuel d'événement, décision et export PDF de timeline.
 
+## Double authentification TOTP du portail contribuable (US9.1)
+
+Le portail contribuable propose désormais un écran **Paramètres du compte** accessible depuis le menu latéral pour gérer la double authentification :
+
+- préparation d'un secret TOTP côté backend via `POST /api/auth/2fa/setup`,
+- génération et affichage d'un QR code pour Google Authenticator / 1Password / Authy,
+- confirmation d'activation par code à 6 chiffres via `POST /api/auth/2fa/enable`,
+- génération de 10 codes de récupération à usage unique,
+- affichage du nombre de codes restants et désactivation confirmée par code via `POST /api/auth/2fa/disable`,
+- challenge intermédiaire à la connexion quand la 2FA est active (`POST /api/auth/login` puis `POST /api/auth/login/verify-2fa`).
+
+Points de vérification manuelle :
+
+- se connecter avec un compte contribuable,
+- ouvrir **Paramètres du compte**,
+- lancer la configuration 2FA et scanner le QR code,
+- confirmer l'activation avec un code TOTP valide,
+- vérifier qu'une reconnexion demande bien le code TOTP ou un code de récupération,
+- désactiver la 2FA avec un code valide.
+
 ## Paiement en ligne PayFip / Tipi (US5.3)
 
 Le portail contribuable prend en charge un flux PayFip/Tipi simulé depuis l'écran **Titres** :

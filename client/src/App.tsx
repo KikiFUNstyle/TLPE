@@ -22,6 +22,8 @@ import Relances from './pages/Relances';
 import RecettesGeographiques from './pages/RecettesGeographiques';
 import ExportsPersonnalises from './pages/ExportsPersonnalises';
 import AuditLog from './pages/AuditLog';
+import AccountSettings from './pages/AccountSettings';
+import { accountSettingsNavLabel, accountSettingsRoute } from './accountSettingsNavigation';
 
 export default function App() {
   const { user, loading, logout } = useAuth();
@@ -97,6 +99,7 @@ export default function App() {
           )}
           <div className="section-title">Outils</div>
           <NavLink to="/simulateur">Simulateur</NavLink>
+          <NavLink to={accountSettingsRoute}>{accountSettingsNavLabel}</NavLink>
           {(user.role === 'admin' || user.role === 'gestionnaire') && (
             <NavLink to="/referentiels">Referentiels</NavLink>
           )}
@@ -123,6 +126,7 @@ export default function App() {
           <Route path="/controles" element={canAccessControles ? <Controles /> : <Navigate to="/" replace />} />
           <Route path="/carte" element={<Carte />} />
           <Route path="/simulateur" element={<Simulateur />} />
+          <Route path={accountSettingsRoute} element={<AccountSettings />} />
           <Route path="/referentiels" element={<Referentiels />} />
           <Route path="/verification/accuse/:token" element={<DeclarationReceiptVerify />} />
           <Route path="/paiement/confirmation" element={<PayfipConfirmationPage />} />

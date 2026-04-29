@@ -15,9 +15,25 @@ CREATE TABLE IF NOT EXISTS users (
   role          TEXT NOT NULL CHECK (role IN ('admin','gestionnaire','financier','controleur','contribuable')),
   assujetti_id  INTEGER,
   actif         INTEGER NOT NULL DEFAULT 1,
+  two_factor_enabled INTEGER NOT NULL DEFAULT 0 CHECK (two_factor_enabled IN (0,1)),
+  two_factor_secret_encrypted TEXT,
+  two_factor_pending_secret_encrypted TEXT,
   created_at    TEXT NOT NULL DEFAULT (datetime('now')),
   FOREIGN KEY (assujetti_id) REFERENCES assujettis(id) ON DELETE SET NULL
 );
+
+-- =====================================================================
+-- Codes de récupération 2FA (usage unique)
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS codes_recuperation (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id     INTEGER NOT NULL,
+  code_hash   TEXT NOT NULL,
+  used_at     TEXT,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_codes_recuperation_user ON codes_recuperation(user_id, used_at);
 
 -- =====================================================================
 -- Referentiel : zones tarifaires

@@ -28,6 +28,29 @@ export function initSchema() {
   const sql = fs.readFileSync(resolveSchemaPath(), 'utf-8');
   db.exec(sql);
 
+  const userColumns = db.prepare("PRAGMA table_info('users')").all() as Array<{ name: string }>;
+  const userColumnNames = new Set(userColumns.map((column) => column.name));
+  if (!userColumnNames.has('two_factor_enabled')) {
+    db.exec("ALTER TABLE users ADD COLUMN two_factor_enabled INTEGER NOT NULL DEFAULT 0 CHECK (two_factor_enabled IN (0,1))");
+  }
+  if (!userColumnNames.has('two_factor_secret_encrypted')) {
+    db.exec('ALTER TABLE users ADD COLUMN two_factor_secret_encrypted TEXT');
+  }
+  if (!userColumnNames.has('two_factor_pending_secret_encrypted')) {
+    db.exec('ALTER TABLE users ADD COLUMN two_factor_pending_secret_encrypted TEXT');
+  }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS codes_recuperation (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id    INTEGER NOT NULL,
+      code_hash  TEXT NOT NULL,
+      used_at    TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_codes_recuperation_user ON codes_recuperation(user_id, used_at);
+  `);
+
   // migration legacy -> ajoute geometry sur zones si la table existe deja
   const zoneColumns = db.prepare("PRAGMA table_info('zones')").all() as Array<{ name: string }>;
   const hasGeometry = zoneColumns.some((col) => col.name === 'geometry');

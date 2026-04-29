@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import express from 'express';
 import { randomUUID } from 'node:crypto';
 import { db, initSchema } from './db';
 import {
@@ -11,6 +12,8 @@ import {
   verifyPassword,
   type AuthUser,
 } from './auth';
+import { generateSync } from 'otplib';
+import { authRouter } from './routes/auth';
 
 initSchema();
 
@@ -203,4 +206,229 @@ test('loadUserByEmail expose le champ actif pour filtrage applicatif', () => {
   const user = loadUserByEmail(email);
   assert.ok(user, 'Doit retourner l\'enregistrement meme si inactif');
   assert.equal(user!.actif, 0);
+});
+
+// ─── flux 2FA / TOTP ──────────────────────────────────────────────────────────
+
+function createApp() {
+  const app = express();
+  app.use(express.json());
+  app.use('/api/auth', authRouter);
+  return app;
+}
+
+async function request(params: {
+  method: 'GET' | 'POST';
+  path: string;
+  headers?: Record<string, string>;
+  body?: unknown;
+}) {
+  const app = createApp();
+  const server = await new Promise<import('node:http').Server>((resolve) => {
+    const s = app.listen(0, () => resolve(s));
+  });
+  const address = server.address();
+  if (!address || typeof address === 'string') {
+    server.close();
+    throw new Error('Impossible de determiner le port de test');
+  }
+
+  try {
+    const res = await fetch(`http://127.0.0.1:${address.port}${params.path}`, {
+      method: params.method,
+      headers: {
+        ...(params.body ? { 'Content-Type': 'application/json' } : {}),
+        ...(params.headers || {}),
+      },
+      body: params.body ? JSON.stringify(params.body) : undefined,
+    });
+
+    const contentType = res.headers.get('content-type') || '';
+    return {
+      status: res.status,
+      body: contentType.includes('application/json') ? await res.json() : await res.text(),
+    };
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+  }
+}
+
+test('POST /api/auth/login active une session partielle quand le contribuable a la 2FA activée', async () => {
+  const email = uniqueEmail('totp-login');
+  seedUser(email, 'totp123', 'contribuable');
+  const user = loadUserByEmail(email);
+  assert.ok(user);
+
+  const authUser: AuthUser = {
+    id: user.id,
+    email: user.email,
+    role: user.role,
+    nom: user.nom,
+    prenom: user.prenom,
+    assujetti_id: user.assujetti_id,
+  };
+
+  const setupResponse = await request({
+    method: 'POST',
+    path: '/api/auth/2fa/setup',
+    headers: { Authorization: `Bearer ${signToken(authUser)}` },
+  });
+  const secret = (setupResponse.body as { secret: string }).secret;
+
+  const enableResponse = await request({
+    method: 'POST',
+    path: '/api/auth/2fa/enable',
+    headers: { Authorization: `Bearer ${signToken(authUser)}` },
+    body: { code: generateSync({ secret, algorithm: 'sha1', digits: 6, period: 30 }) },
+  });
+  assert.equal(enableResponse.status, 200);
+
+  const response = await request({
+    method: 'POST',
+    path: '/api/auth/login',
+    body: { email, password: 'totp123' },
+  });
+
+  assert.equal(response.status, 200);
+  const body = response.body as { requires_two_factor: boolean; challenge_token: string; user: { email: string } };
+  assert.equal(body.requires_two_factor, true);
+  assert.equal(typeof body.challenge_token, 'string');
+  assert.equal(body.user.email, email);
+});
+
+test('flux 2FA: setup + activation + vérification TOTP + désactivation avec code', async () => {
+  const email = uniqueEmail('totp-flow');
+  seedUser(email, 'totp-flow', 'contribuable');
+  const user = loadUserByEmail(email);
+  assert.ok(user);
+
+  const authUser: AuthUser = {
+    id: user.id,
+    email: user.email,
+    role: user.role,
+    nom: user.nom,
+    prenom: user.prenom,
+    assujetti_id: user.assujetti_id,
+  };
+
+  const setupResponse = await request({
+    method: 'POST',
+    path: '/api/auth/2fa/setup',
+    headers: { Authorization: `Bearer ${signToken(authUser)}` },
+  });
+
+  assert.equal(setupResponse.status, 200);
+  assert.equal(typeof (setupResponse.body as { secret: string }).secret, 'string');
+
+  const secret = (setupResponse.body as { secret: string }).secret;
+  const activationCode = generateSync({ secret, algorithm: 'sha1', digits: 6, period: 30 });
+
+  const enableResponse = await request({
+    method: 'POST',
+    path: '/api/auth/2fa/enable',
+    headers: { Authorization: `Bearer ${signToken(authUser)}` },
+    body: { code: activationCode },
+  });
+
+  assert.equal(enableResponse.status, 200);
+  const enableBody = enableResponse.body as { enabled: boolean; recovery_codes: string[] };
+  assert.equal(enableBody.enabled, true);
+  assert.equal(enableBody.recovery_codes.length, 10);
+
+  const loginResponse = await request({
+    method: 'POST',
+    path: '/api/auth/login',
+    body: { email, password: 'totp-flow' },
+  });
+
+  assert.equal(loginResponse.status, 200);
+  const loginBody = loginResponse.body as { requires_two_factor: boolean; challenge_token: string };
+  assert.equal(loginBody.requires_two_factor, true);
+  assert.equal(typeof loginBody.challenge_token, 'string');
+
+  const verifyResponse = await request({
+    method: 'POST',
+    path: '/api/auth/login/verify-2fa',
+    body: {
+      challenge_token: loginBody.challenge_token,
+      code: generateSync({ secret, algorithm: 'sha1', digits: 6, period: 30 }),
+    },
+  });
+
+  assert.equal(verifyResponse.status, 200);
+  const verifyBody = verifyResponse.body as { token: string; recovery_code_used: boolean };
+  assert.equal(typeof verifyBody.token, 'string');
+  assert.equal(verifyBody.recovery_code_used, false);
+
+  const disableResponse = await request({
+    method: 'POST',
+    path: '/api/auth/2fa/disable',
+    headers: { Authorization: `Bearer ${verifyBody.token}` },
+    body: { code: generateSync({ secret, algorithm: 'sha1', digits: 6, period: 30 }) },
+  });
+
+  assert.equal(disableResponse.status, 200);
+  assert.deepEqual(disableResponse.body, { enabled: false });
+});
+
+test('les codes de récupération 2FA sont à usage unique', async () => {
+  const email = uniqueEmail('totp-recovery');
+  seedUser(email, 'totp-recovery', 'contribuable');
+  const user = loadUserByEmail(email);
+  assert.ok(user);
+
+  const authUser: AuthUser = {
+    id: user.id,
+    email: user.email,
+    role: user.role,
+    nom: user.nom,
+    prenom: user.prenom,
+    assujetti_id: user.assujetti_id,
+  };
+
+  const setupResponse = await request({
+    method: 'POST',
+    path: '/api/auth/2fa/setup',
+    headers: { Authorization: `Bearer ${signToken(authUser)}` },
+  });
+  const secret = (setupResponse.body as { secret: string }).secret;
+
+  const enableResponse = await request({
+    method: 'POST',
+    path: '/api/auth/2fa/enable',
+    headers: { Authorization: `Bearer ${signToken(authUser)}` },
+    body: { code: generateSync({ secret, algorithm: 'sha1', digits: 6, period: 30 }) },
+  });
+  const recoveryCode = (enableResponse.body as { recovery_codes: string[] }).recovery_codes[0];
+
+  const loginResponse = await request({
+    method: 'POST',
+    path: '/api/auth/login',
+    body: { email, password: 'totp-recovery' },
+  });
+  const challengeToken = (loginResponse.body as { challenge_token: string }).challenge_token;
+
+  const firstUse = await request({
+    method: 'POST',
+    path: '/api/auth/login/verify-2fa',
+    body: { challenge_token: challengeToken, recovery_code: recoveryCode },
+  });
+  assert.equal(firstUse.status, 200);
+  assert.equal((firstUse.body as { recovery_code_used: boolean }).recovery_code_used, true);
+
+  const secondLogin = await request({
+    method: 'POST',
+    path: '/api/auth/login',
+    body: { email, password: 'totp-recovery' },
+  });
+  const secondChallengeToken = (secondLogin.body as { challenge_token: string }).challenge_token;
+
+  const secondUse = await request({
+    method: 'POST',
+    path: '/api/auth/login/verify-2fa',
+    body: { challenge_token: secondChallengeToken, recovery_code: recoveryCode },
+  });
+  assert.equal(secondUse.status, 401);
 });
