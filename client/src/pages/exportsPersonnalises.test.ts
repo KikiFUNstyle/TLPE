@@ -5,6 +5,8 @@ import {
   buildSavedTemplatePayload,
   defaultConfigForEntity,
   normalizeTemplateConfig,
+  resolveEntityConfig,
+  shouldShowExportsLoadingState,
   type ExportEntityKey,
 } from './exportsPersonnalises';
 
@@ -43,6 +45,50 @@ test('buildSavedTemplatePayload formate le payload attendu par l’API', () => {
 test('buildExportPersonnaliseFilename produit un nom cohérent avec l’entité et le format', () => {
   assert.equal(buildExportPersonnaliseFilename('contentieux', 'csv'), 'export-contentieux.csv');
   assert.equal(buildExportPersonnaliseFilename('declarations', 'xlsx'), 'export-declarations.xlsx');
+});
+
+test('resolveEntityConfig réutilise les métadonnées chargées quand elles existent', () => {
+  const paiementConfig = resolveEntityConfig(
+    [
+      {
+        key: 'paiements',
+        defaultColumns: ['reference', 'provider'],
+        defaultOrder: { colonne: 'provider', direction: 'asc' },
+      },
+    ],
+    'paiements',
+  );
+
+  assert.deepEqual(paiementConfig, {
+    selectedEntity: 'paiements',
+    selectedColumns: ['reference', 'provider'],
+    filters: [],
+    order: { colonne: 'provider', direction: 'asc' },
+  });
+});
+
+test('resolveEntityConfig retombe sur les defaults codés en dur si les métadonnées sont absentes', () => {
+  const config = resolveEntityConfig([], 'titres');
+  assert.deepEqual(config, {
+    selectedEntity: 'titres',
+    selectedColumns: ['numero', 'assujetti', 'montant', 'statut'],
+    filters: [],
+    order: { colonne: 'numero', direction: 'desc' },
+  });
+});
+
+test('shouldShowExportsLoadingState distingue un chargement initial d’une erreur de chargement', () => {
+  assert.equal(shouldShowExportsLoadingState(true, null, null), true);
+  assert.equal(shouldShowExportsLoadingState(false, null, null), true);
+  assert.equal(shouldShowExportsLoadingState(false, null, 'Erreur API'), false);
+  assert.equal(shouldShowExportsLoadingState(false, { key: 'assujettis' }, 'Erreur API'), false);
+});
+
+test('quand les métadonnées échouent à charger, la page sort du faux chargement permanent pour afficher un fallback d’erreur', () => {
+  const showLoading = shouldShowExportsLoadingState(false, null, 'Erreur API');
+  assert.equal(showLoading, false);
+  const fallback = !showLoading ? 'Impossible de charger la configuration des exports personnalisés.' : 'Chargement des exports personnalisés...';
+  assert.equal(fallback, 'Impossible de charger la configuration des exports personnalisés.');
 });
 
 test('les entités supportées restent stables pour la page d’exports personnalisés', () => {

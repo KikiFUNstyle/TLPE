@@ -277,6 +277,30 @@ test('POST /api/exports-personnalises/export?format=csv exporte un fichier CSV e
   });
 });
 
+test('POST /api/exports-personnalises/export?format=csv neutralise les cellules commençant par un préfixe de formule', async () => {
+  await withContext(async (ctx) => {
+    const fx = resetFixtures(ctx);
+    ctx.db.prepare(`UPDATE assujettis SET raison_sociale = ? WHERE identifiant_tlpe = 'TLPE-EXP-001'`).run('=cmd|\'/C calc\'!A0');
+
+    const res = await requestJson(ctx, {
+      method: 'POST',
+      path: '/api/exports-personnalises/export?format=csv',
+      headers: makeAuthHeader(ctx, fx.gestionnaire),
+      body: {
+        entite: 'assujettis',
+        colonnes: ['raison_sociale', 'adresse_ville'],
+        filtres: [{ colonne: 'adresse_ville', operateur: 'contains', valeur: 'Bord' }],
+        ordre: { colonne: 'raison_sociale', direction: 'asc' },
+      },
+    });
+
+    assert.equal(res.status, 200);
+    const csv = res.buffer.toString('utf8');
+    assert.match(csv, /'=cmd\|'\/C calc'!A0;Bordeaux/);
+    assert.doesNotMatch(csv, /\n=cmd\|'\/C calc'!A0;Bordeaux/);
+  });
+});
+
 test('POST /api/exports-personnalises/templates puis GET liste les modèles sauvegardés et restitue la configuration', async () => {
   await withContext(async (ctx) => {
     const fx = resetFixtures(ctx);

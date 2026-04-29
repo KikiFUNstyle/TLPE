@@ -6,6 +6,8 @@ import {
   buildSavedTemplatePayload,
   defaultConfigForEntity,
   normalizeTemplateConfig,
+  resolveEntityConfig,
+  shouldShowExportsLoadingState,
   type ExportEntityKey,
   type ExportFileFormat,
   type ExportFilter,
@@ -81,10 +83,11 @@ export default function ExportsPersonnalises() {
         setOperators(meta.operators);
         setTemplates(savedTemplates);
         if (meta.entities.length > 0) {
-          const defaultEntity = meta.entities[0];
-          setSelectedEntity(defaultEntity.key);
-          setSelectedColumns(defaultEntity.defaultColumns);
-          setOrder(defaultEntity.defaultOrder);
+          const resolved = resolveEntityConfig(meta.entities, meta.entities[0].key);
+          setSelectedEntity(resolved.selectedEntity);
+          setSelectedColumns(resolved.selectedColumns);
+          setFilters(resolved.filters);
+          setOrder(resolved.order);
         }
       })
       .catch((err) => setError((err as Error).message))
@@ -130,11 +133,11 @@ export default function ExportsPersonnalises() {
   const removeFilter = (index: number) => setFilters((prev) => prev.filter((_, i) => i !== index));
 
   const resetForEntity = (entityKey: ExportEntityKey) => {
-    const defaults = defaultConfigForEntity(entityKey);
-    setSelectedEntity(entityKey);
-    setSelectedColumns(defaults.colonnes);
-    setFilters(defaults.filtres);
-    setOrder(defaults.ordre);
+    const resolved = resolveEntityConfig(entities, entityKey);
+    setSelectedEntity(resolved.selectedEntity);
+    setSelectedColumns(resolved.selectedColumns);
+    setFilters(resolved.filters);
+    setOrder(resolved.order);
     setPreview(null);
     setInfo(null);
     setError(null);
@@ -220,8 +223,17 @@ export default function ExportsPersonnalises() {
     return <div className="empty">Cette page est réservée aux rôles admin, gestionnaire et financier.</div>;
   }
 
-  if (loading || !entity) {
+  if (shouldShowExportsLoadingState(loading, entity, error)) {
     return <div className="empty">Chargement des exports personnalisés...</div>;
+  }
+
+  if (!entity) {
+    return (
+      <>
+        {error && <div className="alert error">{error}</div>}
+        <div className="empty">Impossible de charger la configuration des exports personnalisés.</div>
+      </>
+    );
   }
 
   return (

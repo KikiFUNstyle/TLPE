@@ -112,7 +112,10 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
 - Pour toute route d'export personnalisé / report builder (prévisualisation, export CSV/XLSX, sauvegarde de modèle), vérifier en review:
   - distinction stricte entre erreurs de configuration utilisateur (colonne inconnue, valeur numérique/booléenne invalide, filtre/tri incompatible) en 4xx et pannes internes SQLite/runtime en 5xx générique,
   - absence de fuite des messages internes (`disk I/O error`, stack, SQL) côté réponse API,
-  - présence d'au moins un test backend de non-régression qui force une panne interne et vérifie le masquage en 500.
+  - présence d'au moins un test backend de non-régression qui force une panne interne et vérifie le masquage en 500,
+  - sanitation CSV contre l'injection de formules tableur (`=`, `+`, `-`, `@`) avant écriture du fichier, avec test dédié sur une valeur métier commençant par un préfixe dangereux,
+  - côté UI, réinitialisation d'entité basée sur les métadonnées réellement renvoyées par l'API (pas sur des defaults dupliqués susceptibles de diverger),
+  - en cas d'échec de chargement initial des métadonnées, ne jamais laisser l'écran bloqué sur un faux état `Chargement...` permanent : afficher l'erreur ou un fallback explicite.
 - Pour toute nouvelle table métier SQLite, vérifier en review:
   - migration runtime idempotente pour les bases legacy,
   - éviter `ALTER TABLE ... ADD COLUMN ... DEFAULT (datetime('now'))` ou toute autre expression non constante: reconstruire la table si une valeur dérivée/fonctionnelle est nécessaire,

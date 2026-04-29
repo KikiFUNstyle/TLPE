@@ -369,8 +369,12 @@ function formatCell(value: string | number | null | undefined): string | number 
   return value;
 }
 
+function sanitizeCsvFormulaInjection(value: string): string {
+  return /^[=+\-@]/.test(value) ? `'${value}` : value;
+}
+
 function csvEscape(value: string | number): string {
-  const text = String(value);
+  const text = sanitizeCsvFormulaInjection(String(value));
   if (/[";\n\r]/.test(text)) {
     return `"${text.replace(/"/g, '""')}"`;
   }

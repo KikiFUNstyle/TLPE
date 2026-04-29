@@ -25,6 +25,12 @@ export type ExportTemplatePayload = {
   configuration: ExportTemplateConfig;
 };
 
+export type ExportEntityDefaults = {
+  key: ExportEntityKey;
+  defaultColumns: string[];
+  defaultOrder: ExportOrder;
+};
+
 export function defaultConfigForEntity(entity: ExportEntityKey): ExportTemplateConfig {
   switch (entity) {
     case 'assujettis':
@@ -41,6 +47,28 @@ export function defaultConfigForEntity(entity: ExportEntityKey): ExportTemplateC
     default:
       return { colonnes: ['numero', 'assujetti', 'type', 'statut'], filtres: [], ordre: { colonne: 'date_ouverture', direction: 'desc' } };
   }
+}
+
+export function resolveEntityConfig(entities: ExportEntityDefaults[], entity: ExportEntityKey) {
+  const loadedEntity = entities.find((item) => item.key === entity);
+  const defaults = loadedEntity
+    ? { colonnes: [...loadedEntity.defaultColumns], filtres: [] as ExportFilter[], ordre: { ...loadedEntity.defaultOrder } }
+    : defaultConfigForEntity(entity);
+
+  return {
+    selectedEntity: entity,
+    selectedColumns: defaults.colonnes,
+    filters: defaults.filtres,
+    order: defaults.ordre,
+  };
+}
+
+export function shouldShowExportsLoadingState(
+  loading: boolean,
+  entity: { key: ExportEntityKey } | null,
+  error: string | null,
+) {
+  return loading || (!entity && !error);
 }
 
 export function normalizeTemplateConfig(config: Partial<ExportTemplateConfig>): ExportTemplateConfig {
