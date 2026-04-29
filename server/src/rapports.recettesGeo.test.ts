@@ -451,3 +451,44 @@ test('GET /api/rapports/recettes-geographiques refuse une géométrie de zone in
     assert.equal(res.json?.error, 'Erreur interne generation carte des recettes');
   });
 });
+
+test('GET /api/rapports/recettes-geographiques calcule titresCount uniquement sur les zones restituées', async () => {
+  await withTestContext(async (ctx) => {
+    const fx = resetFixtures(ctx);
+
+    const typeId = (
+      ctx.db.prepare(`SELECT id FROM types_dispositifs WHERE code = 'ENS-1'`).get() as { id: number }
+    ).id;
+    const assujettiId = Number(
+      ctx.db.prepare(`INSERT INTO assujettis (identifiant_tlpe, raison_sociale, statut) VALUES ('TLPE-GEO-004', 'Delta Hors Zone', 'actif')`).run().lastInsertRowid,
+    );
+    const declarationId = Number(
+      ctx.db.prepare(`INSERT INTO declarations (numero, assujetti_id, annee, statut, montant_total) VALUES ('DEC-GEO-004', ?, 2026, 'validee', 80)`).run(assujettiId).lastInsertRowid,
+    );
+    const dispositifId = Number(
+      ctx.db
+        .prepare(`INSERT INTO dispositifs (identifiant, assujetti_id, type_id, zone_id, surface, nombre_faces, statut) VALUES ('DSP-GEO-005', ?, ?, NULL, 3, 1, 'declare')`)
+        .run(assujettiId, typeId).lastInsertRowid,
+    );
+    ctx.db.prepare(`INSERT INTO lignes_declaration (declaration_id, dispositif_id, surface_declaree, nombre_faces, date_pose, montant_ligne) VALUES (?, ?, 3, 1, '2026-01-01', 80)`).run(declarationId, dispositifId);
+    ctx.db
+      .prepare(`INSERT INTO titres (numero, declaration_id, assujetti_id, annee, montant, montant_paye, date_emission, date_echeance, statut) VALUES ('TIT-GEO-004', ?, ?, 2026, 80, 10, '2026-04-01', '2026-06-01', 'paye_partiel')`)
+      .run(declarationId, assujettiId);
+
+    const res = await requestGeoReport(ctx, {
+      path: '/api/rapports/recettes-geographiques?annee=2026',
+      headers: makeAuthHeader(ctx, fx.financier),
+    });
+
+    assert.equal(res.status, 200);
+    assert.equal(res.json?.titresCount, 3);
+    assert.equal(res.json?.zones.length, 2);
+    assert.deepEqual(
+      res.json?.zones.map((zone: { zone_code: string; titres_count: number }) => [zone.zone_code, zone.titres_count]),
+      [
+        ['ZC', 2],
+        ['ZP', 2],
+      ],
+    );
+  });
+});

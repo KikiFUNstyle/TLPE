@@ -1036,7 +1036,7 @@ function buildRecettesGeographiquesReportPayload(
     })
     .sort((left, right) => right.montant_recouvre - left.montant_recouvre || left.zone_label.localeCompare(right.zone_label, 'fr'));
 
-  const titresCount = new Set(rows.map((row) => row.titre_id)).size;
+  const titresCount = new Set(zones.flatMap((zone) => zone.titres.map((titre) => titre.titre_id))).size;
   const totals = {
     montant_emis: roundRecouvrementCurrency(zones.reduce((sum, zone) => sum + zone.montant_emis, 0)),
     montant_recouvre: roundRecouvrementCurrency(zones.reduce((sum, zone) => sum + zone.montant_recouvre, 0)),

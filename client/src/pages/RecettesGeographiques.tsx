@@ -8,6 +8,7 @@ import {
   buildRecettesGeographiquesSvgDocument,
   canExportRecettesGeographiques,
   defaultRecettesGeographiquesFilters,
+  hasFreshRecettesGeographiquesData,
   renderRecettesGeographiquesPngBlob,
   resolveRecettesGeographiquesFillColor,
   shouldApplyRecettesGeographiquesRequestResult,
@@ -136,6 +137,7 @@ export default function RecettesGeographiques() {
   }, [filters.annee, filters.color_scale]);
 
   const canExport = canExportRecettesGeographiques({ annee: filters.annee, canManage: true });
+  const hasFreshData = hasFreshRecettesGeographiquesData(filters, data);
 
   const zoneValues = useMemo(() => {
     if (!data) return [];
@@ -181,6 +183,8 @@ export default function RecettesGeographiques() {
     });
   }, [data, selectedZoneId, thresholds, zonesWithColors]);
 
+  const canExportPng = canExport && hasFreshData && !loading && !!svgMarkup;
+
   const handleMapClick = (event: MouseEvent<HTMLDivElement>) => {
     const target = event.target;
     if (!(target instanceof Element)) return;
@@ -199,8 +203,8 @@ export default function RecettesGeographiques() {
     setInfo(null);
     try {
       if (format === 'png') {
-        if (!svgMarkup) {
-          throw new Error('Aucune carte disponible à exporter');
+        if (!canExportPng || !svgMarkup) {
+          throw new Error('Attendez le chargement des données correspondant aux filtres actifs avant d’exporter le PNG');
         }
         const blob = await renderRecettesGeographiquesPngBlob(svgMarkup, 960, 520);
         const href = window.URL.createObjectURL(blob);
@@ -240,7 +244,7 @@ export default function RecettesGeographiques() {
           <p>Visualisation choroplèthe des montants TLPE recouvrés, du taux de recouvrement et du reste à recouvrer par zone.</p>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button className="btn secondary" disabled={!canExport || exporting !== null || !svgMarkup} onClick={() => void exportReport('png')}>
+          <button className="btn secondary" disabled={!canExportPng || exporting !== null} onClick={() => void exportReport('png')}>
             {exporting === 'png' ? 'Export PNG...' : 'Export PNG'}
           </button>
           <button className="btn secondary" disabled={!canExport || exporting !== null} onClick={() => void exportReport('pdf')}>

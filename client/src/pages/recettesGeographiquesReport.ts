@@ -49,6 +49,14 @@ export function canExportRecettesGeographiques(params: { annee: string; canManag
   return params.canManage && /^\d{4}$/.test(params.annee);
 }
 
+export function hasFreshRecettesGeographiquesData(
+  filters: RecettesGeographiquesFiltersForm,
+  data: { annee: number; color_scale: RecettesGeographiquesZoneColorScale } | null,
+) {
+  if (!data) return false;
+  return data.annee === Number(filters.annee) && data.color_scale === filters.color_scale;
+}
+
 export function buildRecettesGeographiquesReportPath(
   filters: RecettesGeographiquesFiltersForm,
   format: 'json' | RecettesGeographiquesApiExportFormat = 'json',

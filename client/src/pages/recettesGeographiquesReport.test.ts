@@ -7,6 +7,7 @@ import {
   buildRecettesGeographiquesSvgDocument,
   canExportRecettesGeographiques,
   defaultRecettesGeographiquesFilters,
+  hasFreshRecettesGeographiquesData,
   renderRecettesGeographiquesPngBlob,
   resolveRecettesGeographiquesFillColor,
   shouldApplyRecettesGeographiquesRequestResult,
@@ -41,6 +42,31 @@ test('buildRecettesGeographiquesExportFilename conserve l\'année et le format',
 test('shouldApplyRecettesGeographiquesRequestResult ignore les réponses obsolètes', () => {
   assert.equal(shouldApplyRecettesGeographiquesRequestResult(2, 1), false);
   assert.equal(shouldApplyRecettesGeographiquesRequestResult(2, 2), true);
+});
+
+test('hasFreshRecettesGeographiquesData détecte si les données affichées correspondent aux filtres actifs', () => {
+  assert.equal(
+    hasFreshRecettesGeographiquesData(
+      { annee: '2026', color_scale: 'montant_recouvre' },
+      { annee: 2026, color_scale: 'montant_recouvre' },
+    ),
+    true,
+  );
+  assert.equal(
+    hasFreshRecettesGeographiquesData(
+      { annee: '2026', color_scale: 'reste_a_recouvrer' },
+      { annee: 2026, color_scale: 'montant_recouvre' },
+    ),
+    false,
+  );
+  assert.equal(
+    hasFreshRecettesGeographiquesData(
+      { annee: '2027', color_scale: 'montant_recouvre' },
+      { annee: 2026, color_scale: 'montant_recouvre' },
+    ),
+    false,
+  );
+  assert.equal(hasFreshRecettesGeographiquesData({ annee: '2026', color_scale: 'montant_recouvre' }, null), false);
 });
 
 test('shouldAutoLoadRecettesGeographiques attend une année complète avant auto-chargement', () => {
