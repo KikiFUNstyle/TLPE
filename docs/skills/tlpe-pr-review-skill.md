@@ -75,6 +75,7 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
   - pour tout rendu tabulaire PDF multi-colonnes, calcul de hauteur de ligne basé sur la cellule la plus haute (pas seulement la dernière colonne dessinée) afin d'éviter les chevauchements de lignes,
   - pour toute pagination de tableau PDF, décider le saut de page à partir de la hauteur de la prochaine ligne + espace de séparation/footer (pas uniquement sur le `doc.y` courant), avec test de non-régression sur une ligne haute proche du bas de page,
   - pour toute ventilation/agrégation métier par assujetti, grouper sur une clé stable technique (`assujetti_id`) et non sur un libellé affiché (`raison_sociale`) afin d'éviter les collisions d'homonymes.
+  - pour toute synthèse financière contentieuse, vérifier que les montants dérivés nécessaires au reporting (ex. `montant_degreve`) sont portés de bout en bout : schéma SQL + migration runtime legacy + mutation métier qui alimente la donnée (`POST /api/contentieux/:id/decider`) + restitution UI/export/tests, sinon la synthèse PDF/XLSX sous-estime silencieusement l'exposition réelle.
 
 - Pour tout export XML métier (PESV2, pain.008, flux DGFiP), vérifier en review:
   - sélection métier exclusive et explicite (campagne **ou** période, jamais les deux),

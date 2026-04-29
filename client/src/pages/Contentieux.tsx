@@ -1,8 +1,18 @@
-import { Fragment, FormEvent, useEffect, useState } from 'react';
+import { Fragment, FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
 import { api, apiBlob, apiBlobWithMetadata } from '../api';
 import { formatDate, formatEuro, toLocalDateInputValue } from '../format';
 import { useAuth, type Role, type User } from '../auth';
 import { classifyContentieuxDeadline, describeContentieuxDeadline, type ContentieuxDeadlineSummary } from './contentieuxDeadlineUtils';
+import {
+  buildContentieuxExportFilename,
+  buildContentieuxReportPath,
+  canExportContentieux,
+  defaultContentieuxReportFilters,
+  defaultDegrevementAmount,
+  shouldApplyContentieuxRequestResult,
+  shouldShowDegrevementAmount,
+} from './contentieuxReport';
 
 interface Contentieux extends ContentieuxDeadlineSummary {
   id: number;
@@ -10,6 +20,7 @@ interface Contentieux extends ContentieuxDeadlineSummary {
   type: string;
   statut: string;
   montant_litige: number | null;
+  montant_degreve?: number | null;
   date_ouverture: string;
   date_cloture: string | null;
   description: string;
@@ -62,6 +73,44 @@ interface ContentieuxAttachment {
   download_url: string;
 }
 
+interface ContentieuxReportRow {
+  type: string;
+  nombre_dossiers: number;
+  montant_litige: number;
+  montant_degreve: number;
+  anciennete_moyenne_jours: number;
+  statut_resume: string;
+}
+
+interface ContentieuxReportAlert {
+  contentieux_id: number;
+  numero: string;
+  assujetti: string;
+  type: string;
+  statut: string;
+  date_echeance: string;
+  niveau_alerte: 'J-30' | 'J-7' | 'depasse';
+  days_remaining: number;
+}
+
+interface ContentieuxReportPayload {
+  date_reference: string;
+  generatedAt: string;
+  hash: string;
+  indicators: {
+    total_dossiers: number;
+    montant_litige_total: number;
+    montant_degreve_total: number;
+  };
+  rows: ContentieuxReportRow[];
+  chart: Array<{ type: string; nombre_dossiers: number; montant_litige: number }>;
+  alerts: {
+    total: number;
+    overdue: number;
+    rows: ContentieuxReportAlert[];
+  };
+}
+
 interface AttachmentUploadDraft {
   type_piece: ContentieuxAttachmentType;
   file: File | null;
@@ -108,6 +157,21 @@ const contentieuxAttachmentTypeOptions: Array<{ value: ContentieuxAttachmentType
   { value: 'decision', label: 'Décision' },
   { value: 'jugement', label: 'Jugement' },
 ];
+
+const contentieuxStatusLabels: Record<string, string> = {
+  contentieux: 'Contentieux',
+  gracieux: 'Gracieux',
+  moratoire: 'Moratoire',
+  controle: 'Contrôle',
+};
+
+const contentieuxAlertLabels: Record<ContentieuxReportAlert['niveau_alerte'], string> = {
+  'J-30': '≤ J-30',
+  'J-7': '≤ J-7',
+  depasse: 'Dépassé',
+};
+
+const contentieuxChartColors = ['#000091', '#18753c', '#b34000', '#6a1b9a'];
 
 export function attachmentTypeOptionsForRole(role: Role | undefined): Array<{ value: ContentieuxAttachmentType; label: string }> {
   if (role === 'contribuable') {
@@ -206,15 +270,23 @@ export default function ContentieuxPage() {
   const [decisioningId, setDecisioningId] = useState<number | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
-  const [decisionDrafts, setDecisionDrafts] = useState<Record<number, { statut: string; decision: string }>>({});
+  const [decisionDrafts, setDecisionDrafts] = useState<Record<number, { statut: string; decision: string; montant_degreve: string }>>({});
   const [timelineDrafts, setTimelineDrafts] = useState<Record<number, TimelineDraft>>({});
   const [attachmentDrafts, setAttachmentDrafts] = useState<Record<number, AttachmentUploadDraft>>({});
   const [deadlineDrafts, setDeadlineDrafts] = useState<Record<number, DeadlineExtensionDraft>>({});
+  const [reportFilters, setReportFilters] = useState(() => defaultContentieuxReportFilters(toLocalDateInputValue()));
+  const [report, setReport] = useState<ContentieuxReportPayload | null>(null);
+  const [reportLoading, setReportLoading] = useState(false);
+  const [reportExporting, setReportExporting] = useState<'pdf' | 'xlsx' | null>(null);
+  const [reportInfo, setReportInfo] = useState<string | null>(null);
+  const reportRequestIdRef = useRef(0);
 
   const canCreate = hasRole('admin', 'gestionnaire') || (user?.role === 'contribuable' && user.assujetti_id);
   const canManage = hasRole('admin', 'gestionnaire', 'financier');
+  const canAccessContentieuxReport = hasRole('admin', 'financier');
   const canViewAttachments = canViewContentieuxAttachments(user);
   const canUploadAttachments = canUploadContentieuxAttachments(user);
+  const canExportReport = canExportContentieux({ dateReference: reportFilters.date_reference, canManage: canAccessContentieuxReport });
 
   const load = () => {
     api<Contentieux[]>('/api/contentieux')
@@ -225,6 +297,36 @@ export default function ContentieuxPage() {
       .catch((e) => setErr((e as Error).message));
   };
   useEffect(load, []);
+
+  const loadReport = async () => {
+    if (!canAccessContentieuxReport) return;
+    const requestId = reportRequestIdRef.current + 1;
+    reportRequestIdRef.current = requestId;
+    setReportLoading(true);
+    setErr(null);
+    setReportInfo(null);
+    try {
+      const payload = await api<ContentieuxReportPayload>(buildContentieuxReportPath(reportFilters));
+      if (!shouldApplyContentieuxRequestResult(reportRequestIdRef.current, requestId)) {
+        return;
+      }
+      setReport(payload);
+    } catch (error) {
+      if (!shouldApplyContentieuxRequestResult(reportRequestIdRef.current, requestId)) {
+        return;
+      }
+      setErr((error as Error).message);
+    } finally {
+      if (shouldApplyContentieuxRequestResult(reportRequestIdRef.current, requestId)) {
+        setReportLoading(false);
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (!canAccessContentieuxReport) return;
+    void loadReport();
+  }, [canAccessContentieuxReport, reportFilters.date_reference]);
 
   useEffect(() => () => {
     if (attachmentPreviewUrl) {
@@ -256,6 +358,9 @@ export default function ContentieuxPage() {
         [contentieux.id]: {
           statut: contentieux.statut === 'ouvert' ? defaultDecisionStatus : contentieux.statut,
           decision: contentieux.decision ?? '',
+          montant_degreve: contentieux.montant_degreve != null
+            ? String(contentieux.montant_degreve)
+            : defaultDegrevementAmount(contentieux.statut, contentieux.montant_litige),
         },
       };
     });
@@ -334,6 +439,38 @@ export default function ContentieuxPage() {
     setPreviewingAttachmentId(null);
   };
 
+  const exportContentieuxReport = async (format: 'pdf' | 'xlsx') => {
+    if (!canExportReport) return;
+    setReportExporting(format);
+    setErr(null);
+    setReportInfo(null);
+    try {
+      const { blob, filename } = await apiBlobWithMetadata(buildContentieuxReportPath(reportFilters, format));
+      const href = window.URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = href;
+      anchor.download = filename || buildContentieuxExportFilename(reportFilters.date_reference, format);
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(href);
+      setReportInfo(`Synthèse des contentieux ${format.toUpperCase()} téléchargée.`);
+    } catch (error) {
+      setErr((error as Error).message);
+    } finally {
+      setReportExporting(null);
+    }
+  };
+
+  const reportChartData = useMemo(
+    () => report?.chart.map((row, index) => ({
+      ...row,
+      label: contentieuxStatusLabels[row.type] ?? row.type,
+      fill: contentieuxChartColors[index % contentieuxChartColors.length],
+    })) ?? [],
+    [report],
+  );
+
   const toggleTimeline = async (contentieux: Contentieux) => {
     if (openRowId === contentieux.id) {
       setOpenRowId(null);
@@ -357,12 +494,16 @@ export default function ContentieuxPage() {
     }
   };
 
-  const updateDecisionDraft = (contentieuxId: number, patch: Partial<{ statut: string; decision: string }>) => {
+  const updateDecisionDraft = (
+    contentieuxId: number,
+    patch: Partial<{ statut: string; decision: string; montant_degreve: string }>,
+  ) => {
     setDecisionDrafts((prev) => ({
       ...prev,
       [contentieuxId]: {
         statut: prev[contentieuxId]?.statut ?? defaultDecisionStatus,
         decision: prev[contentieuxId]?.decision ?? '',
+        montant_degreve: prev[contentieuxId]?.montant_degreve ?? '',
         ...patch,
       },
     }));
@@ -372,7 +513,11 @@ export default function ContentieuxPage() {
     const draft = decisionDrafts[contentieux.id] ?? {
       statut: contentieux.statut === 'ouvert' ? defaultDecisionStatus : contentieux.statut,
       decision: contentieux.decision ?? '',
+      montant_degreve: contentieux.montant_degreve != null
+        ? String(contentieux.montant_degreve)
+        : defaultDegrevementAmount(contentieux.statut, contentieux.montant_litige),
     };
+    const trimmedMontantDegreve = draft.montant_degreve.trim();
     setDecisioningId(contentieux.id);
     try {
       await api(`/api/contentieux/${contentieux.id}/decider`, {
@@ -380,6 +525,9 @@ export default function ContentieuxPage() {
         body: JSON.stringify({
           statut: draft.statut,
           decision: draft.decision.trim() ? draft.decision.trim() : null,
+          montant_degreve: shouldShowDegrevementAmount(draft.statut)
+            ? (trimmedMontantDegreve ? Number(trimmedMontantDegreve) : null)
+            : null,
         }),
       });
       await Promise.all([load(), loadTimeline(contentieux.id), loadAttachments(contentieux.id)]);
@@ -582,6 +730,161 @@ export default function ContentieuxPage() {
         {canCreate && <button className="btn" onClick={() => setShowModal(true)}>+ Nouvelle reclamation</button>}
       </div>
 
+      {canAccessContentieuxReport && (
+        <>
+          <div className="page-header" style={{ marginBottom: 12 }}>
+            <div>
+              <h2 style={{ margin: 0, fontSize: 22 }}>Synthèse des contentieux en cours</h2>
+              <p>Vue financière agrégée par type, alertes d'échéance et exports PDF/Excel.</p>
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button className="btn secondary" disabled={!canExportReport || reportExporting !== null} onClick={() => { void exportContentieuxReport('pdf'); }}>
+                {reportExporting === 'pdf' ? 'Export PDF...' : 'Export PDF'}
+              </button>
+              <button className="btn secondary" disabled={!canExportReport || reportExporting !== null} onClick={() => { void exportContentieuxReport('xlsx'); }}>
+                {reportExporting === 'xlsx' ? 'Export Excel...' : 'Export Excel'}
+              </button>
+            </div>
+          </div>
+
+          {reportInfo && <div className="alert success">{reportInfo}</div>}
+
+          <form className="card form" onSubmit={(event) => { event.preventDefault(); void loadReport(); }} style={{ marginBottom: 16 }}>
+            <div className="form-row cols-3">
+              <div>
+                <label>Date de référence</label>
+                <input
+                  type="date"
+                  value={reportFilters.date_reference}
+                  onChange={(event) => setReportFilters({ date_reference: event.target.value })}
+                />
+              </div>
+              <div style={{ display: 'flex', alignItems: 'end' }}>
+                <button className="btn" type="submit" disabled={reportLoading}>
+                  {reportLoading ? 'Chargement...' : 'Actualiser la synthèse'}
+                </button>
+              </div>
+            </div>
+          </form>
+
+          {report && (
+            <>
+              <div className="grid cols-4" style={{ marginBottom: 16 }}>
+                <div className="card kpi">
+                  <div className="label">Dossiers en cours</div>
+                  <div className="value">{report.indicators.total_dossiers}</div>
+                  <div className="meta">référence {formatDate(report.date_reference)}</div>
+                </div>
+                <div className="card kpi warning">
+                  <div className="label">Montant en litige</div>
+                  <div className="value">{formatEuro(report.indicators.montant_litige_total)}</div>
+                  <div className="meta">hash {report.hash.slice(0, 8)}…</div>
+                </div>
+                <div className="card kpi success">
+                  <div className="label">Montant dégrevé</div>
+                  <div className="value">{formatEuro(report.indicators.montant_degreve_total)}</div>
+                  <div className="meta">généré le {report.generatedAt}</div>
+                </div>
+                <div className="card kpi accent">
+                  <div className="label">Alertes délais</div>
+                  <div className="value">{report.alerts.total}</div>
+                  <div className="meta">{report.alerts.overdue} dossier(s) dépassé(s)</div>
+                </div>
+              </div>
+
+              <div className="grid cols-2" style={{ marginBottom: 16 }}>
+                <div className="card">
+                  <h3 style={{ marginTop: 0 }}>Répartition par type</h3>
+                  {reportChartData.length === 0 ? (
+                    <div className="empty">Aucune donnée agrégée.</div>
+                  ) : (
+                    <div style={{ width: '100%', height: 300 }}>
+                      <ResponsiveContainer>
+                        <PieChart>
+                          <Pie data={reportChartData} dataKey="nombre_dossiers" nameKey="label" outerRadius={100} label>
+                            {reportChartData.map((entry) => (
+                              <Cell key={entry.type} fill={entry.fill} />
+                            ))}
+                          </Pie>
+                          <Tooltip formatter={(value: number, _name, item) => [`${value} dossier(s) • ${formatEuro((item?.payload as { montant_litige?: number } | undefined)?.montant_litige ?? 0)}`, 'Type']} />
+                          <Legend />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )}
+                </div>
+
+                <div className="card">
+                  <h3 style={{ marginTop: 0 }}>Alertes proches des délais</h3>
+                  {report.alerts.rows.length === 0 ? (
+                    <div className="empty">Aucune alerte ≤ J-30 pour la date sélectionnée.</div>
+                  ) : (
+                    <div style={{ overflowX: 'auto' }}>
+                      <table className="table">
+                        <thead>
+                          <tr>
+                            <th>Numéro</th>
+                            <th>Assujetti</th>
+                            <th>Type</th>
+                            <th>Échéance</th>
+                            <th>Niveau</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {report.alerts.rows.map((alert) => (
+                            <tr key={alert.contentieux_id} className={alert.niveau_alerte === 'depasse' ? 'table-row-danger' : undefined}>
+                              <td>{alert.numero}</td>
+                              <td>{alert.assujetti}</td>
+                              <td>{contentieuxStatusLabels[alert.type] ?? alert.type}</td>
+                              <td>{formatDate(alert.date_echeance)}</td>
+                              <td>
+                                <span className={`badge ${alert.niveau_alerte === 'depasse' ? 'danger' : alert.niveau_alerte === 'J-7' ? 'warn' : 'info'}`}>
+                                  {contentieuxAlertLabels[alert.niveau_alerte]} ({alert.days_remaining} j)
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="card" style={{ marginBottom: 16 }}>
+                <h3 style={{ marginTop: 0 }}>Détail par type</h3>
+                <div style={{ overflowX: 'auto' }}>
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>Type</th>
+                        <th>Nombre dossiers</th>
+                        <th>Montant en litige</th>
+                        <th>Montant dégrevé</th>
+                        <th>Ancienneté moyenne</th>
+                        <th>Statuts</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {report.rows.map((row) => (
+                        <tr key={row.type}>
+                          <td>{contentieuxStatusLabels[row.type] ?? row.type}</td>
+                          <td>{row.nombre_dossiers}</td>
+                          <td>{formatEuro(row.montant_litige)}</td>
+                          <td>{formatEuro(row.montant_degreve)}</td>
+                          <td>{row.anciennete_moyenne_jours} j</td>
+                          <td>{row.statut_resume}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          )}
+        </>
+      )}
+
       {err && <div className="alert error">{err}</div>}
 
       <div className="card" style={{ padding: 0 }}>
@@ -607,6 +910,9 @@ export default function ContentieuxPage() {
               const decisionDraft = decisionDrafts[contentieux.id] ?? {
                 statut: contentieux.statut === 'ouvert' ? defaultDecisionStatus : contentieux.statut,
                 decision: contentieux.decision ?? '',
+                montant_degreve: contentieux.montant_degreve != null
+                  ? String(contentieux.montant_degreve)
+                  : defaultDegrevementAmount(contentieux.statut, contentieux.montant_litige),
               };
               const timelineDraft = timelineDrafts[contentieux.id] ?? {
                 type: 'courrier',
@@ -713,7 +1019,12 @@ export default function ContentieuxPage() {
                                       <label>Statut</label>
                                       <select
                                         value={decisionDraft.statut}
-                                        onChange={(e) => updateDecisionDraft(contentieux.id, { statut: e.target.value })}
+                                        onChange={(e) => updateDecisionDraft(contentieux.id, {
+                                          statut: e.target.value,
+                                          montant_degreve: shouldShowDegrevementAmount(e.target.value)
+                                            ? (decisionDraft.montant_degreve || defaultDegrevementAmount(e.target.value, contentieux.montant_litige))
+                                            : '',
+                                        })}
                                       >
                                         <option value="instruction">Instruction</option>
                                         <option value="clos_maintenu">Clos maintenu</option>
@@ -731,6 +1042,19 @@ export default function ContentieuxPage() {
                                         placeholder="Motivation, synthèse ou décision rendue"
                                       />
                                     </div>
+                                    {shouldShowDegrevementAmount(decisionDraft.statut) && (
+                                      <div>
+                                        <label>Montant dégrevé (EUR)</label>
+                                        <input
+                                          type="number"
+                                          min="0"
+                                          step="0.01"
+                                          value={decisionDraft.montant_degreve}
+                                          onChange={(e) => updateDecisionDraft(contentieux.id, { montant_degreve: e.target.value })}
+                                          placeholder={decisionDraft.statut === 'degrevement_total' ? 'Montant total par défaut' : 'Montant accordé'}
+                                        />
+                                      </div>
+                                    )}
                                     <div className="actions">
                                       <button
                                         className="btn secondary"

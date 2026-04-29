@@ -639,6 +639,88 @@ test('POST /api/contentieux/:id/decider conserve la date réelle de décision m�
   );
 });
 
+test('POST /api/contentieux/:id/decider valide et persiste le montant dégrevé attendu pour la synthèse financière', async () => {
+  const fx = resetFixtures();
+
+  const created = await request({
+    method: 'POST',
+    path: '/api/contentieux',
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      assujetti_id: fx.assujettiId,
+      titre_id: fx.titreId,
+      type: 'contentieux',
+      montant_litige: 830,
+      description: 'Ouverture du dossier.',
+    },
+  });
+  assert.equal(created.status, 201);
+  const contentieuxId = (created.data as { id: number }).id;
+
+  const missingPartialAmount = await request({
+    method: 'POST',
+    path: `/api/contentieux/${contentieuxId}/decider`,
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      statut: 'degrevement_partiel',
+      decision: 'Remise partielle sans montant.',
+    },
+  });
+  assert.equal(missingPartialAmount.status, 400);
+  assert.match(missingPartialAmount.text, /montant dégrevé est obligatoire/i);
+
+  const excessiveAmount = await request({
+    method: 'POST',
+    path: `/api/contentieux/${contentieuxId}/decider`,
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      statut: 'degrevement_partiel',
+      decision: 'Remise partielle trop élevée.',
+      montant_degreve: 900,
+    },
+  });
+  assert.equal(excessiveAmount.status, 400);
+  assert.match(excessiveAmount.text, /ne peut pas dépasser le montant en litige/i);
+
+  const partialDecision = await request({
+    method: 'POST',
+    path: `/api/contentieux/${contentieuxId}/decider`,
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      statut: 'degrevement_partiel',
+      decision: 'Remise partielle accordée.',
+      montant_degreve: 210,
+    },
+  });
+  assert.equal(partialDecision.status, 200);
+
+  const storedPartial = db.prepare('SELECT statut, montant_degreve FROM contentieux WHERE id = ?').get(contentieuxId) as {
+    statut: string;
+    montant_degreve: number | null;
+  };
+  assert.equal(storedPartial.statut, 'degrevement_partiel');
+  assert.equal(storedPartial.montant_degreve, 210);
+
+  const totalDecision = await request({
+    method: 'POST',
+    path: `/api/contentieux/${contentieuxId}/decider`,
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      statut: 'degrevement_total',
+      decision: 'Annulation totale.',
+    },
+  });
+  assert.equal(totalDecision.status, 200);
+
+  const storedTotal = db.prepare('SELECT statut, montant_litige, montant_degreve FROM contentieux WHERE id = ?').get(contentieuxId) as {
+    statut: string;
+    montant_litige: number | null;
+    montant_degreve: number | null;
+  };
+  assert.equal(storedTotal.statut, 'degrevement_total');
+  assert.equal(storedTotal.montant_degreve, storedTotal.montant_litige);
+});
+
 test('POST /api/contentieux/:id/evenements refuse une pièce jointe qui appartient à une autre entité ou est inaccessible', async () => {
   const fx = resetFixtures();
 

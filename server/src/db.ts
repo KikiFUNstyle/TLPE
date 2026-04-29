@@ -163,7 +163,7 @@ export function initSchema() {
     db.exec(`
       CREATE TABLE rapports_exports (
         id            INTEGER PRIMARY KEY AUTOINCREMENT,
-        type_rapport  TEXT NOT NULL CHECK (type_rapport IN ('role_tlpe','etat_recouvrement','suivi_relances')),
+        type_rapport  TEXT NOT NULL CHECK (type_rapport IN ('role_tlpe','etat_recouvrement','suivi_relances','synthese_contentieux')),
         annee         INTEGER NOT NULL,
         format        TEXT NOT NULL CHECK (format IN ('pdf','xlsx')),
         filename      TEXT NOT NULL,
@@ -190,7 +190,10 @@ export function initSchema() {
   const hasSuiviRelancesReport = /type_rapport\s+TEXT\s+NOT\s+NULL\s+CHECK\s*\(\s*type_rapport\s+IN\s*\([^)]*'suivi_relances'[^)]*\)\s*\)/i.test(
     rapportsExportsSql ?? '',
   );
-  if (rapportsExportsSql && (!hasEtatRecouvrementReport || !hasSuiviRelancesReport)) {
+  const hasSyntheseContentieuxReport = /type_rapport\s+TEXT\s+NOT\s+NULL\s+CHECK\s*\(\s*type_rapport\s+IN\s*\([^)]*'synthese_contentieux'[^)]*\)\s*\)/i.test(
+    rapportsExportsSql ?? '',
+  );
+  if (rapportsExportsSql && (!hasEtatRecouvrementReport || !hasSuiviRelancesReport || !hasSyntheseContentieuxReport)) {
     db.pragma('foreign_keys = OFF');
     try {
       db.exec('BEGIN TRANSACTION');
@@ -198,7 +201,7 @@ export function initSchema() {
         db.exec(`
           CREATE TABLE rapports_exports_new (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
-            type_rapport  TEXT NOT NULL CHECK (type_rapport IN ('role_tlpe','etat_recouvrement','suivi_relances')),
+            type_rapport  TEXT NOT NULL CHECK (type_rapport IN ('role_tlpe','etat_recouvrement','suivi_relances','synthese_contentieux')),
             annee         INTEGER NOT NULL,
             format        TEXT NOT NULL CHECK (format IN ('pdf','xlsx')),
             filename      TEXT NOT NULL,
@@ -287,6 +290,7 @@ export function initSchema() {
     const contentieuxColumns = db.prepare("PRAGMA table_info('contentieux')").all() as Array<{ name: string }>;
     const hasDateLimiteReponse = contentieuxColumns.some((col) => col.name === 'date_limite_reponse');
     const hasDateLimiteReponseInitiale = contentieuxColumns.some((col) => col.name === 'date_limite_reponse_initiale');
+    const hasMontantDegreve = contentieuxColumns.some((col) => col.name === 'montant_degreve');
     const hasDelaiProlongeJustification = contentieuxColumns.some((col) => col.name === 'delai_prolonge_justification');
     const hasDelaiProlongePar = contentieuxColumns.some((col) => col.name === 'delai_prolonge_par');
     const hasDelaiProlongeAt = contentieuxColumns.some((col) => col.name === 'delai_prolonge_at');
@@ -297,6 +301,7 @@ export function initSchema() {
     if (
       !hasDateLimiteReponse ||
       !hasDateLimiteReponseInitiale ||
+      !hasMontantDegreve ||
       !hasDelaiProlongeJustification ||
       !hasDelaiProlongePar ||
       !hasDelaiProlongeAt ||
@@ -314,6 +319,7 @@ export function initSchema() {
               titre_id        INTEGER,
               type            TEXT NOT NULL CHECK (type IN ('gracieux','contentieux','moratoire','controle')),
               montant_litige  REAL,
+              montant_degreve REAL,
               date_ouverture  TEXT NOT NULL DEFAULT (date('now')),
               date_limite_reponse TEXT,
               date_limite_reponse_initiale TEXT,
@@ -330,7 +336,7 @@ export function initSchema() {
             );
 
             INSERT INTO contentieux_new (
-              id, numero, assujetti_id, titre_id, type, montant_litige, date_ouverture,
+              id, numero, assujetti_id, titre_id, type, montant_litige, montant_degreve, date_ouverture,
               date_limite_reponse, date_limite_reponse_initiale, delai_prolonge_justification,
               delai_prolonge_par, delai_prolonge_at, date_cloture, statut, description, decision
             )
@@ -341,6 +347,7 @@ export function initSchema() {
               titre_id,
               type,
               montant_litige,
+              ${hasMontantDegreve ? 'montant_degreve' : 'NULL'},
               date_ouverture,
               ${hasDateLimiteReponse ? 'date_limite_reponse' : 'NULL'},
               ${hasDateLimiteReponseInitiale ? 'date_limite_reponse_initiale' : 'NULL'},
