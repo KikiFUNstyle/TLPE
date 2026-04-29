@@ -5,6 +5,7 @@ import { generateSecret, generateSync, generateURI, verifySync } from 'otplib';
 import QRCode from 'qrcode';
 import type { NextFunction, Request, Response } from 'express';
 import { db } from './db';
+import { decryptText, encryptText } from './services/crypto';
 
 export type Role = 'admin' | 'gestionnaire' | 'financier' | 'controleur' | 'contribuable';
 
@@ -38,7 +39,6 @@ type UserRow = {
 const JWT_SECRET = process.env.TLPE_JWT_SECRET || 'dev-secret-change-me';
 const JWT_EXPIRES_IN = '12h';
 const TWO_FACTOR_CHALLENGE_EXPIRES_IN = '5m';
-const TWO_FACTOR_SECRET = process.env.TLPE_2FA_SECRET || process.env.TLPE_JWT_SECRET || 'dev-2fa-secret-change-me';
 
 const RECOVERY_CODE_SEGMENTS = 3;
 const RECOVERY_CODE_SEGMENT_LENGTH = 4;
@@ -53,35 +53,6 @@ export function verifyPassword(pwd: string, hash: string): boolean {
   return bcrypt.compareSync(pwd, hash);
 }
 
-function normalizeSecretKey(secret: string): Buffer {
-  return crypto.createHash('sha256').update(secret).digest();
-}
-
-function encryptValue(value: string): string {
-  const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv('aes-256-gcm', normalizeSecretKey(TWO_FACTOR_SECRET), iv);
-  const encrypted = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]);
-  const tag = cipher.getAuthTag();
-  return `${iv.toString('base64')}.${tag.toString('base64')}.${encrypted.toString('base64')}`;
-}
-
-function decryptValue(payload: string): string {
-  const [ivBase64, tagBase64, encryptedBase64] = payload.split('.');
-  if (!ivBase64 || !tagBase64 || !encryptedBase64) {
-    throw new Error('Valeur chiffrée invalide');
-  }
-
-  const decipher = crypto.createDecipheriv(
-    'aes-256-gcm',
-    normalizeSecretKey(TWO_FACTOR_SECRET),
-    Buffer.from(ivBase64, 'base64'),
-  );
-  decipher.setAuthTag(Buffer.from(tagBase64, 'base64'));
-  return Buffer.concat([
-    decipher.update(Buffer.from(encryptedBase64, 'base64')),
-    decipher.final(),
-  ]).toString('utf8');
-}
 
 function randomUppercaseToken(length: number): string {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -189,7 +160,7 @@ export async function createTwoFactorSetupResponse(user: AuthUser) {
     `UPDATE users
      SET two_factor_pending_secret_encrypted = ?
      WHERE id = ?`,
-  ).run(encryptValue(setup.secret), user.id);
+  ).run(encryptText(setup.secret), user.id);
 
   return {
     secret: setup.secret,
@@ -205,7 +176,7 @@ function getPendingTwoFactorSecret(userId: number): string | null {
   if (!row?.two_factor_pending_secret_encrypted) {
     return null;
   }
-  return decryptValue(row.two_factor_pending_secret_encrypted);
+  return decryptText(row.two_factor_pending_secret_encrypted);
 }
 
 export function getStoredTwoFactorSecret(userId: number): string | null {
@@ -215,7 +186,7 @@ export function getStoredTwoFactorSecret(userId: number): string | null {
   if (!row?.two_factor_secret_encrypted) {
     return null;
   }
-  return decryptValue(row.two_factor_secret_encrypted);
+  return decryptText(row.two_factor_secret_encrypted);
 }
 
 export function verifyTotpCode(secret: string, code: string): boolean {
@@ -261,7 +232,7 @@ export function enableTwoFactorForUser(userId: number, code: string): string[] {
            two_factor_secret_encrypted = ?,
            two_factor_pending_secret_encrypted = NULL
        WHERE id = ?`,
-    ).run(encryptValue(secret), userId);
+    ).run(encryptText(secret), userId);
     replaceRecoveryCodesForUser(userId, codes);
   });
   statement(recoveryCodes);
@@ -365,3 +336,4 @@ export function requireRole(...roles: Role[]) {
     next();
   };
 }
+

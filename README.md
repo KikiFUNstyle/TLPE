@@ -27,6 +27,7 @@ basée sur les articles L2333-6 à L2333-16 du CGCT.
 | Titres de recettes + PDF (ordonnancement) + bordereau récapitulatif PDF/Excel horodaté avec hash SHA-256 + rôle TLPE PDF/Excel archivé + état de recouvrement (page + PDF/Excel archivés) + comparatif pluriannuel 3 ans glissants (page + PDF/Excel archivés) + suivi des relances et mises en demeure (page + PDF/Excel archivés) + synthèse des contentieux en cours (page + PDF/Excel archivés) + mises en demeure PDF unitaire/batch archivées | §7.1 / §10.2 / US5.1 / US8.1 / US8.2 / US8.5 / US8.3 / US8.4 / US5.8 | OK + tests |
 | Escalade automatique des impayés (J+10 / J+30 / J+60) + historique par titre | §7.4 / US5.7 | OK + tests |
 | Mandats SEPA + export pain.008.001.02 avec validation IBAN/BIC, séquencement FRST/RCUR et validation XSD locale | §7.2 / US5.4 | OK + tests |
+| Chiffrement AES-256-GCM au repos des secrets 2FA, IBAN SEPA et pièces jointes + rotation batch de clé | §12.2 / US10.2 | OK + tests |
 | Import de relevés bancaires (CSV paramétrable / OFX / MT940), dédoublonnage par transaction, page Rapprochement réservée admin/financier | §7.3 / US5.5 | OK + tests |
 | Paiements (5 modalités) + recouvrement | §7.2 | OK |
 | Contentieux / réclamations + timeline + alertes de délais légaux + pièces jointes contentieux catégorisées avec aperçu (US6.1/US6.2/US6.3) | §8 | OK + tests |
@@ -294,6 +295,41 @@ UI :
 Audit :
 
 - `logAudit()` sur création de dossier, ajout manuel d'événement, décision et export PDF de timeline.
+
+## Chiffrement AES-256-GCM au repos (US10.2)
+
+Le backend chiffre désormais au repos les données sensibles gérées applicativement via `server/src/services/crypto.ts` :
+
+- secrets TOTP (`users.two_factor_secret_encrypted`, `users.two_factor_pending_secret_encrypted`),
+- IBAN des mandats SEPA (`mandats_sepa.iban`),
+- pièces jointes et archives stockées via `saveFile()` (`pieces_jointes`, mises en demeure, exports de rapports),
+- avec compatibilité legacy en lecture (`decrypt*OrLegacy`) et rotation de version (`rotateEncryptedText`, `rotateEncryptedBuffer`).
+
+Configuration des clés :
+
+```bash
+# clé active unique (32 octets base64)
+export TLPE_DATA_KEY="<base64-32-bytes>"
+export TLPE_DATA_KEY_VERSION="2026-q2"
+
+# ou trousseau multi-versions pour rotation progressive
+export TLPE_DATA_KEYS="2026-q1:<base64-32-bytes>,2026-q2:<base64-32-bytes>"
+export TLPE_DATA_KEY_VERSION="2026-q2"
+```
+
+Notes d'exploitation :
+
+- en production, `TLPE_DATA_KEY` ou `TLPE_DATA_KEYS` est obligatoire ; le fallback de développement n'est accepté qu'hors production,
+- la clé doit être fournie par l'environnement d'exécution et idéalement externalisée vers un gestionnaire dédié (Vault/KMS) en production,
+- rotation batch disponible via `npm run crypto:rotate --workspace=server [-- --dry-run]`,
+- inventaire courant des champs sensibles : secrets TOTP, IBAN SEPA et fichiers binaires stockés ; aucun champ NIR dédié n'est présent dans le schéma applicatif actuel.
+
+Tests couverts :
+
+- roundtrip texte + binaire AES-256-GCM,
+- rejet d'un payload corrompu (IV/tag),
+- rotation vers une nouvelle version de clé,
+- vérification que les pièces jointes et les IBAN persistés ne restent pas en clair.
 
 ## Double authentification TOTP du portail contribuable (US9.1)
 

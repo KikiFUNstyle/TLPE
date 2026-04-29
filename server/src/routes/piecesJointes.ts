@@ -1,18 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { Readable } from 'node:stream';
 import { type NextFunction, type Request, type Response, Router } from 'express';
 import multer, { MulterError } from 'multer';
 import { z } from 'zod';
-import {
-  DeleteObjectCommand,
-  GetObjectCommand,
-  PutObjectCommand,
-  S3Client,
-  type GetObjectCommandOutput,
-} from '@aws-sdk/client-s3';
+import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { authMiddleware, requireRole } from '../auth';
 import { db, logAudit } from '../db';
+import { decryptBufferOrLegacy, encryptBuffer } from '../services/crypto';
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const MAX_ENTITY_TOTAL_SIZE = 50 * 1024 * 1024;
@@ -236,10 +232,12 @@ function getEntityTotalSize(entite: 'dispositif' | 'declaration' | 'contentieux'
 }
 
 export async function saveFile(cheminRelatif: string, buffer: Buffer, mimeType: string): Promise<void> {
+  const encryptedBuffer = encryptBuffer(buffer);
+
   if (!useS3) {
     const absolutePath = resolveUploadAbsolutePath(cheminRelatif);
     await fs.promises.mkdir(path.dirname(absolutePath), { recursive: true });
-    await fs.promises.writeFile(absolutePath, buffer);
+    await fs.promises.writeFile(absolutePath, encryptedBuffer);
     return;
   }
 
@@ -251,7 +249,7 @@ export async function saveFile(cheminRelatif: string, buffer: Buffer, mimeType: 
     new PutObjectCommand({
       Bucket: s3Bucket,
       Key: cheminRelatif,
-      Body: buffer,
+      Body: encryptedBuffer,
       ContentType: mimeType,
     }),
   );
@@ -278,42 +276,52 @@ export async function deleteStoredFile(cheminRelatif: string): Promise<void> {
   );
 }
 
-async function readStoredFile(cheminRelatif: string): Promise<{
-  stream: NodeJS.ReadableStream;
-  contentType?: string;
-  contentLength?: number;
-}> {
+async function streamToBuffer(stream: NodeJS.ReadableStream): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks);
+}
+
+export async function readStoredFileBuffer(cheminRelatif: string): Promise<Buffer> {
   if (!useS3) {
     const absolutePath = resolveUploadAbsolutePath(cheminRelatif);
     if (!fs.existsSync(absolutePath)) {
       throw new Error('missing');
     }
-    const stat = fs.statSync(absolutePath);
-    return {
-      stream: fs.createReadStream(absolutePath),
-      contentLength: stat.size,
-    };
+    const stored = await fs.promises.readFile(absolutePath);
+    return decryptBufferOrLegacy(stored);
   }
 
   if (!s3Client || !s3Bucket) {
     throw new Error('missing');
   }
 
-  const object = (await s3Client.send(
+  const object = await s3Client.send(
     new GetObjectCommand({
       Bucket: s3Bucket,
       Key: cheminRelatif,
     }),
-  )) as GetObjectCommandOutput;
+  );
 
   if (!object.Body) {
     throw new Error('missing');
   }
 
+  const stored = await streamToBuffer(object.Body as NodeJS.ReadableStream);
+  return decryptBufferOrLegacy(stored);
+}
+
+async function readStoredFile(cheminRelatif: string): Promise<{
+  stream: NodeJS.ReadableStream;
+  contentType?: string;
+  contentLength?: number;
+}> {
+  const buffer = await readStoredFileBuffer(cheminRelatif);
   return {
-    stream: object.Body as NodeJS.ReadableStream,
-    contentType: object.ContentType,
-    contentLength: object.ContentLength,
+    stream: Readable.from(buffer),
+    contentLength: buffer.length,
   };
 }
 

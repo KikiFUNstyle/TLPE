@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { initSchema, db } from './db';
 import { hashPassword } from './auth';
-import { detectMimeFromMagicBytes, isMimeAllowedForEntity } from './routes/piecesJointes';
+import { detectMimeFromMagicBytes, isMimeAllowedForEntity, readStoredFileBuffer, saveFile } from './routes/piecesJointes';
 
 const uploadsRoot = path.resolve(__dirname, '..', 'data', 'uploads');
 
@@ -225,6 +225,26 @@ test('storage path policy keeps files under server/data/uploads', () => {
 
   fs.unlinkSync(abs);
   assert.ok(!fs.existsSync(abs));
+});
+
+test('saveFile chiffre les pièces jointes au repos et readStoredFileBuffer les restitue en clair', async () => {
+  process.env.TLPE_DATA_KEY = Buffer.alloc(32, 5).toString('base64');
+  delete process.env.TLPE_DATA_KEYS;
+  delete process.env.TLPE_DATA_KEY_VERSION;
+
+  const relPath = path.posix.join('contentieux', '99', '2026', '04', 'secret.pdf');
+  const abs = path.join(uploadsRoot, relPath);
+  const payload = Buffer.from('%PDF-1.7\nsecret-piece-jointe', 'utf8');
+
+  await saveFile(relPath, payload, 'application/pdf');
+
+  const storedBytes = fs.readFileSync(abs);
+  assert.equal(storedBytes.includes('secret-piece-jointe'), false);
+
+  const restored = await readStoredFileBuffer(relPath);
+  assert.deepEqual(restored, payload);
+
+  fs.unlinkSync(abs);
 });
 
 test('detectMimeFromMagicBytes - detects allowed formats and rejects unknown payloads', () => {
