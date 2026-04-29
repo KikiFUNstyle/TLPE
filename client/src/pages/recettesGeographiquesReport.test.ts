@@ -105,7 +105,7 @@ test('buildRecettesGeographiquesSvgDocument produit un SVG avec les zones, la l�
   assert.match(svg, /data-selected="true"/);
   assert.match(svg, /Montant recouvré/);
   assert.match(svg, /≤ 100/);
-  assert.match(svg, /&gt;500</);
+  assert.match(svg, /&gt;400</);
 });
 
 test('renderRecettesGeographiquesPngBlob rasterise le SVG en PNG exploitable', async () => {

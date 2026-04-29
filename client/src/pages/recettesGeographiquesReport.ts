@@ -271,7 +271,8 @@ export function buildRecettesGeographiquesSvgDocument(params: RecettesGeographiq
   const legendMarkup = legendSteps
     .map((threshold, index) => {
       const y = legendY + index * 24;
-      const label = index === 0 ? `≤ ${threshold}` : index === legendSteps.length - 1 ? `>${threshold}` : `≤ ${threshold}`;
+      const lowerBound = index > 0 ? legendSteps[index - 1] : null;
+      const label = index === legendSteps.length - 1 && lowerBound !== null ? `>${lowerBound}` : `≤ ${threshold}`;
       const fill = resolveRecettesGeographiquesFillColor(threshold, params.thresholds);
       return `<rect x="${legendX}" y="${y}" width="18" height="18" rx="4" fill="${fill}" /><text x="${legendX + 28}" y="${y + 13}" font-size="12" fill="#1f2937">${escapeXml(label)}</text>`;
     })

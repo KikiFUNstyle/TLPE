@@ -34,7 +34,9 @@ function createTestContext(): RecettesGeoTestContext {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tlpe-recettes-geo-test-'));
   const dbPath = path.join(tempDir, 'tlpe.db');
   const previousDbPath = process.env.TLPE_DB_PATH;
+  const previousUploadStorage = process.env.TLPE_UPLOAD_STORAGE;
   process.env.TLPE_DB_PATH = dbPath;
+  process.env.TLPE_UPLOAD_STORAGE = 'local';
   clearTestModuleCache();
 
   const dbModule = require('./db') as typeof import('./db');
@@ -61,6 +63,11 @@ function createTestContext(): RecettesGeoTestContext {
         delete process.env.TLPE_DB_PATH;
       } else {
         process.env.TLPE_DB_PATH = previousDbPath;
+      }
+      if (previousUploadStorage === undefined) {
+        delete process.env.TLPE_UPLOAD_STORAGE;
+      } else {
+        process.env.TLPE_UPLOAD_STORAGE = previousUploadStorage;
       }
       fs.rmSync(tempDir, { recursive: true, force: true });
     },
@@ -427,5 +434,20 @@ test('GET /api/rapports/recettes-geographiques filtre l’accès aux rôles admi
 
     assert.equal(res.status, 403);
     assert.equal(res.json?.error, 'Droits insuffisants');
+  });
+});
+
+test('GET /api/rapports/recettes-geographiques refuse une géométrie de zone invalide au lieu de tronquer les totaux', async () => {
+  await withTestContext(async (ctx) => {
+    const fx = resetFixtures(ctx);
+    ctx.db.prepare(`UPDATE zones SET geometry = ? WHERE code = 'ZC'`).run('{"type":"Point","coordinates":[2,48]}');
+
+    const res = await requestGeoReport(ctx, {
+      path: '/api/rapports/recettes-geographiques?annee=2026',
+      headers: makeAuthHeader(ctx, fx.financier),
+    });
+
+    assert.equal(res.status, 500);
+    assert.equal(res.json?.error, 'Erreur interne generation carte des recettes');
   });
 });

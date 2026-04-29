@@ -944,13 +944,17 @@ function buildRecettesGeographiquesReportPayload(
   const zoneGroups = new Map<number, MutableZoneAggregation>();
 
   for (const row of rows) {
-    if (!row.zone_id || !row.zone_code || !row.zone_label || !row.zone_geometry) continue;
+    if (!row.zone_id) continue;
+    if (!row.zone_code || !row.zone_label || !row.zone_geometry) {
+      throw new Error(`Zone ${row.zone_id} incomplete: code, libellé ou géométrie manquant`);
+    }
 
     let geometry: GeoJsonGeometry;
     try {
       geometry = normalizeGeometry(JSON.parse(row.zone_geometry));
-    } catch {
-      continue;
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'géométrie illisible';
+      throw new Error(`Zone ${row.zone_id} invalide pour la carte des recettes: ${reason}`);
     }
 
     const emittedShare = row.montant > 0 ? roundRecouvrementCurrency((row.montant * row.montant_ligne) / row.montant) : 0;
