@@ -318,6 +318,76 @@ test('initSchema backfill les echeances des contentieux legacy pour les alertes 
   });
 });
 
+test('initSchema reconstruit une table contentieux legacy pour ajouter le CHECK SQL sur montant_degreve', () => {
+  const fx = resetFixtures();
+
+  db.pragma('foreign_keys = OFF');
+  db.exec('BEGIN TRANSACTION');
+  try {
+    db.exec(`
+      CREATE TABLE contentieux_legacy (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        numero          TEXT NOT NULL UNIQUE,
+        assujetti_id    INTEGER NOT NULL,
+        titre_id        INTEGER,
+        type            TEXT NOT NULL CHECK (type IN ('gracieux','contentieux','moratoire','controle')),
+        montant_litige  REAL,
+        montant_degreve REAL,
+        date_ouverture  TEXT NOT NULL DEFAULT (date('now')),
+        date_limite_reponse TEXT,
+        date_limite_reponse_initiale TEXT,
+        delai_prolonge_justification TEXT,
+        delai_prolonge_par INTEGER,
+        delai_prolonge_at TEXT,
+        date_cloture    TEXT,
+        statut          TEXT NOT NULL DEFAULT 'ouvert' CHECK (statut IN ('ouvert','instruction','clos_maintenu','degrevement_partiel','degrevement_total','non_lieu')),
+        description     TEXT,
+        decision        TEXT,
+        FOREIGN KEY (assujetti_id) REFERENCES assujettis(id),
+        FOREIGN KEY (titre_id) REFERENCES titres(id),
+        FOREIGN KEY (delai_prolonge_par) REFERENCES users(id) ON DELETE SET NULL
+      );
+
+      INSERT INTO contentieux_legacy (
+        id, numero, assujetti_id, titre_id, type, montant_litige, montant_degreve, date_ouverture,
+        date_limite_reponse, date_limite_reponse_initiale, delai_prolonge_justification,
+        delai_prolonge_par, delai_prolonge_at, date_cloture, statut, description, decision
+      ) VALUES (
+        1001, 'CTX-LEGACY-CHECK-1', ${fx.assujettiId}, ${fx.titreId}, 'contentieux', 830, 120, '2026-01-15',
+        '2026-07-15', '2026-07-15', NULL, NULL, NULL, NULL, 'degrevement_partiel', 'Legacy sans CHECK SQL', 'Decision legacy'
+      );
+
+      DROP TABLE contentieux;
+      ALTER TABLE contentieux_legacy RENAME TO contentieux;
+    `);
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  } finally {
+    db.pragma('foreign_keys = ON');
+  }
+
+  initSchema();
+
+  const contentieuxSql = (
+    db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'contentieux'").get() as
+      | { sql: string }
+      | undefined
+  )?.sql;
+  assert.match(contentieuxSql ?? '', /montant_degreve\s+REAL\s+CHECK\s*\(\s*montant_degreve\s+IS\s+NULL\s+OR\s+montant_degreve\s*>?=\s*0\s*\)/i);
+
+  assert.throws(
+    () =>
+      db.prepare(
+        `INSERT INTO contentieux (
+          numero, assujetti_id, titre_id, type, montant_litige, montant_degreve, date_ouverture, statut, description
+        ) VALUES ('CTX-NEGATIVE-CHECK', ?, ?, 'contentieux', 830, -1, '2026-02-01', 'ouvert', 'Montant dégrevé négatif')`,
+      ).run(fx.assujettiId, fx.titreId),
+    /CHECK constraint failed/i,
+  );
+});
+
 test('POST /api/contentieux calcule automatiquement une échéance à 6 mois et expose le résumé d’alerte dans la liste', async () => {
   const fx = resetFixtures();
 

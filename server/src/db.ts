@@ -291,6 +291,9 @@ export function initSchema() {
     const hasDateLimiteReponse = contentieuxColumns.some((col) => col.name === 'date_limite_reponse');
     const hasDateLimiteReponseInitiale = contentieuxColumns.some((col) => col.name === 'date_limite_reponse_initiale');
     const hasMontantDegreve = contentieuxColumns.some((col) => col.name === 'montant_degreve');
+    const hasMontantDegreveCheck = /montant_degreve\s+REAL\s+CHECK\s*\(\s*montant_degreve\s+IS\s+NULL\s+OR\s+montant_degreve\s*>?=\s*0\s*\)/i.test(
+      contentieuxSql,
+    );
     const hasDelaiProlongeJustification = contentieuxColumns.some((col) => col.name === 'delai_prolonge_justification');
     const hasDelaiProlongePar = contentieuxColumns.some((col) => col.name === 'delai_prolonge_par');
     const hasDelaiProlongeAt = contentieuxColumns.some((col) => col.name === 'delai_prolonge_at');
@@ -302,6 +305,7 @@ export function initSchema() {
       !hasDateLimiteReponse ||
       !hasDateLimiteReponseInitiale ||
       !hasMontantDegreve ||
+      !hasMontantDegreveCheck ||
       !hasDelaiProlongeJustification ||
       !hasDelaiProlongePar ||
       !hasDelaiProlongeAt ||
@@ -319,7 +323,7 @@ export function initSchema() {
               titre_id        INTEGER,
               type            TEXT NOT NULL CHECK (type IN ('gracieux','contentieux','moratoire','controle')),
               montant_litige  REAL,
-              montant_degreve REAL,
+              montant_degreve REAL CHECK (montant_degreve IS NULL OR montant_degreve >= 0),
               date_ouverture  TEXT NOT NULL DEFAULT (date('now')),
               date_limite_reponse TEXT,
               date_limite_reponse_initiale TEXT,

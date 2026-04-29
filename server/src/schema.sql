@@ -550,7 +550,7 @@ CREATE TABLE IF NOT EXISTS contentieux (
   titre_id        INTEGER,
   type            TEXT NOT NULL CHECK (type IN ('gracieux','contentieux','moratoire','controle')),
   montant_litige  REAL,
-  montant_degreve REAL,
+  montant_degreve REAL CHECK (montant_degreve IS NULL OR montant_degreve >= 0),
   date_ouverture  TEXT NOT NULL DEFAULT (date('now')),
   date_limite_reponse TEXT,
   date_limite_reponse_initiale TEXT,
