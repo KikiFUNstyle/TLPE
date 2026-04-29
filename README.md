@@ -33,7 +33,7 @@ basée sur les articles L2333-6 à L2333-16 du CGCT.
 | Tableau de bord exécutif + KPI déclaratifs temps réel (US3.7: attendus/soumises/validées/rejetées, drilldown zone/type, évolution journalière, auto-refresh 5 min) + alertes contentieux J-30/J-7/dépassement | §10.1 / §5.4 | OK |
 | Authentification + RBAC (5 rôles) | §2 | OK |
 | Simulateur | §6.3 | OK |
-| Audit log (traçabilité) | §12.2 | OK |
+| Audit log (traçabilité) | §12.2 | OK + tests |
 | Portail contribuable (accès restreint à sa fiche) | §11 | OK |
 | Carte des dispositifs (Leaflet + filtres + export GeoJSON) | §4.2 / §9.2 / §10.2 | OK |
 | Contrôles terrain (web responsive, géoloc navigateur, photos, rattachement/ création dispositif, file hors-ligne navigateur) | §9.1 / §9.2 / US7.1 | OK + tests |
@@ -116,7 +116,9 @@ Ouvrir ensuite http://localhost:5173.
   - la page `Comparatif pluriannuel` est visible uniquement pour `admin|financier`, permet de choisir une année de référence et affiche le comparatif N/N-1/N-2 (montants émis, recouvrés, assujettis, dispositifs), les évolutions en % et les ventilations zone/catégorie
   - `GET /api/rapports/comparatif?annee=YYYY&format=json|pdf|xlsx` retourne la synthèse sur 3 ans glissants, les évolutions `vs_n1|vs_n2`, les ventilations par zone/catégorie et archive les exports PDF/Excel dans `rapports_exports`
   - la page `Exports personnalisés` est visible pour `admin|gestionnaire|financier`, permet de choisir une entité (`assujettis|dispositifs|declarations|titres|paiements|contentieux`), de sélectionner les colonnes, d’ajouter des filtres et un tri, de prévisualiser les 50 premières lignes, d’exporter en CSV/Excel et de sauvegarder des modèles personnels
+  - la page `Journal d’audit` est visible uniquement pour `admin`, rappelle le caractère immuable du journal (lecture seule), expose les colonnes `timestamp|utilisateur|action|entité|détails|IP`, des filtres `utilisateur|entité|action|plage de dates`, une recherche plein texte dans `details` et un export CSV pour analyse forensic
   - `GET /api/exports-personnalises/meta` expose les entités/colonnes/opérateurs disponibles, `POST /api/exports-personnalises/preview` retourne l’aperçu filtré, `POST /api/exports-personnalises/export?format=csv|xlsx` restitue le fichier demandé et `POST|GET /api/exports-personnalises/templates` gère les modèles sauvegardés dans `exports_sauvegardes`
+  - `GET /api/audit-log?page=&page_size=&user_id=&entite=&action=&q=&date_debut=&date_fin=&format=json|csv` est réservé à `admin`, restitue les entrées paginées triées par `created_at DESC`, expose les valeurs de filtre disponibles et journalise les exports CSV via `audit_log` (`action=export-audit-log`)
   - `GET /api/rapports/contentieux?date_reference=YYYY-MM-DD&format=json|pdf|xlsx` retourne la synthèse par type (`nombre_dossiers`, `montant_litige`, `montant_degreve`, `anciennete_moyenne_jours`), un graphique de répartition et les alertes délais ≤ J-30 / dépassées, puis archive les exports PDF/Excel dans `rapports_exports`
   - la page `Contentieux` affiche, pour `admin|financier`, un bloc de synthèse avec KPI, camembert par type et exports PDF/Excel horodatés en conservant le nom de fichier backend
   - en cas d'échec SQL lors de l'archivage d'un export de recouvrement ou de synthèse contentieux, le fichier binaire temporairement écrit est supprimé avant réponse 500 pour éviter les archives orphelines
@@ -162,9 +164,24 @@ Ouvrir ensuite http://localhost:5173.
   - un `contribuable` ne peut téléverser qu'un `courrier-contribuable`, visualise les pièces du dossier en lecture seule et ne peut pas supprimer une pièce contentieux
   - la page `Contentieux` propose la liste des pièces, l'aperçu PDF/image et le téléchargement direct depuis le détail du dossier
 
-## Transmission comptable public / titre exécutoire (US5.9)
+## Audit log (US10.1)
 
-Le module **Titres** couvre désormais la transmission d'un titre exécutoire au comptable public après mise en demeure :
+La user story **US10.1** livre désormais une interface d’investigation dédiée au journal d’audit :
+
+- page `client/src/pages/AuditLog.tsx` réservée au rôle `admin`, ajoutée au menu principal,
+- rappel explicite du caractère **immuable / lecture seule** du journal,
+- colonnes restituées : horodatage, utilisateur, action, entité, détails, IP,
+- filtres `utilisateur`, `entité`, `action`, `date_debut`, `date_fin`, `page_size`,
+- recherche plein texte `q` sur `details`, `action`, `entité`, email et nom utilisateur,
+- export CSV forensic avec nom de fichier cohérent et traçage `audit_log` (`action=export-audit-log`),
+- backend `GET /api/audit-log` paginé, trié par `created_at DESC, id DESC`, avec index `idx_audit_created_at` pour tenir la charge de consultation.
+
+Tests :
+- `npm run test --workspace=server`
+- `npm run test --workspace=client`
+- `npm run build`
+
+## Transmission comptable public / titre exécutoire (US5.9)
 
 - bouton **Rendre exécutoire** pour les rôles `admin|financier` sur les titres au statut `mise_en_demeure`,
 - génération d'un flux XML complémentaire persistant (`titres_executoires`) avec hash SHA-256, mention de visa ordonnateur et validation XSD locale via `xmllint`,

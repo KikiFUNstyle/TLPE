@@ -740,3 +740,4 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 CREATE INDEX IF NOT EXISTS idx_audit_entite ON audit_log(entite, entite_id);
 CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(user_id);
+CREATE INDEX IF NOT EXISTS idx_audit_created_at ON audit_log(created_at DESC, id DESC);
