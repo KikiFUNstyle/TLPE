@@ -179,6 +179,53 @@ export function initSchema() {
     `);
   }
 
+  const rapportsExportsSql = (
+    db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'rapports_exports'").get() as
+      | { sql: string }
+      | undefined
+  )?.sql;
+  if (rapportsExportsSql && !/type_rapport\s+TEXT\s+NOT\s+NULL\s+CHECK\s*\(\s*type_rapport\s+IN\s*\([^)]*'etat_recouvrement'[^)]*\)\s*\)/i.test(rapportsExportsSql)) {
+    db.pragma('foreign_keys = OFF');
+    try {
+      db.exec('BEGIN TRANSACTION');
+      try {
+        db.exec(`
+          CREATE TABLE rapports_exports_new (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            type_rapport  TEXT NOT NULL CHECK (type_rapport IN ('role_tlpe','etat_recouvrement')),
+            annee         INTEGER NOT NULL,
+            format        TEXT NOT NULL CHECK (format IN ('pdf','xlsx')),
+            filename      TEXT NOT NULL,
+            storage_path  TEXT NOT NULL,
+            content_hash  TEXT NOT NULL,
+            titres_count  INTEGER NOT NULL DEFAULT 0,
+            total_montant REAL NOT NULL DEFAULT 0,
+            generated_by  INTEGER,
+            exported_at   TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (generated_by) REFERENCES users(id) ON DELETE SET NULL
+          );
+
+          INSERT INTO rapports_exports_new (
+            id, type_rapport, annee, format, filename, storage_path, content_hash, titres_count, total_montant, generated_by, exported_at
+          )
+          SELECT
+            id, type_rapport, annee, format, filename, storage_path, content_hash, titres_count, total_montant, generated_by, exported_at
+          FROM rapports_exports;
+
+          DROP TABLE rapports_exports;
+          ALTER TABLE rapports_exports_new RENAME TO rapports_exports;
+          CREATE INDEX IF NOT EXISTS idx_rapports_exports_type_annee ON rapports_exports(type_rapport, annee, exported_at DESC);
+        `);
+        db.exec('COMMIT');
+      } catch (error) {
+        db.exec('ROLLBACK');
+        throw error;
+      }
+    } finally {
+      db.pragma('foreign_keys = ON');
+    }
+  }
+
   const hasDeclarationSequences = (
     db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'declaration_sequences'").get() as
       | { name: string }
