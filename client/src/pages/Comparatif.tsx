@@ -8,6 +8,7 @@ import {
   canExportComparatif,
   defaultComparatifFilters,
   shouldApplyComparatifRequestResult,
+  shouldAutoLoadComparatif,
   type ComparatifExportFormat,
   type ComparatifFiltersForm,
 } from './comparatifReport';
@@ -98,6 +99,9 @@ export default function Comparatif() {
   };
 
   useEffect(() => {
+    if (!shouldAutoLoadComparatif(filters.annee)) {
+      return;
+    }
     void load();
   }, [filters.annee]);
 

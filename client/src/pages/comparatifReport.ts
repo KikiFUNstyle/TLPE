@@ -29,3 +29,7 @@ export function buildComparatifExportFilename(annee: string, format: ComparatifE
 export function shouldApplyComparatifRequestResult(latestRequestId: number, completedRequestId: number): boolean {
   return latestRequestId === completedRequestId;
 }
+
+export function shouldAutoLoadComparatif(annee: string): boolean {
+  return /^\d{4}$/.test(annee);
+}

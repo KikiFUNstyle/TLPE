@@ -6,6 +6,7 @@ import {
   canExportComparatif,
   defaultComparatifFilters,
   shouldApplyComparatifRequestResult,
+  shouldAutoLoadComparatif,
 } from './comparatifReport';
 
 test('defaultComparatifFilters initialise l\'année de référence', () => {
@@ -29,4 +30,13 @@ test('buildComparatifExportFilename conserve l\'année et le format', () => {
 test('shouldApplyComparatifRequestResult ignore les réponses obsolètes', () => {
   assert.equal(shouldApplyComparatifRequestResult(2, 1), false);
   assert.equal(shouldApplyComparatifRequestResult(2, 2), true);
+});
+
+test('shouldAutoLoadComparatif attend une année complète avant auto-chargement', () => {
+  assert.equal(shouldAutoLoadComparatif(''), false);
+  assert.equal(shouldAutoLoadComparatif('2'), false);
+  assert.equal(shouldAutoLoadComparatif('20'), false);
+  assert.equal(shouldAutoLoadComparatif('202'), false);
+  assert.equal(shouldAutoLoadComparatif('2026'), true);
+  assert.equal(shouldAutoLoadComparatif('20260'), false);
 });

@@ -235,6 +235,7 @@ type ComparatifEvolution = {
 type ComparatifReportPayload = {
   generatedAt: string;
   hash: string;
+  titresCount: number;
   filters: {
     annee: number;
     years: number[];
@@ -1149,6 +1150,7 @@ function buildComparatifReportPayload(referenceYear: number): ComparatifReportPa
     vs_n1: buildComparatifEvolution(summary[0], summary[1]),
     vs_n2: buildComparatifEvolution(summary[0], summary[2]),
   };
+  const titresCount = new Set(rows.map((row) => row.titre_id)).size;
   const hash = crypto
     .createHash('sha256')
     .update(
@@ -1164,6 +1166,7 @@ function buildComparatifReportPayload(referenceYear: number): ComparatifReportPa
   return {
     generatedAt,
     hash,
+    titresCount,
     filters: {
       annee: referenceYear,
       years,
@@ -2135,13 +2138,12 @@ rapportsRouter.get('/comparatif', requireRole('admin', 'financier'), async (req,
     const buffer = parsed.data.format === 'pdf'
       ? await buildComparatifPdfBuffer(payload)
       : buildComparatifWorkbook(payload);
-    const titresCount = new Set(listComparatifRawRows(payload.filters.years).map((row) => row.titre_id)).size;
     const archive = await archiveComparatifReport({
       annee: payload.filters.annee,
       format: parsed.data.format,
       buffer,
       hash: payload.hash,
-      titresCount,
+      titresCount: payload.titresCount,
       totalMontant: payload.summary[0]?.montant_emis ?? 0,
       generatedBy: req.user!.id,
     });
@@ -2156,7 +2158,7 @@ rapportsRouter.get('/comparatif', requireRole('admin', 'financier'), async (req,
         format: parsed.data.format,
         generated_at: payload.generatedAt,
         hash: payload.hash,
-        titres_count: titresCount,
+        titres_count: payload.titresCount,
         total_montant_reference: payload.summary[0]?.montant_emis ?? 0,
         archive_path: archive.storagePath,
       },

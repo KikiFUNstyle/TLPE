@@ -487,6 +487,35 @@ test('GET /api/rapports/comparatif exporte en XLSX/PDF, archive et trace l’aud
   });
 });
 
+test('GET /api/rapports/comparatif réutilise le jeu de données agrégé pour éviter une double requête brute à l’export', async () => {
+  await withComparatifTestContext(async (ctx) => {
+    const fx = resetFixtures(ctx);
+
+    const previousPrepare = ctx.db.prepare.bind(ctx.db);
+    let rawComparatifSelectCount = 0;
+    // @ts-ignore test monkey patch for query counting
+    ctx.db.prepare = ((sql: string) => {
+      if (sql.includes('FROM titres t') && sql.includes('JOIN lignes_declaration ld')) {
+        rawComparatifSelectCount += 1;
+      }
+      return previousPrepare(sql);
+    }) as typeof ctx.db.prepare;
+
+    try {
+      const res = await requestReport(ctx, {
+        path: '/api/rapports/comparatif?annee=2026&format=xlsx',
+        headers: makeAuthHeader(ctx, fx.financier),
+      });
+
+      assert.equal(res.status, 200);
+      assert.equal(rawComparatifSelectCount, 1);
+    } finally {
+      // @ts-ignore restore monkey patch after query counting
+      ctx.db.prepare = previousPrepare;
+    }
+  });
+});
+
 test('GET /api/rapports/comparatif nettoie l’archive si la persistance SQL échoue', async () => {
   await withComparatifTestContext(async (ctx) => {
     const fx = resetFixtures(ctx);
