@@ -16,6 +16,7 @@ import {
   type RecouvrementVentilation,
 } from '../recouvrementReport';
 import { deleteStoredFile, saveFile } from './piecesJointes';
+import { normalizeGeometry, type GeoJsonGeometry } from '../zones';
 
 export const rapportsRouter = Router();
 
@@ -92,6 +93,14 @@ const comparatifReportQuerySchema = z.object({
   format: z.enum(['json', 'pdf', 'xlsx']).optional().default('json'),
 });
 
+type RecettesGeographiquesColorScale = 'montant_recouvre' | 'taux_recouvrement' | 'reste_a_recouvrer';
+
+const recettesGeographiquesReportQuerySchema = z.object({
+  annee: z.coerce.number().int().min(2000).max(2100),
+  color_scale: z.enum(['montant_recouvre', 'taux_recouvrement', 'reste_a_recouvrer']).optional().default('montant_recouvre'),
+  format: z.enum(['json', 'pdf']).optional().default('json'),
+});
+
 type RoleReportRow = {
   titre_id: number;
   numero_titre: string;
@@ -123,12 +132,15 @@ type RoleReportColumn = {
 
 type RecouvrementRowBase = {
   titre_id: number;
+  numero_titre: string;
   assujetti_id: number;
   montant: number;
   montant_paye: number;
   montant_ligne: number;
   zone_id: number | null;
+  zone_code: string | null;
   zone_label: string | null;
+  zone_geometry: string | null;
   categorie: string;
   assujetti_label: string;
 };
@@ -211,6 +223,69 @@ type ComparatifSummaryRow = {
   montant_recouvre: number;
   nombre_assujettis: number;
   nombre_dispositifs: number;
+};
+
+type RecettesGeographiquesAssujettiRow = {
+  assujetti_id: number;
+  label: string;
+  montant_emis: number;
+  montant_recouvre: number;
+  reste_a_recouvrer: number;
+  titres_count: number;
+};
+
+type RecettesGeographiquesTitreRow = {
+  titre_id: number;
+  numero_titre: string;
+  assujetti_id: number;
+  assujetti_label: string;
+  montant_emis: number;
+  montant_recouvre: number;
+  reste_a_recouvrer: number;
+};
+
+export function measureRecettesGeographiquesPdfLineHeight(
+  doc: InstanceType<typeof PDFDocument>,
+  value: string,
+  width: number,
+): number {
+  return Math.max(
+    doc.heightOfString(value, {
+      width,
+      align: 'left',
+    }),
+    14,
+  );
+}
+
+type RecettesGeographiquesZoneRow = {
+  zone_id: number;
+  zone_code: string;
+  zone_label: string;
+  geometry: GeoJsonGeometry;
+  montant_emis: number;
+  montant_recouvre: number;
+  reste_a_recouvrer: number;
+  taux_recouvrement: number;
+  assujettis_count: number;
+  titres_count: number;
+  assujettis: RecettesGeographiquesAssujettiRow[];
+  titres: RecettesGeographiquesTitreRow[];
+};
+
+type RecettesGeographiquesReportPayload = {
+  annee: number;
+  color_scale: RecettesGeographiquesColorScale;
+  generatedAt: string;
+  hash: string;
+  titresCount: number;
+  totals: {
+    montant_emis: number;
+    montant_recouvre: number;
+    reste_a_recouvrer: number;
+    taux_recouvrement: number;
+  };
+  zones: RecettesGeographiquesZoneRow[];
 };
 
 type ComparatifBreakdownValue = {
@@ -706,18 +781,25 @@ function buildRecouvrementWhereClause(filters: RecouvrementFilters): { whereSql:
   };
 }
 
-function listRecouvrementRows(filters: RecouvrementFilters): RecouvrementRowBase[] {
+function listRecouvrementRows(
+  filters: RecouvrementFilters,
+  options: { includeZoneGeometry?: boolean } = {},
+): RecouvrementRowBase[] {
   const { whereSql, params } = buildRecouvrementWhereClause(filters);
+  const zoneGeometrySelect = options.includeZoneGeometry ? 'z.geometry AS zone_geometry' : 'NULL AS zone_geometry';
   return db
     .prepare(
       `SELECT
          t.id AS titre_id,
+         t.numero AS numero_titre,
          t.assujetti_id,
          t.montant,
          t.montant_paye,
          ld.montant_ligne,
          d.zone_id,
+         z.code AS zone_code,
          z.libelle AS zone_label,
+         ${zoneGeometrySelect},
          td.categorie,
          a.raison_sociale AS assujetti_label
        FROM titres t
@@ -836,6 +918,221 @@ function buildRecouvrementReportPayload(filters: RecouvrementFilters): Recouvrem
     },
     chart: filters.ventilation === 'zone' ? byZone : filters.ventilation === 'categorie' ? byCategorie : byAssujetti,
   };
+}
+
+function buildRecettesGeographiquesReportPayload(
+  annee: number,
+  colorScale: RecettesGeographiquesColorScale,
+): RecettesGeographiquesReportPayload {
+  const rows = listRecouvrementRows({
+    annee,
+    zoneId: null,
+    categorie: null,
+    statutPaiement: null,
+    ventilation: 'zone',
+  }, { includeZoneGeometry: true });
+
+  type MutableZoneAggregation = {
+    zone_id: number;
+    zone_code: string;
+    zone_label: string;
+    geometry: GeoJsonGeometry;
+    montant_emis: number;
+    montant_recouvre: number;
+    reste_a_recouvrer: number;
+    taux_recouvrement: number;
+    assujettis: Map<number, RecettesGeographiquesAssujettiRow>;
+    titres: Map<number, RecettesGeographiquesTitreRow>;
+  };
+
+  const zoneGroups = new Map<number, MutableZoneAggregation>();
+
+  for (const row of rows) {
+    if (!row.zone_id) continue;
+    if (!row.zone_code || !row.zone_label || !row.zone_geometry) {
+      throw new Error(`Zone ${row.zone_id} incomplete: code, libellé ou géométrie manquant`);
+    }
+
+    const existingZone = zoneGroups.get(row.zone_id);
+
+    let geometry: GeoJsonGeometry;
+    if (existingZone) {
+      geometry = existingZone.geometry;
+    } else {
+      try {
+        geometry = normalizeGeometry(JSON.parse(row.zone_geometry));
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : 'géométrie illisible';
+        throw new Error(`Zone ${row.zone_id} invalide pour la carte des recettes: ${reason}`);
+      }
+    }
+
+    const emittedShare = row.montant > 0 ? roundRecouvrementCurrency((row.montant * row.montant_ligne) / row.montant) : 0;
+    const recoveredShare = row.montant > 0 ? roundRecouvrementCurrency((row.montant_paye * row.montant_ligne) / row.montant) : 0;
+
+    const currentZone = existingZone ?? {
+      zone_id: row.zone_id,
+      zone_code: row.zone_code,
+      zone_label: row.zone_label,
+      geometry,
+      montant_emis: 0,
+      montant_recouvre: 0,
+      reste_a_recouvrer: 0,
+      taux_recouvrement: 0,
+      assujettis: new Map<number, RecettesGeographiquesAssujettiRow>(),
+      titres: new Map<number, RecettesGeographiquesTitreRow>(),
+    };
+
+    currentZone.montant_emis = roundRecouvrementCurrency(currentZone.montant_emis + emittedShare);
+    currentZone.montant_recouvre = roundRecouvrementCurrency(currentZone.montant_recouvre + recoveredShare);
+    currentZone.reste_a_recouvrer = roundRecouvrementCurrency(currentZone.montant_emis - currentZone.montant_recouvre);
+    currentZone.taux_recouvrement = computeRecouvrementRate(currentZone.montant_recouvre, currentZone.montant_emis);
+
+    const currentAssujetti = currentZone.assujettis.get(row.assujetti_id) ?? {
+      assujetti_id: row.assujetti_id,
+      label: row.assujetti_label,
+      montant_emis: 0,
+      montant_recouvre: 0,
+      reste_a_recouvrer: 0,
+      titres_count: 0,
+    };
+    currentAssujetti.montant_emis = roundRecouvrementCurrency(currentAssujetti.montant_emis + emittedShare);
+    currentAssujetti.montant_recouvre = roundRecouvrementCurrency(currentAssujetti.montant_recouvre + recoveredShare);
+    currentAssujetti.reste_a_recouvrer = roundRecouvrementCurrency(currentAssujetti.montant_emis - currentAssujetti.montant_recouvre);
+    currentZone.assujettis.set(row.assujetti_id, currentAssujetti);
+
+    const currentTitre = currentZone.titres.get(row.titre_id) ?? {
+      titre_id: row.titre_id,
+      numero_titre: row.numero_titre,
+      assujetti_id: row.assujetti_id,
+      assujetti_label: row.assujetti_label,
+      montant_emis: 0,
+      montant_recouvre: 0,
+      reste_a_recouvrer: 0,
+    };
+    currentTitre.montant_emis = roundRecouvrementCurrency(currentTitre.montant_emis + emittedShare);
+    currentTitre.montant_recouvre = roundRecouvrementCurrency(currentTitre.montant_recouvre + recoveredShare);
+    currentTitre.reste_a_recouvrer = roundRecouvrementCurrency(currentTitre.montant_emis - currentTitre.montant_recouvre);
+    currentZone.titres.set(row.titre_id, currentTitre);
+
+    zoneGroups.set(row.zone_id, currentZone);
+  }
+
+  const zones = Array.from(zoneGroups.values())
+    .map((zone) => {
+      const assujettis = Array.from(zone.assujettis.values())
+        .map((assujetti) => ({
+          ...assujetti,
+          titres_count: Array.from(zone.titres.values()).filter((titre) => titre.assujetti_id === assujetti.assujetti_id).length,
+        }))
+        .sort((left, right) => right.montant_recouvre - left.montant_recouvre || left.label.localeCompare(right.label, 'fr'));
+      const titres = Array.from(zone.titres.values()).sort(
+        (left, right) => right.montant_recouvre - left.montant_recouvre || left.numero_titre.localeCompare(right.numero_titre, 'fr'),
+      );
+      return {
+        zone_id: zone.zone_id,
+        zone_code: zone.zone_code,
+        zone_label: zone.zone_label,
+        geometry: zone.geometry,
+        montant_emis: zone.montant_emis,
+        montant_recouvre: zone.montant_recouvre,
+        reste_a_recouvrer: zone.reste_a_recouvrer,
+        taux_recouvrement: zone.taux_recouvrement,
+        assujettis_count: assujettis.length,
+        titres_count: titres.length,
+        assujettis,
+        titres,
+      };
+    })
+    .sort((left, right) => right.montant_recouvre - left.montant_recouvre || left.zone_label.localeCompare(right.zone_label, 'fr'));
+
+  const titresCount = new Set(zones.flatMap((zone) => zone.titres.map((titre) => titre.titre_id))).size;
+  const totals = {
+    montant_emis: roundRecouvrementCurrency(zones.reduce((sum, zone) => sum + zone.montant_emis, 0)),
+    montant_recouvre: roundRecouvrementCurrency(zones.reduce((sum, zone) => sum + zone.montant_recouvre, 0)),
+    reste_a_recouvrer: 0,
+    taux_recouvrement: 0,
+  };
+  totals.reste_a_recouvrer = roundRecouvrementCurrency(totals.montant_emis - totals.montant_recouvre);
+  totals.taux_recouvrement = computeRecouvrementRate(totals.montant_recouvre, totals.montant_emis);
+
+  const generatedAt = formatDateTime(new Date());
+  const hash = crypto
+    .createHash('sha256')
+    .update(
+      JSON.stringify({
+        annee,
+        colorScale,
+        generatedAt,
+        totals,
+        zones: zones.map((zone) => ({
+          zone_id: zone.zone_id,
+          zone_code: zone.zone_code,
+          montant_emis: zone.montant_emis,
+          montant_recouvre: zone.montant_recouvre,
+          reste_a_recouvrer: zone.reste_a_recouvrer,
+          taux_recouvrement: zone.taux_recouvrement,
+          assujettis_count: zone.assujettis_count,
+          titres_count: zone.titres_count,
+        })),
+      }),
+    )
+    .digest('hex');
+
+  return {
+    annee,
+    color_scale: colorScale,
+    generatedAt,
+    hash,
+    titresCount,
+    totals,
+    zones,
+  };
+}
+
+function buildRecettesGeographiquesPdfBuffer(payload: RecettesGeographiquesReportPayload): Promise<Buffer> {
+  return new Promise<Buffer>((resolve, reject) => {
+    const doc = new PDFDocument({ size: 'A4', margin: 36 });
+    const chunks: Buffer[] = [];
+
+    doc.on('data', (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    doc.fontSize(18).text('Répartition géographique des recettes TLPE', { align: 'center' });
+    doc.moveDown(0.4);
+    doc.fontSize(10).fillColor('#555');
+    doc.text(`Exercice : ${payload.annee}`, { align: 'center' });
+    doc.text(`Échelle de couleur : ${payload.color_scale}`, { align: 'center' });
+    doc.moveDown(0.6).fillColor('black');
+    doc.text(`Horodatage : ${payload.generatedAt}`);
+    doc.text(`Hash SHA-256 : ${payload.hash}`);
+    doc.moveDown(0.6);
+    doc.text(`Montant recouvré : ${formatMoney(payload.totals.montant_recouvre)}`);
+    doc.text(`Montant émis : ${formatMoney(payload.totals.montant_emis)}`);
+    doc.text(`Reste à recouvrer : ${formatMoney(payload.totals.reste_a_recouvrer)}`);
+    doc.moveDown();
+
+    for (const zone of payload.zones) {
+      doc.fontSize(12).text(`${zone.zone_label} (${zone.zone_code})`, { underline: true });
+      doc.fontSize(10);
+      doc.text(`Recouvré : ${formatMoney(zone.montant_recouvre)} | Émis : ${formatMoney(zone.montant_emis)} | Reste : ${formatMoney(zone.reste_a_recouvrer)} | Taux : ${formatRecouvrementPct(zone.taux_recouvrement)}`);
+      doc.text(`Assujettis : ${zone.assujettis_count} | Titres : ${zone.titres_count}`);
+      doc.moveDown(0.2);
+      doc.text('Contribuables :');
+      for (const assujetti of zone.assujettis) {
+        doc.text(`- ${assujetti.label}: ${formatMoney(assujetti.montant_recouvre)} recouvrés / ${assujetti.titres_count} titre(s)`);
+      }
+      doc.moveDown(0.2);
+      doc.text('Titres :');
+      for (const titre of zone.titres) {
+        doc.text(`- ${titre.numero_titre} (${titre.assujetti_label}) : ${formatMoney(titre.montant_recouvre)} / ${formatMoney(titre.montant_emis)}`);
+      }
+      doc.moveDown();
+    }
+
+    doc.end();
+  });
 }
 
 function buildRecouvrementWorkbook(payload: RecouvrementReportPayload): Buffer {
@@ -977,6 +1274,41 @@ async function archiveRecouvrementReport(params: {
       await deleteStoredFile(storagePath);
     } catch (cleanupError) {
       console.error('[TLPE] Echec nettoyage archive etat recouvrement', cleanupError);
+    }
+    throw error;
+  }
+
+  return { filename, storagePath };
+}
+
+async function archiveRecettesGeographiquesReport(params: {
+  annee: number;
+  buffer: Buffer;
+  hash: string;
+  titresCount: number;
+  totalMontant: number;
+  generatedBy: number;
+}): Promise<{ filename: string; storagePath: string }> {
+  const filename = `recettes-geographiques-${params.annee}.pdf`;
+  const storagePath = path.posix.join(
+    'rapports',
+    'recettes_geographiques',
+    String(params.annee),
+    `${Date.now()}-${sanitizeFileComponent(params.hash.slice(0, 12))}.pdf`,
+  );
+  await saveFile(storagePath, params.buffer, 'application/pdf');
+
+  try {
+    db.prepare(
+      `INSERT INTO rapports_exports (
+        type_rapport, annee, format, filename, storage_path, content_hash, titres_count, total_montant, generated_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run('recettes_geographiques', params.annee, 'pdf', filename, storagePath, params.hash, params.titresCount, params.totalMontant, params.generatedBy);
+  } catch (error) {
+    try {
+      await deleteStoredFile(storagePath);
+    } catch (cleanupError) {
+      console.error('[TLPE] Echec nettoyage archive recettes geographiques', cleanupError);
     }
     throw error;
   }
@@ -2119,6 +2451,58 @@ rapportsRouter.get('/recouvrement', requireRole('admin', 'financier'), async (re
   } catch (error) {
     console.error('[TLPE] Erreur generation etat de recouvrement', error);
     return res.status(500).json({ error: 'Erreur interne generation etat de recouvrement' });
+  }
+});
+
+rapportsRouter.get('/recettes-geographiques', requireRole('admin', 'financier'), async (req, res) => {
+  const parsed = recettesGeographiquesReportQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'Parametres de la carte des recettes invalides' });
+  }
+
+  try {
+    const payload = buildRecettesGeographiquesReportPayload(parsed.data.annee, parsed.data.color_scale);
+
+    if (parsed.data.format === 'json') {
+      return res.json(payload);
+    }
+
+    const buffer = await buildRecettesGeographiquesPdfBuffer(payload);
+    const archive = await archiveRecettesGeographiquesReport({
+      annee: payload.annee,
+      buffer,
+      hash: payload.hash,
+      titresCount: payload.titresCount,
+      totalMontant: payload.totals.montant_emis,
+      generatedBy: req.user!.id,
+    });
+
+    logAudit({
+      userId: req.user!.id,
+      action: 'export-recettes-geographiques',
+      entite: 'rapport',
+      details: {
+        annee: payload.annee,
+        color_scale: payload.color_scale,
+        format: parsed.data.format,
+        generated_at: payload.generatedAt,
+        hash: payload.hash,
+        zones_count: payload.zones.length,
+        titres_count: payload.titresCount,
+        montant_emis: payload.totals.montant_emis,
+        montant_recouvre: payload.totals.montant_recouvre,
+        reste_a_recouvrer: payload.totals.reste_a_recouvrer,
+        archive_path: archive.storagePath,
+      },
+      ip: req.ip ?? null,
+    });
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${archive.filename}"`);
+    return res.send(buffer);
+  } catch (error) {
+    console.error('[TLPE] Erreur generation carte des recettes', error);
+    return res.status(500).json({ error: 'Erreur interne generation carte des recettes' });
   }
 });
 

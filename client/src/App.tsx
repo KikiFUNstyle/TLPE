@@ -19,6 +19,7 @@ import Rapprochement from './pages/Rapprochement';
 import Recouvrement from './pages/Recouvrement';
 import Comparatif from './pages/Comparatif';
 import Relances from './pages/Relances';
+import RecettesGeographiques from './pages/RecettesGeographiques';
 
 export default function App() {
   const { user, loading, logout } = useAuth();
@@ -72,6 +73,7 @@ export default function App() {
               {canAccessRapprochement && <NavLink to="/rapprochement">Rapprochement bancaire</NavLink>}
               {canAccessRecouvrement && <NavLink to="/recouvrement">État de recouvrement</NavLink>}
               {canAccessRecouvrement && <NavLink to="/comparatif">Comparatif pluriannuel</NavLink>}
+              {canAccessRecouvrement && <NavLink to="/recettes-geographiques">Carte des recettes</NavLink>}
               {canAccessRelances && <NavLink to="/relances">Suivi des relances</NavLink>}
               <NavLink to="/contentieux">Contentieux</NavLink>
               {canAccessControles && <NavLink to="/controles">Contrôles terrain</NavLink>}
@@ -107,6 +109,7 @@ export default function App() {
           <Route path="/rapprochement" element={canAccessRapprochement ? <Rapprochement /> : <Navigate to="/" replace />} />
           <Route path="/recouvrement" element={canAccessRecouvrement ? <Recouvrement /> : <Navigate to="/" replace />} />
           <Route path="/comparatif" element={canAccessRecouvrement ? <Comparatif /> : <Navigate to="/" replace />} />
+          <Route path="/recettes-geographiques" element={canAccessRecouvrement ? <RecettesGeographiques /> : <Navigate to="/" replace />} />
           <Route path="/relances" element={canAccessRelances ? <Relances /> : <Navigate to="/" replace />} />
           <Route path="/contentieux" element={<Contentieux />} />
           <Route path="/controles" element={canAccessControles ? <Controles /> : <Navigate to="/" replace />} />
