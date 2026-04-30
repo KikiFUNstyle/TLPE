@@ -188,6 +188,197 @@ function encodeCsvBase64(lines: string[]) {
   return Buffer.from(lines.join('\n'), 'utf-8').toString('base64');
 }
 
+function cacheApiEntrepriseRecord(params: {
+  siret: string;
+  raisonSociale?: string;
+  estRadie?: boolean;
+  expiresInDays?: number;
+}) {
+  db.prepare(
+    `INSERT INTO api_entreprise_cache (
+      siret, raison_sociale, forme_juridique, adresse_rue, adresse_cp, adresse_ville, adresse_pays,
+      est_radie, source_statut, fetched_at, expires_at
+    ) VALUES (?, ?, 'SARL', '1 rue API', '75001', 'Paris', 'France', ?, ?, datetime('now'), datetime('now', ?))`,
+  ).run(
+    params.siret,
+    params.raisonSociale ?? 'Société API',
+    params.estRadie ? 1 : 0,
+    params.estRadie ? 'F' : 'A',
+    `+${params.expiresInDays ?? 10} day`,
+  );
+}
+
+test('routes coverage smoke: assujettis couvrent CRUD, enrichissement SIRENE, import et téléchargement de template', async () => {
+  const fx = resetFixtures();
+  const app = createApp();
+
+  const ownList = await request(app).get('/api/assujettis').set(authHeader(fx.contribuable));
+  assert.equal(ownList.status, 200);
+  assert.equal(ownList.body.length, 1);
+  assert.equal(ownList.body[0].id, fx.contribuableAssujettiId);
+
+  const filteredList = await request(app)
+    .get('/api/assujettis?q=Alpha&statut=actif')
+    .set(authHeader(fx.admin));
+  assert.equal(filteredList.status, 200);
+  assert.equal(filteredList.body.length, 1);
+
+  const ownDetail = await request(app)
+    .get(`/api/assujettis/${fx.contribuableAssujettiId}`)
+    .set(authHeader(fx.contribuable));
+  assert.equal(ownDetail.status, 200);
+  assert.equal(ownDetail.body.id, fx.contribuableAssujettiId);
+  assert.equal(Array.isArray(ownDetail.body.dispositifs), true);
+  assert.equal(Array.isArray(ownDetail.body.declarations), true);
+  assert.equal(Array.isArray(ownDetail.body.titres), true);
+  assert.equal(Array.isArray(ownDetail.body.mandats_sepa), true);
+
+  const forbiddenDetail = await request(app)
+    .get(`/api/assujettis/${fx.otherAssujettiId}`)
+    .set(authHeader(fx.contribuable));
+  assert.equal(forbiddenDetail.status, 403);
+
+  const missingDetail = await request(app).get('/api/assujettis/999999').set(authHeader(fx.admin));
+  assert.equal(missingDetail.status, 404);
+
+  const invalidCreate = await request(app)
+    .post('/api/assujettis')
+    .set(authHeader(fx.admin))
+    .send({ raison_sociale: 'SIRET KO', siret: '123' });
+  assert.equal(invalidCreate.status, 400);
+
+  cacheApiEntrepriseRecord({ siret: '73282932000074', estRadie: true, raisonSociale: 'Radiée SARL' });
+  const radieCreate = await request(app)
+    .post('/api/assujettis')
+    .set(authHeader(fx.admin))
+    .send({ raison_sociale: 'Radiée SARL', siret: '73282932000074' });
+  assert.equal(radieCreate.status, 422);
+
+  const created = await request(app)
+    .post('/api/assujettis')
+    .set(authHeader(fx.admin))
+    .send({
+      raison_sociale: 'Gamma Routes',
+      siret: '55210055400005',
+      email: 'gamma@example.test',
+      portail_actif: true,
+      statut: 'actif',
+    });
+  assert.equal(created.status, 201);
+  assert.equal(created.body.sirene_status, 'degraded');
+  const createdAssujettiId = Number(created.body.id);
+
+  const duplicateCreate = await request(app)
+    .post('/api/assujettis')
+    .set(authHeader(fx.admin))
+    .send({
+      raison_sociale: 'Gamma Routes bis',
+      siret: '55210055400005',
+      email: 'gamma-bis@example.test',
+      portail_actif: false,
+      statut: 'inactif',
+    });
+  assert.equal(duplicateCreate.status, 409);
+
+  const invalidUpdate = await request(app)
+    .put(`/api/assujettis/${createdAssujettiId}`)
+    .set(authHeader(fx.admin))
+    .send({ raison_sociale: 'Gamma Routes', siret: 'bad-siret' });
+  assert.equal(invalidUpdate.status, 400);
+
+  cacheApiEntrepriseRecord({ siret: '34921495400001', estRadie: true, raisonSociale: 'Radiee Update SAS' });
+  const radieUpdate = await request(app)
+    .put(`/api/assujettis/${createdAssujettiId}`)
+    .set(authHeader(fx.admin))
+    .send({ raison_sociale: 'Gamma Routes', siret: '34921495400001' });
+  assert.equal(radieUpdate.status, 422);
+
+  const updated = await request(app)
+    .put(`/api/assujettis/${createdAssujettiId}`)
+    .set(authHeader(fx.admin))
+    .send({
+      raison_sociale: 'Gamma Routes MAJ',
+      siret: '55210055400005',
+      email: 'gamma-maj@example.test',
+      portail_actif: false,
+      statut: 'inactif',
+      notes: 'Mis à jour par test',
+    });
+  assert.equal(updated.status, 200);
+  assert.equal(updated.body.sirene_status, 'degraded');
+
+  const missingUpdate = await request(app)
+    .put('/api/assujettis/999999')
+    .set(authHeader(fx.admin))
+    .send({ raison_sociale: 'Inexistant' });
+  assert.equal(missingUpdate.status, 404);
+
+  const template = await request(app)
+    .get('/api/assujettis/import/template')
+    .set(authHeader(fx.admin));
+  assert.equal(template.status, 200);
+  assert.match(String(template.headers['content-type'] ?? ''), /text\/csv/);
+  assert.match(String(template.headers['content-disposition'] ?? ''), /assujettis-template\.csv/);
+  assert.match(template.text, /identifiant_tlpe,raison_sociale,siret,forme_juridique,adresse_rue,adresse_cp,adresse_ville,adresse_pays,contact_nom,contact_prenom,contact_fonction,email,telephone,portail_actif,statut,notes/);
+
+  const invalidImportSchema = await request(app)
+    .post('/api/assujettis/import')
+    .set(authHeader(fx.admin))
+    .send({ fileName: '', contentBase64: '' });
+  assert.equal(invalidImportSchema.status, 400);
+
+  const invalidImportDecode = await request(app)
+    .post('/api/assujettis/import')
+    .set(authHeader(fx.admin))
+    .send({ fileName: 'assujettis.csv', contentBase64: 'not-base64', mode: 'preview' });
+  assert.equal(invalidImportDecode.status, 200);
+  assert.equal(invalidImportDecode.body.total, 0);
+  assert.equal(invalidImportDecode.body.valid, 0);
+  assert.equal(invalidImportDecode.body.rejected, 0);
+
+  const previewCsv = encodeCsvBase64([
+    'identifiant_tlpe,raison_sociale,siret,email,portail_actif,statut',
+    'TLPE-2026-00990,Import Preview,12345678901005,preview@example.test,oui,actif',
+    'TLPE-2026-00991,,123,broken-email,peut-etre,inconnu',
+  ]);
+  const previewImport = await request(app)
+    .post('/api/assujettis/import')
+    .set(authHeader(fx.admin))
+    .send({ fileName: 'assujettis.csv', contentBase64: previewCsv, mode: 'preview' });
+  assert.equal(previewImport.status, 200);
+  assert.equal(previewImport.body.total, 2);
+  assert.equal(previewImport.body.valid, 1);
+  assert.equal(previewImport.body.rejected, 1);
+  assert.equal(previewImport.body.sirene_status, 'degraded');
+  assert.ok(previewImport.body.anomalies.length >= 4);
+
+  const abortImport = await request(app)
+    .post('/api/assujettis/import')
+    .set(authHeader(fx.admin))
+    .send({ fileName: 'assujettis.csv', contentBase64: previewCsv, mode: 'commit', onError: 'abort' });
+  assert.equal(abortImport.status, 400);
+
+  const commitImport = await request(app)
+    .post('/api/assujettis/import')
+    .set(authHeader(fx.admin))
+    .send({ fileName: 'assujettis.csv', contentBase64: previewCsv, mode: 'commit', onError: 'skip' });
+  assert.equal(commitImport.status, 201);
+  assert.equal(commitImport.body.created, 1);
+  assert.equal(commitImport.body.updated, 0);
+  assert.equal(commitImport.body.rejected, 1);
+  assert.equal(commitImport.body.sirene_status, 'degraded');
+
+  const deleted = await request(app)
+    .delete(`/api/assujettis/${createdAssujettiId}`)
+    .set(authHeader(fx.admin));
+  assert.equal(deleted.status, 204);
+
+  const missingDelete = await request(app)
+    .delete('/api/assujettis/999999')
+    .set(authHeader(fx.admin));
+  assert.equal(missingDelete.status, 404);
+});
+
 test('routes coverage smoke: dashboard, simulateur, geocoding et référentiels répondent sur les cas clés', async () => {
   const fx = resetFixtures();
   const app = createApp();
@@ -229,6 +420,46 @@ test('routes coverage smoke: dashboard, simulateur, geocoding et référentiels 
 
   const geoBad = await request(app).get('/api/geocoding/search?q=ab').set(authHeader(fx.admin));
   assert.equal(geoBad.status, 400);
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    ({
+      ok: true,
+      json: async () => ({
+        features: [
+          {
+            properties: {
+              label: '10 Rue de Rivoli 75004 Paris',
+              postcode: '75004',
+              city: 'Paris',
+            },
+            geometry: { coordinates: [2.3522, 48.8566] },
+          },
+        ],
+      }),
+    }) as Response) as typeof fetch;
+
+  try {
+    const geoOk = await request(app)
+      .get('/api/geocoding/search?q=10%20rue%20de%20rivoli&limit=3')
+      .set(authHeader(fx.admin));
+    assert.equal(geoOk.status, 200);
+    assert.equal(Array.isArray(geoOk.body.suggestions), true);
+    assert.equal(geoOk.body.suggestions[0].adresse, '10 Rue de Rivoli 75004 Paris');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  globalThis.fetch = (async () => ({ ok: false, status: 503 }) as Response) as typeof fetch;
+  try {
+    const geoUnavailable = await request(app)
+      .get('/api/geocoding/search?q=10%20rue%20de%20rivoli')
+      .set(authHeader(fx.admin));
+    assert.equal(geoUnavailable.status, 503);
+    assert.match(String(geoUnavailable.body.error ?? ''), /BAN indisponible/i);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 
   const zonesRes = await request(app).get('/api/referentiels/zones').set(authHeader(fx.admin));
   assert.equal(zonesRes.status, 200);
