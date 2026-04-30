@@ -4,7 +4,7 @@ import express from 'express';
 import { db, initSchema } from './db';
 import { hashPassword, signToken, type AuthUser } from './auth';
 import { rapprochementRouter } from './routes/rapprochement';
-import { importReleveBancaire } from './rapprochement';
+import { applyManualRapprochement, importReleveBancaire, runAutoRapprochement } from './rapprochement';
 import { parseStatementFile } from './rapprochementImport';
 
 function createApp() {
@@ -239,6 +239,85 @@ test('parseStatementFile génère des transaction_id distincts en MT940 sans ré
   assert.notEqual(mt940.lignes[0].transaction_id, mt940.lignes[1].transaction_id);
 });
 
+test('parseStatementFile rejette les CSV sans données exploitables et génère un hash si aucun identifiant explicite n’est fourni', () => {
+  assert.throws(
+    () => parseStatementFile({
+      fileName: 'header-only.csv',
+      contentBase64: toBase64('date;libelle;montant\n'),
+      format: 'csv',
+    }),
+    /en-tête et au moins une ligne/i,
+  );
+
+  assert.throws(
+    () => parseStatementFile({
+      fileName: 'missing-date.csv',
+      contentBase64: toBase64('libelle;montant\nPaiement;10,00\n'),
+      format: 'csv',
+    }),
+    /Colonne date introuvable/i,
+  );
+
+  assert.throws(
+    () => parseStatementFile({
+      fileName: 'missing-label.csv',
+      contentBase64: toBase64('date;montant\n2026-04-01;10,00\n'),
+      format: 'csv',
+    }),
+    /Colonne libellé introuvable/i,
+  );
+
+  const hashed = parseStatementFile({
+    fileName: 'hashed.csv',
+    contentBase64: toBase64(
+      'date;libelle;montant;reference\n'
+      + '2026-02-30;Date invalide;10,00;BAD-DATE\n'
+      + '2026-04-01;;12,00;EMPTY-LABEL\n'
+      + '2026-04-02;Montant nul;0,00;ZERO\n'
+      + '2026-04-03;Paiement hashé;15,50;\n',
+    ),
+    format: 'csv',
+  });
+
+  assert.equal(hashed.lignes.length, 1);
+  assert.equal(hashed.lignes[0].date, '2026-04-03');
+  assert.equal(hashed.lignes[0].reference, null);
+  assert.match(hashed.lignes[0].transaction_id, /^csv:[0-9a-f]{40}$/);
+});
+
+test('parseStatementFile couvre les branches MT940 de reversal, libellé par défaut et absence de lignes exploitables', () => {
+  const reversed = parseStatementFile({
+    fileName: 'releve-reversal.mt940',
+    contentBase64: toBase64(
+      ':20:START\n'
+      + ':25:FR761234\n'
+      + ':60F:C260401EUR0,00\n'
+      + ':61:2604010401RC150,45NTRF//BANKREV1\n'
+      + ':61:2604020402CAX\n'
+      + ':62F:C260430EUR150,45\n',
+    ),
+  });
+
+  assert.equal(reversed.lignes.length, 1);
+  assert.equal(reversed.lignes[0].montant, -150.45);
+  assert.equal(reversed.lignes[0].reference, null);
+  assert.equal(reversed.lignes[0].libelle, 'Opération MT940');
+  assert.equal(reversed.lignes[0].transaction_id, 'mt940:BANKREV1');
+
+  assert.throws(
+    () => parseStatementFile({
+      fileName: 'releve-vide.ofx',
+      contentBase64: toBase64(
+        'OFXHEADER:100\n<OFX><BANKMSGSRSV1><STMTTRNRS><STMTRS><BANKTRANLIST>'
+        + '<STMTTRN><DTPOSTED>BADDATE</DTPOSTED><TRNAMT>abc</TRNAMT><NAME>Invalide</NAME></STMTTRN>'
+        + '</BANKTRANLIST></STMTRS></STMTTRNRS></BANKMSGSRSV1></OFX>',
+      ),
+      format: 'ofx',
+    }),
+    /Aucune ligne exploitable détectée/i,
+  );
+});
+
 test('importReleveBancaire supporte les gros fichiers sans dépasser la limite SQLite des paramètres', () => {
   const fx = resetFixtures();
   const lineCount = 33010;
@@ -261,6 +340,19 @@ test('importReleveBancaire supporte les gros fichiers sans dépasser la limite S
   assert.equal(count, lineCount);
 });
 
+test('POST /api/rapprochement/import retourne 400 sur schéma invalide', async () => {
+  const fx = resetFixtures();
+
+  const invalid = await request({
+    method: 'POST',
+    path: '/api/rapprochement/import',
+    headers: makeAuthHeader(fx.financier),
+    body: {},
+  });
+
+  assert.equal(invalid.status, 400);
+  assert.match(invalid.text, /fileName|contentBase64/i);
+});
 test('POST /api/rapprochement/import importe un relevé et déduplique par transaction bancaire', async () => {
   const fx = resetFixtures();
   const payload = {
@@ -457,6 +549,45 @@ test('POST /api/rapprochement/auto rapproche automatiquement les titres référe
   );
 });
 
+test('POST /api/rapprochement/auto retourne un bilan vide quand aucune ligne n’est en attente et 500 sur erreur interne', async () => {
+  const fx = resetFixtures();
+
+  const empty = runAutoRapprochement(fx.financier.id);
+  assert.deepEqual(empty, {
+    matched_count: 0,
+    pending_count: 0,
+    payment_count: 0,
+    logs: [],
+  });
+
+  const previousPrepare = db.prepare.bind(db);
+  let forcedOnce = false;
+  // @ts-ignore test monkey patch for fault injection
+  db.prepare = ((sql: string) => {
+    if (!forcedOnce && sql.includes('SELECT id, releve_id, date, libelle, montant')) {
+      forcedOnce = true;
+      throw new Error('disk I/O error auto');
+    }
+    return previousPrepare(sql);
+  }) as typeof db.prepare;
+
+  try {
+    const internalError = await request({
+      method: 'POST',
+      path: '/api/rapprochement/auto',
+      headers: makeAuthHeader(fx.financier),
+      body: {},
+    });
+
+    assert.equal(internalError.status, 500);
+    assert.match(internalError.text, /Erreur interne rapprochement automatique/);
+    assert.doesNotMatch(internalError.text, /disk I\/O error auto/);
+  } finally {
+    // @ts-ignore restore monkey patch after fault injection
+    db.prepare = previousPrepare;
+  }
+});
+
 test('POST /api/rapprochement/manual rapproche une ligne en attente et alimente le journal manuel', async () => {
   const fx = resetFixtures();
   createTitreFixture('TIT-2026-000103', 75);
@@ -528,7 +659,7 @@ test('POST /api/rapprochement/manual rapproche une ligne en attente et alimente 
   assert.match(journal.commentaire ?? '', /Vérification humaine/);
 });
 
-test('POST /api/rapprochement/manual retourne 400 sur payload invalide et relaie les erreurs métier usuelles', async () => {
+test('POST /api/rapprochement/manual couvre les branches 400, workflow 404/409, résultat partiel et erreur interne', async () => {
   const fx = resetFixtures();
   createTitreFixture('TIT-2026-000103', 75);
   createTitreFixture('TIT-2026-000104', 60);
@@ -662,27 +793,160 @@ test('POST /api/rapprochement/import et /auto masquent les erreurs internes tout
   assert.equal(invalidSchema.status, 400);
   assert.match(invalidSchema.text, /fileName|contentBase64/i);
 
-  const validationError = await request({
+  const invalid = await request({
+    method: 'POST',
+    path: '/api/rapprochement/manual',
+    headers: makeAuthHeader(fx.admin),
+    body: {},
+  });
+  assert.equal(invalid.status, 400);
+
+  const missingLine = await request({
+    method: 'POST',
+    path: '/api/rapprochement/manual',
+    headers: makeAuthHeader(fx.admin),
+    body: {
+      ligne_id: 999999,
+      numero_titre: 'TIT-2026-404404',
+    },
+  });
+  assert.equal(missingLine.status, 404);
+  assert.match(missingLine.text, /Ligne de relevé introuvable/i);
+
+  createTitreFixture('TIT-2026-000104', 120);
+  createTitreFixture('TIT-2026-000105', 40);
+
+  const imported = await request({
     method: 'POST',
     path: '/api/rapprochement/import',
-    headers: makeAuthHeader(fx.financier),
+    headers: makeAuthHeader(fx.admin),
     body: {
-      fileName: 'releve.csv',
-      contentBase64: toBase64('date;libelle\n2026-04-01;Paiement incomplet\n'),
+      fileName: 'releve-manuel-branches.csv',
+      contentBase64: toBase64(
+        'date;libelle;montant;reference;transaction_id\n'
+        + '2026-04-05;Déjà rapproché;40,00;MAN-EXACT;BANK-M2\n'
+        + '2026-04-06;Paiement partiel;50,00;MAN-PART;BANK-M3\n'
+        + '2026-04-07;Montant négatif;-5,00;MAN-NEG;BANK-M4\n'
+        + '2026-04-08;Montant trop élevé;200,00;MAN-OVER;BANK-M5\n'
+        + '2026-04-09;Erreur interne;30,00;MAN-FAIL;BANK-M6\n',
+      ),
       format: 'csv',
     },
   });
+  assert.equal(imported.status, 201);
 
-  assert.equal(validationError.status, 400);
-  assert.match(validationError.text, /Configurer une colonne montant|colonne/i);
+  const firstLineId = Number(
+    (db.prepare("SELECT id FROM lignes_releve WHERE transaction_id = 'csv:BANK-M2'").get() as { id: number }).id,
+  );
+  const partialLineId = Number(
+    (db.prepare("SELECT id FROM lignes_releve WHERE transaction_id = 'csv:BANK-M3'").get() as { id: number }).id,
+  );
+  const negativeLineId = Number(
+    (db.prepare("SELECT id FROM lignes_releve WHERE transaction_id = 'csv:BANK-M4'").get() as { id: number }).id,
+  );
+  const overLineId = Number(
+    (db.prepare("SELECT id FROM lignes_releve WHERE transaction_id = 'csv:BANK-M5'").get() as { id: number }).id,
+  );
+
+  const exact = applyManualRapprochement({
+    ligneId: firstLineId,
+    numeroTitre: 'TIT-2026-000105',
+    userId: fx.admin.id,
+  });
+  assert.equal(exact.resultat, 'rapproche');
+
+  const alreadyMatched = await request({
+    method: 'POST',
+    path: '/api/rapprochement/manual',
+    headers: makeAuthHeader(fx.admin),
+    body: {
+      ligne_id: firstLineId,
+      numero_titre: 'TIT-2026-000105',
+    },
+  });
+  assert.equal(alreadyMatched.status, 409);
+  assert.match(alreadyMatched.text, /déjà rapprochée/i);
+
+  const negativeAmount = await request({
+    method: 'POST',
+    path: '/api/rapprochement/manual',
+    headers: makeAuthHeader(fx.admin),
+    body: {
+      ligne_id: negativeLineId,
+      numero_titre: 'TIT-2026-000104',
+    },
+  });
+  assert.equal(negativeAmount.status, 409);
+  assert.match(negativeAmount.text, /ne permet pas un rapprochement manuel/i);
+
+  const titleNotFound = await request({
+    method: 'POST',
+    path: '/api/rapprochement/manual',
+    headers: makeAuthHeader(fx.admin),
+    body: {
+      ligne_id: partialLineId,
+      numero_titre: 'TIT-2026-999998',
+    },
+  });
+  assert.equal(titleNotFound.status, 404);
+  assert.match(titleNotFound.text, /Titre introuvable/i);
+
+  const overAmount = await request({
+    method: 'POST',
+    path: '/api/rapprochement/manual',
+    headers: makeAuthHeader(fx.admin),
+    body: {
+      ligne_id: overLineId,
+      numero_titre: 'TIT-2026-000104',
+    },
+  });
+  assert.equal(overAmount.status, 409);
+  assert.match(overAmount.text, /dépasse le reste à payer/i);
+
+  const partial = applyManualRapprochement({
+    ligneId: partialLineId,
+    numeroTitre: 'tit-2026-000104',
+    userId: fx.admin.id,
+  });
+  assert.equal(partial.resultat, 'partiel');
+  assert.equal(partial.statut, 'paye_partiel');
+  assert.equal(partial.montant_paye, 50);
+
+  const partialJournal = db.prepare(
+    "SELECT resultat, commentaire FROM rapprochements_log WHERE ligne_releve_id = ? ORDER BY id DESC LIMIT 1",
+  ).get(partialLineId) as { resultat: string; commentaire: string | null };
+  assert.equal(partialJournal.resultat, 'partiel');
+  assert.match(partialJournal.commentaire ?? '', /Paiement partiel rapproché sur TIT-2026-000104/i);
+
+  const audit = db.prepare(
+    "SELECT ip, details FROM audit_log WHERE action = 'rapprochement-manuel' ORDER BY id DESC LIMIT 1",
+  ).get() as { ip: string | null; details: string };
+  assert.equal(audit.ip, null);
+  assert.match(audit.details, /csv:BANK-M3/);
+
+  const soldTitle = await request({
+    method: 'POST',
+    path: '/api/rapprochement/manual',
+    headers: makeAuthHeader(fx.admin),
+    body: {
+      ligne_id: overLineId,
+      numero_titre: 'TIT-2026-000105',
+    },
+  });
+  assert.equal(soldTitle.status, 409);
+  assert.match(soldTitle.text, /déjà soldé/i);
+
+  const failureLineId = Number(
+    (db.prepare("SELECT id FROM lignes_releve WHERE transaction_id = 'csv:BANK-M6'").get() as { id: number }).id,
+  );
 
   const previousPrepare = db.prepare.bind(db);
-  let forcedImportFailure = false;
+  let forcedOnce = false;
   // @ts-ignore test monkey patch for fault injection
   db.prepare = ((sql: string) => {
-    if (!forcedImportFailure && sql.includes('INSERT INTO releves_bancaires')) {
-      forcedImportFailure = true;
-      throw new Error('disk I/O error');
+    if (!forcedOnce && sql.includes('INSERT INTO paiements')) {
+      forcedOnce = true;
+      throw new Error('disk I/O error manual');
     }
     return previousPrepare(sql);
   }) as typeof db.prepare;
@@ -690,18 +954,18 @@ test('POST /api/rapprochement/import et /auto masquent les erreurs internes tout
   try {
     const internalError = await request({
       method: 'POST',
-      path: '/api/rapprochement/import',
-      headers: makeAuthHeader(fx.financier),
+      path: '/api/rapprochement/manual',
+      headers: makeAuthHeader(fx.admin),
       body: {
-        fileName: 'releve.csv',
-        contentBase64: toBase64('date;libelle;montant\n2026-04-01;Paiement;10,00\n'),
-        format: 'csv',
+        ligne_id: failureLineId,
+        numero_titre: 'TIT-2026-000104',
+        commentaire: 'Injection erreur interne',
       },
     });
 
     assert.equal(internalError.status, 500);
-    assert.match(internalError.text, /Erreur interne import rapprochement/);
-    assert.doesNotMatch(internalError.text, /disk I\/O error/);
+    assert.match(internalError.text, /Erreur interne rapprochement manuel/);
+    assert.doesNotMatch(internalError.text, /disk I\/O error manual/);
   } finally {
     // @ts-ignore restore monkey patch after fault injection
     db.prepare = previousPrepare;

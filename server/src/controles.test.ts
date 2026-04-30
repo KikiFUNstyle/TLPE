@@ -991,6 +991,164 @@ test('POST /api/controles/lancer-redressement ouvre un contentieux de contrôle 
   assert.match(timeline[0].description, /Contrôles source : #/);
 });
 
+test('POST /api/controles/proposer-rectification gère un lot mixte création + conflit existant', async () => {
+  const fx = resetFixtures();
+
+  const createdFirst = await request({
+    method: 'POST',
+    path: '/api/controles',
+    headers: makeAuthHeader(fx.controleur),
+    body: {
+      dispositif_id: fx.dispositifId,
+      date_controle: '2026-05-12',
+      latitude: 48.8566,
+      longitude: 2.3522,
+      surface_mesuree: 14.5,
+      nombre_faces_mesurees: 2,
+      ecart_detecte: true,
+      ecart_description: 'Première anomalie retenue',
+      statut: 'cloture',
+    },
+  });
+  assert.equal(createdFirst.status, 201);
+  const firstControleId = (createdFirst.data as { id: number }).id;
+
+  const createdDuplicate = await request({
+    method: 'POST',
+    path: '/api/controles',
+    headers: makeAuthHeader(fx.controleur),
+    body: {
+      dispositif_id: fx.dispositifId,
+      date_controle: '2026-05-20',
+      latitude: 48.8566,
+      longitude: 2.3522,
+      surface_mesuree: 16,
+      nombre_faces_mesurees: 3,
+      ecart_detecte: true,
+      ecart_description: 'Même dispositif, mesure plus récente',
+      statut: 'cloture',
+    },
+  });
+  assert.equal(createdDuplicate.status, 201);
+  const duplicateControleId = (createdDuplicate.data as { id: number }).id;
+
+  const otherAssujettiId = Number(
+    db.prepare(
+      `INSERT INTO assujettis (identifiant_tlpe, raison_sociale, email, statut)
+       VALUES ('TLPE-CTRL-002', 'Beta Controle', 'beta-controle@example.test', 'actif')`,
+    ).run().lastInsertRowid,
+  );
+  const otherDispositifId = Number(
+    db.prepare(
+      `INSERT INTO dispositifs (
+        identifiant, assujetti_id, type_id, zone_id, adresse_rue, adresse_cp, adresse_ville,
+        latitude, longitude, surface, nombre_faces, statut
+      ) VALUES ('DSP-CTRL-002', ?, ?, ?, '2 rue du Test', '75002', 'Paris', 48.857, 2.353, 8, 1, 'declare')`,
+    ).run(otherAssujettiId, fx.typeId, fx.zoneId).lastInsertRowid,
+  );
+  const otherControleId = Number(
+    db.prepare(
+      `INSERT INTO controles (
+        dispositif_id, agent_id, date_controle, latitude, longitude,
+        surface_mesuree, nombre_faces_mesurees, ecart_detecte, ecart_description, statut
+      ) VALUES (?, ?, '2026-05-18', 48.857, 2.353, 11, 2, 1, 'Autre assujetti à rectifier', 'cloture')`,
+    ).run(otherDispositifId, fx.controleur.id).lastInsertRowid,
+  );
+
+  db.prepare(
+    `INSERT INTO declarations (numero, assujetti_id, annee, statut, commentaires)
+     VALUES ('DEC-2026-EXISTANTE', ?, 2026, 'brouillon', 'Déclaration déjà ouverte')`,
+  ).run(fx.assujettiId);
+
+  const response = await request({
+    method: 'POST',
+    path: '/api/controles/proposer-rectification',
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      controle_ids: [firstControleId, duplicateControleId, otherControleId],
+      mode: 'declaration_office',
+    },
+  });
+
+  assert.equal(response.status, 201);
+  const body = response.data as {
+    ok: boolean;
+    created: Array<{ declaration_id: number; numero: string; assujetti_id: number; annee: number; statut: string }>;
+    conflicts: Array<{ assujetti_id: number; annee: number; declaration_id: number; numero: string; statut: string }>;
+  };
+  assert.equal(body.ok, true);
+  assert.equal(body.created.length, 1);
+  assert.equal(body.conflicts.length, 1);
+  assert.equal(body.conflicts[0].assujetti_id, fx.assujettiId);
+  assert.equal(body.conflicts[0].annee, 2026);
+  assert.equal(body.conflicts[0].numero, 'DEC-2026-EXISTANTE');
+
+  const createdDeclaration = db.prepare(
+    `SELECT assujetti_id, numero, statut FROM declarations WHERE id = ?`,
+  ).get(body.created[0].declaration_id) as { assujetti_id: number; numero: string; statut: string };
+  assert.equal(createdDeclaration.assujetti_id, otherAssujettiId);
+  assert.equal(createdDeclaration.statut, 'en_instruction');
+
+  const createdLines = db.prepare(
+    `SELECT dispositif_id, surface_declaree, nombre_faces FROM lignes_declaration WHERE declaration_id = ? ORDER BY id ASC`,
+  ).all(body.created[0].declaration_id) as Array<{ dispositif_id: number; surface_declaree: number; nombre_faces: number }>;
+  assert.equal(createdLines.length, 1);
+  assert.equal(createdLines[0].dispositif_id, otherDispositifId);
+  assert.equal(createdLines[0].surface_declaree, 11);
+  assert.equal(createdLines[0].nombre_faces, 2);
+});
+
+test('POST /api/controles/report déduplique les identifiants côté export XLSX et journal d’audit', async () => {
+  const fx = resetFixtures();
+
+  const created = await request({
+    method: 'POST',
+    path: '/api/controles',
+    headers: makeAuthHeader(fx.controleur),
+    body: {
+      dispositif_id: fx.dispositifId,
+      date_controle: '2026-05-14',
+      latitude: 48.8566,
+      longitude: 2.3522,
+      surface_mesuree: 15,
+      nombre_faces_mesurees: 2,
+      ecart_detecte: true,
+      ecart_description: 'Export dédupliqué',
+      statut: 'cloture',
+    },
+  });
+  assert.equal(created.status, 201);
+  const controleId = (created.data as { id: number }).id;
+
+  const report = await request({
+    method: 'POST',
+    path: '/api/controles/report',
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      controle_ids: [controleId, controleId],
+      format: 'xlsx',
+    },
+  });
+
+  assert.equal(report.status, 200);
+  const workbook = XLSX.read(report.bodyBuffer, { type: 'buffer' });
+  const rows = XLSX.utils.sheet_to_json<Array<string | number | null>>(workbook.Sheets[workbook.SheetNames[0]], {
+    header: 1,
+    raw: false,
+  });
+  assert.equal(rows.length, 2);
+  assert.equal(Number(rows[1][0]), controleId);
+
+  const audit = db.prepare(
+    `SELECT details FROM audit_log WHERE action = 'export-rapport-controle' ORDER BY id DESC LIMIT 1`,
+  ).get() as { details: string } | undefined;
+  assert.ok(audit);
+  const details = JSON.parse(audit!.details) as { controles: number[]; count: number; format: string };
+  assert.deepEqual(details.controles, [controleId]);
+  assert.equal(details.count, 1);
+  assert.equal(details.format, 'xlsx');
+});
+
 test('POST /api/controles/proposer-rectification et /lancer-redressement valident les payloads et les cas sans anomalie', async () => {
   const fx = resetFixtures();
 
