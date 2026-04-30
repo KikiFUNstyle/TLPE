@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import express from 'express';
 import { db, initSchema } from './db';
 import { hashPassword, signToken, type AuthUser } from './auth';
@@ -337,4 +339,112 @@ test('GET liste contentieux refuse l’accès à un contribuable d’un autre as
     headers: makeAuthHeader(fx.outsider),
   });
   assert.equal(outsiderList.status, 403);
+});
+
+test('POST /api/pieces-jointes retourne 400 sans fichier multipart', async () => {
+  const fx = resetFixtures();
+  const contentieuxId = await createContentieux(fx);
+
+  const res = await request({
+    method: 'POST',
+    path: '/api/pieces-jointes',
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      entite: 'contentieux',
+      entite_id: contentieuxId,
+      type_piece: 'decision',
+    },
+  });
+
+  assert.equal(res.status, 400);
+  assert.equal(res.data?.error, 'Fichier requis (champ "fichier")');
+});
+
+test('POST /api/pieces-jointes rejette un contenu incohérent avec le MIME annoncé', async () => {
+  const fx = resetFixtures();
+  const contentieuxId = await createContentieux(fx);
+  const formData = new FormData();
+  formData.set('entite', 'contentieux');
+  formData.set('entite_id', String(contentieuxId));
+  formData.set('type_piece', 'decision');
+  formData.set('fichier', new File([Buffer.from('ceci n\'est pas un PDF', 'utf8')], 'piece.pdf', { type: 'application/pdf' }));
+
+  const res = await requestMultipart({
+    path: '/api/pieces-jointes',
+    headers: makeAuthHeader(fx.gestionnaire),
+    formData,
+  });
+
+  assert.equal(res.status, 400);
+  assert.equal(res.data?.error, 'Contenu du fichier incoherent avec le type MIME annonce');
+});
+
+test('POST /api/pieces-jointes retourne 404 quand l’entité ciblée est introuvable', async () => {
+  const fx = resetFixtures();
+  const formData = buildPdfUploadForm(999999, 'decision');
+
+  const res = await requestMultipart({
+    path: '/api/pieces-jointes',
+    headers: makeAuthHeader(fx.gestionnaire),
+    formData,
+  });
+
+  assert.equal(res.status, 404);
+  assert.equal(res.data?.error, 'Entite introuvable');
+});
+
+test('GET /api/pieces-jointes/:id retourne 404 quand le fichier stocké a disparu', async () => {
+  const fx = resetFixtures();
+  const contentieuxId = await createContentieux(fx);
+
+  const uploaded = await requestMultipart({
+    path: '/api/pieces-jointes',
+    headers: makeAuthHeader(fx.gestionnaire),
+    formData: buildPdfUploadForm(contentieuxId, 'decision'),
+  });
+  assert.equal(uploaded.status, 201);
+  const pieceId = (uploaded.data as { id: number }).id;
+  const piece = db.prepare('SELECT chemin FROM pieces_jointes WHERE id = ?').get(pieceId) as { chemin: string };
+  const absolutePath = path.resolve(__dirname, '..', 'data', 'uploads', piece.chemin);
+  fs.unlinkSync(absolutePath);
+
+  const download = await request({
+    method: 'GET',
+    path: `/api/pieces-jointes/${pieceId}`,
+    headers: makeAuthHeader(fx.gestionnaire),
+  });
+
+  assert.equal(download.status, 404);
+  assert.equal(download.data?.error, 'Fichier introuvable dans le stockage');
+});
+
+test('DELETE /api/pieces-jointes/:id retourne 404 pour une pièce absente', async () => {
+  const fx = resetFixtures();
+
+  const deleted = await request({
+    method: 'DELETE',
+    path: '/api/pieces-jointes/999999',
+    headers: makeAuthHeader(fx.gestionnaire),
+  });
+
+  assert.equal(deleted.status, 404);
+  assert.equal(deleted.data?.error, 'Piece jointe introuvable');
+});
+
+test('POST /api/pieces-jointes refuse un upload qui dépasse le quota total par entité', async () => {
+  const fx = resetFixtures();
+  const contentieuxId = await createContentieux(fx);
+  db.prepare(
+    `INSERT INTO pieces_jointes (entite, entite_id, nom, mime_type, taille, chemin, type_piece, uploaded_by)
+     VALUES ('contentieux', ?, 'quota.pdf', 'application/pdf', ?, 'contentieux/quota/quota.pdf', 'decision', ?)`,
+  ).run(contentieuxId, 50 * 1024 * 1024, fx.gestionnaire.id);
+
+  const uploaded = await requestMultipart({
+    path: '/api/pieces-jointes',
+    headers: makeAuthHeader(fx.gestionnaire),
+    formData: buildPdfUploadForm(contentieuxId, 'decision'),
+  });
+
+  assert.equal(uploaded.status, 400);
+  assert.equal(uploaded.data?.error, 'Taille totale depassee (50 Mo maximum par entite)');
 });

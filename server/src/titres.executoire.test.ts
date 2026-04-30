@@ -261,6 +261,187 @@ test('GET /api/titres/:id/executoire/xml télécharge le flux persistant après 
   assert.match(res.text, /TIT-2026-009901/);
 });
 
+test('GET /api/titres/:id/executoire/xml et POST /api/titres/:id/rendre-executoire gèrent les erreurs d’accès et d’état', async () => {
+  const fx = resetFixtures();
+
+  const missingTitle = await request({
+    method: 'POST',
+    path: '/api/titres/999999/rendre-executoire',
+    headers: makeAuthHeader(fx.financier),
+  });
+  assert.equal(missingTitle.status, 404);
+
+  const xmlBeforeTransmission = await request({
+    method: 'GET',
+    path: `/api/titres/${fx.titreMiseEnDemeureId}/executoire/xml`,
+    headers: makeAuthHeader(fx.financier),
+  });
+  assert.equal(xmlBeforeTransmission.status, 404);
+
+  const transmitted = await request({
+    method: 'POST',
+    path: `/api/titres/${fx.titreMiseEnDemeureId}/rendre-executoire`,
+    headers: makeAuthHeader(fx.financier),
+  });
+  assert.equal(transmitted.status, 200);
+
+  const duplicateTransmission = await request({
+    method: 'POST',
+    path: `/api/titres/${fx.titreMiseEnDemeureId}/rendre-executoire`,
+    headers: makeAuthHeader(fx.financier),
+  });
+  assert.equal(duplicateTransmission.status, 409);
+
+  const outsider = await request({
+    method: 'GET',
+    path: `/api/titres/${fx.titreMiseEnDemeureId}/executoire/xml`,
+    headers: makeAuthHeader({
+      ...fx.contribuable,
+      assujetti_id: 999999,
+      email: 'outsider-exec@tlpe.local',
+    }),
+  });
+  assert.equal(outsider.status, 403);
+});
+
+test('POST /api/titres/:id/admettre-non-valeur valide le body et refuse un titre non transmis', async () => {
+  const fx = resetFixtures();
+
+  const invalidBody = await request({
+    method: 'POST',
+    path: `/api/titres/${fx.titreMiseEnDemeureId}/admettre-non-valeur`,
+    headers: makeAuthHeader(fx.financier),
+    body: { commentaire: 'x' },
+  });
+  assert.equal(invalidBody.status, 400);
+
+  const notTransmitted = await request({
+    method: 'POST',
+    path: `/api/titres/${fx.titreMiseEnDemeureId}/admettre-non-valeur`,
+    headers: makeAuthHeader(fx.financier),
+    body: { commentaire: 'Trop tôt pour un retour comptable' },
+  });
+  assert.equal(notTransmitted.status, 409);
+});
+
+test('POST /api/titres émet un titre, applique une échéance par défaut et gère les conflits métier', async () => {
+  const fx = resetFixtures();
+
+  const declarationId = Number(
+    db.prepare(
+      `INSERT INTO declarations (numero, assujetti_id, annee, statut, montant_total)
+       VALUES ('DEC-EXEC-2027-001', (SELECT assujetti_id FROM titres WHERE id = ?), 2027, 'validee', 420)`,
+    ).run(fx.titreMiseEnDemeureId).lastInsertRowid,
+  );
+
+  const emitted = await request({
+    method: 'POST',
+    path: '/api/titres',
+    headers: makeAuthHeader(fx.financier),
+    body: { declaration_id: declarationId },
+  });
+  assert.equal(emitted.status, 201);
+  assert.match(String(emitted.json.numero), /^TIT-2027-/);
+
+  const emittedRow = db.prepare(
+    `SELECT date_echeance, statut FROM titres WHERE id = ?`,
+  ).get(Number(emitted.json.id)) as { date_echeance: string; statut: string };
+  assert.equal(emittedRow.date_echeance, '2027-08-31');
+  assert.equal(emittedRow.statut, 'emis');
+
+  const duplicate = await request({
+    method: 'POST',
+    path: '/api/titres',
+    headers: makeAuthHeader(fx.financier),
+    body: { declaration_id: declarationId },
+  });
+  assert.equal(duplicate.status, 409);
+
+  const draftDeclarationId = Number(
+    db.prepare(
+      `INSERT INTO declarations (numero, assujetti_id, annee, statut, montant_total)
+       VALUES ('DEC-EXEC-2028-002', (SELECT assujetti_id FROM titres WHERE id = ?), 2028, 'brouillon', 100)`,
+    ).run(fx.titreMiseEnDemeureId).lastInsertRowid,
+  );
+  const notValidated = await request({
+    method: 'POST',
+    path: '/api/titres',
+    headers: makeAuthHeader(fx.financier),
+    body: { declaration_id: draftDeclarationId },
+  });
+  assert.equal(notValidated.status, 409);
+
+  const missingAmountDeclarationId = Number(
+    db.prepare(
+      `INSERT INTO declarations (numero, assujetti_id, annee, statut, montant_total)
+       VALUES ('DEC-EXEC-2029-003', (SELECT assujetti_id FROM titres WHERE id = ?), 2029, 'validee', NULL)`,
+    ).run(fx.titreMiseEnDemeureId).lastInsertRowid,
+  );
+  const missingAmount = await request({
+    method: 'POST',
+    path: '/api/titres',
+    headers: makeAuthHeader(fx.financier),
+    body: { declaration_id: missingAmountDeclarationId },
+  });
+  assert.equal(missingAmount.status, 409);
+
+  const missingDeclaration = await request({
+    method: 'POST',
+    path: '/api/titres',
+    headers: makeAuthHeader(fx.financier),
+    body: { declaration_id: 999999 },
+  });
+  assert.equal(missingDeclaration.status, 404);
+});
+
+test('POST /api/titres/:id/paiements enregistre des paiements partiels puis complets et rejette les cas invalides', async () => {
+  const fx = resetFixtures();
+
+  const missingTitle = await request({
+    method: 'POST',
+    path: '/api/titres/999999/paiements',
+    headers: makeAuthHeader(fx.financier),
+    body: { montant: 50, date_paiement: '2026-04-15', modalite: 'virement' },
+  });
+  assert.equal(missingTitle.status, 404);
+
+  const invalidPayload = await request({
+    method: 'POST',
+    path: `/api/titres/${fx.titreImpayeId}/paiements`,
+    headers: makeAuthHeader(fx.financier),
+    body: { montant: -5, date_paiement: '2026-04-15', modalite: 'virement' },
+  });
+  assert.equal(invalidPayload.status, 400);
+
+  const partial = await request({
+    method: 'POST',
+    path: `/api/titres/${fx.titreImpayeId}/paiements`,
+    headers: makeAuthHeader(fx.financier),
+    body: { montant: 100, date_paiement: '2026-04-15', modalite: 'virement', reference: 'PAY-PARTIAL' },
+  });
+  assert.equal(partial.status, 201);
+  assert.equal(partial.json.montant_paye, 100);
+  assert.equal(partial.json.statut, 'paye_partiel');
+
+  const complete = await request({
+    method: 'POST',
+    path: `/api/titres/${fx.titreImpayeId}/paiements`,
+    headers: makeAuthHeader(fx.financier),
+    body: { montant: 200, date_paiement: '2026-04-16', modalite: 'cheque', reference: 'PAY-COMPLETE' },
+  });
+  assert.equal(complete.status, 201);
+  assert.equal(complete.json.montant_paye, 300);
+  assert.equal(complete.json.statut, 'paye');
+
+  const paymentsList = await request({
+    method: 'GET',
+    path: `/api/titres/${fx.titreImpayeId}/paiements`,
+    headers: makeAuthHeader(fx.financier),
+  });
+  assert.equal(paymentsList.status, 200);
+  assert.equal(paymentsList.json.length, 2);
+});
+
 test('POST /api/titres/:id/admettre-non-valeur bascule le titre et ajoute un événement de retour comptable', async () => {
   const fx = resetFixtures();
   const created = await request({

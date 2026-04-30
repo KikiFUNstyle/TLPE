@@ -104,16 +104,34 @@ function toStringValue(value: unknown): string {
   return String(value).trim();
 }
 
+function decodeBase64Strict(contentBase64: string): Buffer {
+  const normalized = contentBase64.trim();
+  if (!normalized || normalized.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(normalized)) {
+    throw new Error('Invalid base64 payload');
+  }
+
+  const buffer = Buffer.from(normalized, 'base64');
+  if (buffer.length === 0) {
+    throw new Error('Invalid base64 payload');
+  }
+
+  if (buffer.toString('base64') !== normalized) {
+    throw new Error('Invalid base64 payload');
+  }
+
+  return buffer;
+}
+
 function decodeCsv(contentBase64: string): RawDispositifImportRow[] {
-  const csv = Buffer.from(contentBase64, 'base64').toString('utf-8');
-  const workbook = XLSX.read(csv, { type: 'string' });
+  const csv = decodeBase64Strict(contentBase64).toString('utf-8');
+  const workbook = XLSX.read(csv, { type: 'string', raw: true });
   const sheetName = workbook.SheetNames[0];
   const sheet = workbook.Sheets[sheetName];
   return sheetToRows(sheet);
 }
 
 function decodeXlsx(contentBase64: string): RawDispositifImportRow[] {
-  const buffer = Buffer.from(contentBase64, 'base64');
+  const buffer = decodeBase64Strict(contentBase64);
   const workbook = XLSX.read(buffer, { type: 'buffer' });
   const sheetName = workbook.SheetNames[0];
   const sheet = workbook.Sheets[sheetName];

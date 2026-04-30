@@ -55,6 +55,7 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
 - Pour tout parseur MT940/format bancaire, vérifier que les références métier sont préservées même sans séparateur `//` et que le code type (`NTRF`, `NMSC`, etc.) n'est pas restitué comme référence client.
 - Pour toute liste UI de doublons/aperçus importés, vérifier une clé React réellement unique et stable (`transaction_id` seul est insuffisant si la vue affiche plusieurs doublons du même identifiant).
 - Pour toute US avec document généré (PDF, accusé, courrier), ajouter un test API qui valide la présence des métadonnées de restitution (`token/hash/download_url`) et un test service qui vérifie la persistance + réutilisation idempotente.
+- Pour tout test d'export binaire (XLSX/PDF/XML) via `fetch`, lire la réponse en `arrayBuffer()` puis parser le `Buffer` brut ; ne pas reconstruire le binaire depuis `response.text()` sous peine de corrompre l'archive et de masquer un faux échec de test.
 - Pour toute assertion de sécurité sur un PDF généré, ne jamais se contenter d'un `buffer.includes(...)` sur le binaire brut : vérifier la donnée avant rendu ou décompresser les flux PDF compressés pour éviter un faux positif.
 - Pour toute US de mise en demeure sur titres, vérifier explicitement en review :
   - route manuelle sécurisée (`POST /api/titres/:id/mise-en-demeure`) + route batch sécurisée (`POST /api/titres/mises-en-demeure/batch`),
@@ -112,6 +113,9 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
   - distinction explicite entre erreurs de validation utilisateur/parsing attendu (4xx avec message exploitable) et erreurs inattendues de persistance/runtime (5xx générique sans fuite de détails internes),
   - présence d'un test de non-régression couvrant au moins un cas 4xx métier et un cas 5xx interne masqué,
   - journalisation serveur des erreurs inattendues avant réponse 5xx.
+- Pour toute route destructive `DELETE` sur une entité encore référencée par des FKs métier, vérifier en review:
+  - conversion explicite des erreurs `FOREIGN KEY constraint failed` en réponse métier 409/4xx exploitable (jamais 500 brut),
+  - présence d'un test de non-régression couvrant la tentative de suppression encore référencée puis la suppression réussie après nettoyage métier.
 - Pour toute route d'export personnalisé / report builder (prévisualisation, export CSV/XLSX, sauvegarde de modèle), vérifier en review:
   - distinction stricte entre erreurs de configuration utilisateur (colonne inconnue, valeur numérique/booléenne invalide, filtre/tri incompatible) en 4xx et pannes internes SQLite/runtime en 5xx générique,
   - absence de fuite des messages internes (`disk I/O error`, stack, SQL) côté réponse API,
@@ -268,6 +272,13 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
 - Vérifier qu'au moins un test frontend couvre le wiring UI principal (présence de la route/entrée de navigation et rendu du panneau 2FA) ; des helpers/test unitaires isolés côté auth ne suffisent pas.
 - Vérifier que la route de login gère un état intermédiaire `requires_two_factor` typé explicitement côté TypeScript pour éviter les régressions de build (`union` discriminée / type guard) quand le backend peut renvoyer soit un JWT, soit un challenge 2FA.
 - Vérifier que les messages d'erreur/confirmation 2FA sont exploitables côté utilisateur (activation, désactivation, fallback presse-papiers indisponible) et qu'aucune action sensible ne dépend uniquement d'une copie automatique dans le clipboard.
+
+### 19) Couverture de tests & CI (appris sur US10.5)
+- Vérifier qu'une US "coverage" n'est pas considérée livrée tant que la **commande réellement annoncée** (`npm run test:coverage`, `vitest --coverage`, etc.) passe effectivement en local/CI avec les seuils configurés ; un simple ajout de tests ou d'un seuil théorique ne suffit pas.
+- Vérifier qu'une config Vitest `coverageThreshold` ne cible pas implicitement un sous-ensemble trompeur du code (ex. une seule glob `*.rtl.test.tsx` ou un include trop étroit) sans justification explicite dans la doc/PR.
+- Vérifier qu'un workflow CI dédié publie bien les artefacts de couverture attendus même en cas d'échec des seuils, afin de diagnostiquer les zones non couvertes au lieu de perdre le rapport.
+- Pour toute PR orientée "hausse de couverture", vérifier que les nouveaux tests ciblent **les hotspots réellement montrés par `coverage-summary.json` / `lcov.info`** (branches manquantes, fichiers les plus bas) et pas seulement des cas faciles dans des zones déjà vertes.
+- Pour toute route d’export/rapport encore peu couverte, chercher explicitement des branches de repli et états vides : libellés de catégories/statuts rares, agrégats `sans zone`, valeurs fallback (`SIRET`/adresse/dispositifs absents), et export PDF/XLSX d’un jeu vide ou sans alerte ; exiger des tests dédiés si ces branches restent rouges.
 
 ## Format de sortie review
 

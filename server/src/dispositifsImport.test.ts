@@ -110,6 +110,35 @@ test('decodeDispositifsImportFile - decode CSV et XLSX', () => {
   assert.equal(xlsxRows[0].type_code, 'ENS-PLAT');
 });
 
+test('decodeDispositifsImportFile - rejette un contenu base64 invalide', () => {
+  resetTables();
+  seedReferentiels();
+
+  assert.throws(
+    () => decodeDispositifsImportFile('dispositifs.xlsx', 'not-base64'),
+    /base64/i,
+  );
+
+  assert.throws(
+    () => decodeDispositifsImportFile('dispositifs.csv', '%%%%'),
+    /base64/i,
+  );
+});
+
+test('decodeDispositifsImportFile - preserve une date ISO depuis un CSV', () => {
+  resetTables();
+  seedReferentiels();
+
+  const csv = [
+    'identifiant_assujetti,type_code,adresse,lat,lon,surface,faces,date_pose,zone_code,statut',
+    'TLPE-2026-00001,PUB-PAPIER,12 rue de la Paix,48.8566,2.3522,8,2,2026-02-01,ZC,declare',
+  ].join('\n');
+
+  const rows = decodeDispositifsImportFile('dispositifs.csv', base64Csv(csv));
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].date_pose, '2026-02-01');
+});
+
 test('validateDispositifsImportRows - detecte anomalies et valide ligne correcte', async () => {
   resetTables();
   seedReferentiels();

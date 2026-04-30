@@ -266,3 +266,17 @@ test('GET /api/audit-log rejette une plage de dates invalide', async () => {
     assert.match(JSON.stringify(res.json), /date/i);
   });
 });
+
+test('GET /api/audit-log rejette aussi une date calendrier impossible', async () => {
+  await withContext(async (ctx) => {
+    const fx = resetFixtures(ctx);
+
+    const res = await request(ctx, {
+      path: '/api/audit-log?date_debut=2026-02-30',
+      headers: makeAuthHeader(ctx, fx.admin),
+    });
+
+    assert.equal(res.status, 400);
+    assert.match(JSON.stringify(res.json), /Date calendrier invalide/i);
+  });
+});

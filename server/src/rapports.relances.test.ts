@@ -486,6 +486,30 @@ test('GET /api/rapports/relances exporte en XLSX et PDF, archive et trace l’au
   });
 });
 
+test('GET /api/rapports/relances exporte aussi un PDF vide quand aucun évènement ne correspond aux filtres', async () => {
+  await withRelancesTestContext(async (ctx) => {
+    const fx = resetFixtures(ctx);
+
+    const res = await requestReport(ctx, {
+      path: '/api/rapports/relances?date_debut=2025-01-01&date_fin=2025-01-31&format=pdf',
+      headers: makeAuthHeader(ctx, fx.gestionnaire),
+    });
+
+    assert.equal(res.status, 200);
+    assert.match(res.contentType, /application\/pdf/);
+    assert.match(res.disposition, /suivi-relances-2025-01-01_2025-01-31\.pdf/);
+    assert.equal(res.buffer.subarray(0, 4).toString('utf8'), '%PDF');
+
+    const archive = ctx.db.prepare(
+      `SELECT annee, titres_count, total_montant FROM rapports_exports WHERE type_rapport = 'suivi_relances' ORDER BY id DESC LIMIT 1`,
+    ).get() as { annee: number; titres_count: number; total_montant: number } | undefined;
+    assert.ok(archive);
+    assert.equal(archive?.annee, 2025);
+    assert.equal(archive?.titres_count, 0);
+    assert.equal(archive?.total_montant, 0);
+  });
+});
+
 test('GET /api/rapports/relances nettoie le fichier archivé si la persistance SQL échoue', async () => {
   await withRelancesTestContext(async (ctx) => {
     const fx = resetFixtures(ctx);
