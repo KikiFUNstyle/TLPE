@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import express from 'express';
 import request from 'supertest';
 import { db, initSchema } from './db';
@@ -377,6 +379,54 @@ test('routes coverage smoke: assujettis couvrent CRUD, enrichissement SIRENE, im
     .delete('/api/assujettis/999999')
     .set(authHeader(fx.admin));
   assert.equal(missingDelete.status, 404);
+
+  cacheApiEntrepriseRecord({ siret: '55210055400021', raisonSociale: 'Cache Delta', expiresInDays: 15 });
+  const createdFromCache = await request(app)
+    .post('/api/assujettis')
+    .set(authHeader(fx.admin))
+    .send({
+      raison_sociale: 'Placeholder cache',
+      siret: '55210055400021',
+      portail_actif: true,
+      statut: 'actif',
+    });
+  assert.equal(createdFromCache.status, 201);
+  assert.equal(createdFromCache.body.sirene_status, 'cache');
+  const cachedCreatedRow = db.prepare(
+    'SELECT raison_sociale, forme_juridique, adresse_rue, adresse_cp, adresse_ville FROM assujettis WHERE id = ?',
+  ).get(Number(createdFromCache.body.id)) as {
+    raison_sociale: string;
+    forme_juridique: string | null;
+    adresse_rue: string | null;
+    adresse_cp: string | null;
+    adresse_ville: string | null;
+  };
+  assert.equal(cachedCreatedRow.raison_sociale, 'Cache Delta');
+  assert.equal(cachedCreatedRow.forme_juridique, 'SARL');
+  assert.equal(cachedCreatedRow.adresse_rue, '1 rue API');
+  assert.equal(cachedCreatedRow.adresse_cp, '75001');
+  assert.equal(cachedCreatedRow.adresse_ville, 'Paris');
+
+  cacheApiEntrepriseRecord({ siret: '73282932000017', estRadie: true, raisonSociale: 'Import Radié SARL' });
+  const radiatedImportCsv = encodeCsvBase64([
+    'identifiant_tlpe,raison_sociale,siret,email,portail_actif,statut',
+    'TLPE-2026-00992,Import Radié,73282932000017,radie@example.test,oui,actif',
+  ]);
+  const previewRadiatedImport = await request(app)
+    .post('/api/assujettis/import')
+    .set(authHeader(fx.admin))
+    .send({ fileName: 'assujettis.csv', contentBase64: radiatedImportCsv, mode: 'preview' });
+  assert.equal(previewRadiatedImport.status, 200);
+  assert.equal(previewRadiatedImport.body.valid, 0);
+  assert.equal(previewRadiatedImport.body.rejected, 1);
+  assert.match(JSON.stringify(previewRadiatedImport.body.anomalies), /radié/i);
+
+  const skipRadiatedImport = await request(app)
+    .post('/api/assujettis/import')
+    .set(authHeader(fx.admin))
+    .send({ fileName: 'assujettis.csv', contentBase64: radiatedImportCsv, mode: 'commit', onError: 'skip' });
+  assert.equal(skipRadiatedImport.status, 400);
+  assert.match(String(skipRadiatedImport.body.error ?? ''), /Aucune ligne valide/i);
 });
 
 test('routes coverage smoke: dashboard, simulateur, geocoding et référentiels répondent sur les cas clés', async () => {
@@ -468,6 +518,19 @@ test('routes coverage smoke: dashboard, simulateur, geocoding et référentiels 
   const zonesGeojsonRes = await request(app).get('/api/referentiels/zones/geojson').set(authHeader(fx.admin));
   assert.equal(zonesGeojsonRes.status, 200);
   assert.equal(zonesGeojsonRes.body.type, 'FeatureCollection');
+
+  db.prepare('UPDATE zones SET geometry = ? WHERE id = ?').run(
+    JSON.stringify({
+      type: 'Polygon',
+      coordinates: [[[2.3, 48.3], [2.4, 48.3], [2.4, 48.4], [2.3, 48.4], [2.3, 48.3]]],
+    }),
+    fx.zoneId,
+  );
+  const zonesGeojsonWithGeometry = await request(app).get('/api/referentiels/zones/geojson').set(authHeader(fx.admin));
+  assert.equal(zonesGeojsonWithGeometry.status, 200);
+  assert.equal(zonesGeojsonWithGeometry.body.features.length, 1);
+  assert.equal(zonesGeojsonWithGeometry.body.features[0].properties.code, 'Z1');
+  assert.equal(zonesGeojsonWithGeometry.body.features[0].geometry.type, 'Polygon');
 
   const typesRes = await request(app).get('/api/referentiels/types').set(authHeader(fx.admin));
   assert.equal(typesRes.status, 200);
@@ -740,6 +803,13 @@ test('routes coverage smoke: dispositifs et déclarations couvrent les parcours 
     });
   assert.equal(invalidImportDecode.status, 400);
 
+  const importTemplate = await request(app)
+    .get('/api/dispositifs/import/template')
+    .set(authHeader(fx.admin));
+  assert.equal(importTemplate.status, 200);
+  assert.match(String(importTemplate.headers['content-type'] ?? ''), /text\/csv/);
+  assert.match(String(importTemplate.headers['content-disposition'] ?? ''), /dispositifs-template\.csv/);
+
   const validImportCsv = encodeCsvBase64([
     'identifiant_assujetti,type_code,adresse,lat,lon,surface,faces,date_pose,zone_code,statut',
     'TLPE-ROUTES-001,ENS,3 rue du Test,48.857,2.353,8,1,2026-01-10,Z1,declare',
@@ -824,6 +894,32 @@ test('routes coverage smoke: dispositifs et déclarations couvrent les parcours 
   assert.equal(created.status, 201);
   const createdId = Number(created.body.id);
 
+  db.prepare('UPDATE zones SET geometry = ? WHERE id = ?').run(
+    JSON.stringify({
+      type: 'Polygon',
+      coordinates: [[[2.34, 48.85], [2.36, 48.85], [2.36, 48.87], [2.34, 48.87], [2.34, 48.85]]],
+    }),
+    fx.zoneId,
+  );
+  const autoZoned = await request(app)
+    .post('/api/dispositifs')
+    .set(authHeader(fx.admin))
+    .send({
+      assujetti_id: fx.contribuableAssujettiId,
+      type_id: fx.typeId,
+      adresse_rue: '3 rue auto-zone',
+      adresse_cp: '75003',
+      adresse_ville: 'Paris',
+      latitude: 48.8566,
+      longitude: 2.3522,
+      auto_zone: true,
+      surface: 9,
+      nombre_faces: 1,
+    });
+  assert.equal(autoZoned.status, 201);
+  const autoZonedRow = db.prepare('SELECT zone_id FROM dispositifs WHERE id = ?').get(Number(autoZoned.body.id)) as { zone_id: number | null };
+  assert.equal(autoZonedRow.zone_id, fx.zoneId);
+
   const detail = await request(app).get(`/api/dispositifs/${createdId}`).set(authHeader(fx.contribuable));
   assert.equal(detail.status, 200);
   assert.equal(detail.body.identifiant, created.body.identifiant);
@@ -857,6 +953,24 @@ test('routes coverage smoke: dispositifs et déclarations couvrent les parcours 
       statut: 'controle',
     });
   assert.equal(updated.status, 200);
+
+  const invalidUpdateDates = await request(app)
+    .put(`/api/dispositifs/${createdId}`)
+    .set(authHeader(fx.admin))
+    .send({
+      assujetti_id: fx.contribuableAssujettiId,
+      type_id: fx.typeId,
+      zone_id: fx.zoneId,
+      adresse_rue: '2 rue des Tests',
+      adresse_cp: '75002',
+      adresse_ville: 'Paris',
+      surface: 15,
+      nombre_faces: 2,
+      date_pose: '2026-12-31',
+      date_depose: '2026-01-01',
+      statut: 'controle',
+    });
+  assert.equal(invalidUpdateDates.status, 400);
 
   const missingUpdate = await request(app)
     .put('/api/dispositifs/999999')
@@ -919,6 +1033,35 @@ test('routes coverage smoke: dispositifs et déclarations couvrent les parcours 
     .send([{ dispositif_id: fx.dispositifId, surface_declaree: 10, nombre_faces: 1, quote_part: 1 }]);
   assert.equal(missingDeclarationLines.status, 404);
 
+  const successfulDeclarationLines = await request(app)
+    .put(`/api/declarations/${fx.declarationId}/lignes`)
+    .set(authHeader(fx.contribuable))
+    .send([
+      {
+        dispositif_id: fx.dispositifId,
+        surface_declaree: 11.5,
+        nombre_faces: 2,
+        quote_part: 1,
+        date_pose: '2026-02-01',
+        date_depose: null,
+      },
+    ]);
+  assert.equal(successfulDeclarationLines.status, 200);
+  const updatedLine = db.prepare(
+    'SELECT surface_declaree, nombre_faces, quote_part, date_pose, date_depose FROM lignes_declaration WHERE declaration_id = ?',
+  ).get(fx.declarationId) as {
+    surface_declaree: number;
+    nombre_faces: number;
+    quote_part: number;
+    date_pose: string | null;
+    date_depose: string | null;
+  };
+  assert.equal(updatedLine.surface_declaree, 11.5);
+  assert.equal(updatedLine.nombre_faces, 2);
+  assert.equal(updatedLine.quote_part, 1);
+  assert.equal(updatedLine.date_pose, '2026-02-01');
+  assert.equal(updatedLine.date_depose, null);
+
   const forbiddenDeclarationLines = await request(app)
     .put(`/api/declarations/${fx.declarationId}/lignes`)
     .set(authHeader({ ...fx.contribuable, assujetti_id: fx.otherAssujettiId, email: 'other-lines@tlpe.local' }))
@@ -937,6 +1080,29 @@ test('routes coverage smoke: dispositifs et déclarations couvrent les parcours 
     .get(`/api/declarations/${fx.declarationId}/receipt/pdf`)
     .set(authHeader(fx.contribuable));
   assert.equal(missingReceipt.status, 404);
+
+  const receiptsDataRoot = path.resolve(__dirname, '..', 'data');
+  const receiptRelativePath = 'receipts/test-routes-coverage.pdf';
+  fs.mkdirSync(path.join(receiptsDataRoot, 'receipts'), { recursive: true });
+  fs.writeFileSync(path.join(receiptsDataRoot, receiptRelativePath), Buffer.from('%PDF-1.4\nroute coverage\n', 'utf8'));
+  db.prepare(
+    `INSERT INTO declaration_receipts (
+      declaration_id, verification_token, payload_hash, pdf_path, generated_by, generated_at, email_status, email_error, email_sent_at
+    ) VALUES (?, 'receipt-ok', 'hash-ok', ?, ?, datetime('now'), 'envoye', NULL, datetime('now'))`,
+  ).run(fx.declarationId, receiptRelativePath, fx.admin.id);
+
+  const publicVerify = await request(app).get('/api/declarations/receipt/verify/receipt-ok');
+  assert.equal(publicVerify.status, 200);
+  assert.equal(publicVerify.body.verified, true);
+  assert.equal(publicVerify.body.numero, 'DEC-ROUTES-2026-000001');
+
+  const successfulReceipt = await request(app)
+    .get(`/api/declarations/${fx.declarationId}/receipt/pdf`)
+    .set(authHeader(fx.contribuable));
+  assert.equal(successfulReceipt.status, 200);
+  assert.match(String(successfulReceipt.headers['content-type'] ?? ''), /application\/pdf/);
+  assert.match(String(successfulReceipt.headers['content-disposition'] ?? ''), /accuse-DEC-ROUTES-2026-000001-test-routes-coverage\.pdf/);
+  db.prepare('DELETE FROM declaration_receipts WHERE declaration_id = ?').run(fx.declarationId);
 
   db.prepare(
     `INSERT INTO declaration_receipts (declaration_id, verification_token, payload_hash, pdf_path, generated_by, generated_at)

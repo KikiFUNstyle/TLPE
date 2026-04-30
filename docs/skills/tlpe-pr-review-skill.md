@@ -277,6 +277,8 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
 - Vérifier qu'une US "coverage" n'est pas considérée livrée tant que la **commande réellement annoncée** (`npm run test:coverage`, `vitest --coverage`, etc.) passe effectivement en local/CI avec les seuils configurés ; un simple ajout de tests ou d'un seuil théorique ne suffit pas.
 - Vérifier qu'une config Vitest `coverageThreshold` ne cible pas implicitement un sous-ensemble trompeur du code (ex. une seule glob `*.rtl.test.tsx` ou un include trop étroit) sans justification explicite dans la doc/PR.
 - Vérifier qu'un workflow CI dédié publie bien les artefacts de couverture attendus même en cas d'échec des seuils, afin de diagnostiquer les zones non couvertes au lieu de perdre le rapport.
+- Pour toute PR orientée "hausse de couverture", vérifier que les nouveaux tests ciblent **les hotspots réellement montrés par `coverage-summary.json` / `lcov.info`** (branches manquantes, fichiers les plus bas) et pas seulement des cas faciles dans des zones déjà vertes.
+- Pour toute route d’export/rapport encore peu couverte, chercher explicitement des branches de repli et états vides : libellés de catégories/statuts rares, agrégats `sans zone`, valeurs fallback (`SIRET`/adresse/dispositifs absents), et export PDF/XLSX d’un jeu vide ou sans alerte ; exiger des tests dédiés si ces branches restent rouges.
 
 ## Format de sortie review
 

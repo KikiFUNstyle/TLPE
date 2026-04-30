@@ -421,6 +421,80 @@ test('GET /api/rapports/role?annee=2026&format=xlsx exporte le role TLPE detaill
   });
 });
 
+test('GET /api/rapports/role applique aussi les valeurs de repli SIRET/adresse/dispositifs pour les titres incomplets', async () => {
+  await withRoleTestContext(async (ctx) => {
+    const fx = resetFixtures(ctx);
+
+    const sparseAssujettiId = Number(
+      ctx.db
+        .prepare(`INSERT INTO assujettis (identifiant_tlpe, raison_sociale, statut) VALUES ('TLPE-R-003', 'Gamma Sans Adresse', 'actif')`)
+        .run().lastInsertRowid,
+    );
+    const sparseDeclarationId = Number(
+      ctx.db
+        .prepare(
+          `INSERT INTO declarations (numero, assujetti_id, annee, statut, montant_total)
+           VALUES ('DEC-ROLE-2027-001', ?, 2027, 'validee', 99.9)`,
+        )
+        .run(sparseAssujettiId).lastInsertRowid,
+    );
+    ctx.db
+      .prepare(
+        `INSERT INTO titres (numero, declaration_id, assujetti_id, annee, montant, montant_paye, date_emission, date_echeance, statut)
+         VALUES ('TIT-2027-000001', ?, ?, 2027, 99.9, 0, '2027-04-01', '2027-08-31', 'emis')`,
+      )
+      .run(sparseDeclarationId, sparseAssujettiId);
+
+    const xlsx = await requestBinary(ctx, {
+      method: 'GET',
+      path: '/api/rapports/role?annee=2027&format=xlsx',
+      headers: makeAuthHeader(ctx, fx.financier),
+    });
+    assert.equal(xlsx.status, 200);
+
+    const workbook = XLSX.read(xlsx.buffer, { type: 'buffer' });
+    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1, raw: false }) as Array<Array<string | number>>;
+    assert.equal(String(rows[6][0]), 'TIT-2027-000001');
+    assert.equal(String(rows[6][1]), 'Gamma Sans Adresse');
+    assert.equal(String(rows[6][2]), '');
+    assert.equal(String(rows[6][3]), '');
+    assert.equal(String(rows[6][4]), 'Aucun dispositif rattache');
+
+    const pdf = await requestBinary(ctx, {
+      method: 'GET',
+      path: '/api/rapports/role?annee=2027&format=pdf',
+      headers: makeAuthHeader(ctx, fx.financier),
+    });
+    assert.equal(pdf.status, 200);
+    assert.match(pdf.headers.contentType, /application\/pdf/);
+    assert.equal(pdf.buffer.subarray(0, 4).toString('utf8'), '%PDF');
+  });
+});
+
+test('GET /api/rapports/role exporte proprement un exercice sans titre', async () => {
+  await withRoleTestContext(async (ctx) => {
+    const fx = resetFixtures(ctx);
+
+    const res = await requestBinary(ctx, {
+      method: 'GET',
+      path: '/api/rapports/role?annee=2030&format=pdf',
+      headers: makeAuthHeader(ctx, fx.financier),
+    });
+
+    assert.equal(res.status, 200);
+    assert.match(res.headers.contentType, /application\/pdf/);
+    assert.match(res.headers.disposition, /role-tlpe-2030\.pdf/);
+    assert.equal(res.buffer.subarray(0, 4).toString('utf8'), '%PDF');
+
+    const archive = ctx.db.prepare(
+      `SELECT titres_count, total_montant FROM rapports_exports WHERE type_rapport = 'role_tlpe' AND annee = 2030 ORDER BY id DESC LIMIT 1`,
+    ).get() as { titres_count: number; total_montant: number } | undefined;
+    assert.ok(archive);
+    assert.equal(archive?.titres_count, 0);
+    assert.equal(archive?.total_montant, 0);
+  });
+});
+
 test('GET /api/rapports/role?annee=2026&format=pdf retourne un PDF et refuse le role contribuable', async () => {
   await withRoleTestContext(async (ctx) => {
     const fx = resetFixtures(ctx);
