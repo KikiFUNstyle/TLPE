@@ -269,6 +269,11 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
 - Vérifier que la route de login gère un état intermédiaire `requires_two_factor` typé explicitement côté TypeScript pour éviter les régressions de build (`union` discriminée / type guard) quand le backend peut renvoyer soit un JWT, soit un challenge 2FA.
 - Vérifier que les messages d'erreur/confirmation 2FA sont exploitables côté utilisateur (activation, désactivation, fallback presse-papiers indisponible) et qu'aucune action sensible ne dépend uniquement d'une copie automatique dans le clipboard.
 
+### 19) Couverture de tests & CI (appris sur US10.5)
+- Vérifier qu'une US "coverage" n'est pas considérée livrée tant que la **commande réellement annoncée** (`npm run test:coverage`, `vitest --coverage`, etc.) passe effectivement en local/CI avec les seuils configurés ; un simple ajout de tests ou d'un seuil théorique ne suffit pas.
+- Vérifier qu'une config Vitest `coverageThreshold` ne cible pas implicitement un sous-ensemble trompeur du code (ex. une seule glob `*.rtl.test.tsx` ou un include trop étroit) sans justification explicite dans la doc/PR.
+- Vérifier qu'un workflow CI dédié publie bien les artefacts de couverture attendus même en cas d'échec des seuils, afin de diagnostiquer les zones non couvertes au lieu de perdre le rapport.
+
 ## Format de sortie review
 
 1. **Résumé**

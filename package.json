@@ -16,7 +16,10 @@
     "start": "npm run start --workspace=server",
     "seed": "npm run seed --workspace=server",
     "test": "npm run test --workspace=server",
-    "test:all": "npm run test --workspace=server && npm run test --workspace=client"
+    "test:all": "npm run test --workspace=server && npm run test --workspace=client",
+    "test:coverage:server": "rm -rf coverage/server && npx --yes c8 --report-dir coverage/server --reporter=text-summary --reporter=json-summary npm run test --workspace=server",
+    "test:coverage:client": "npm run test:vitest:coverage --workspace=client",
+    "test:coverage": "npm run test:coverage:server && npm run test:coverage:client"
   },
   "devDependencies": {
     "concurrently": "^8.2.2"

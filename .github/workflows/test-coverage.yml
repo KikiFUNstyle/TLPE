@@ -1,0 +1,93 @@
+name: test-coverage
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build workspaces
+        run: npm run build
+
+      - name: Backend coverage (c8)
+        id: backend_coverage
+        run: npm run test:coverage:server
+
+      - name: Frontend coverage (Vitest auth/2FA scope)
+        id: frontend_coverage
+        run: npm run test:coverage:client
+
+      - name: Publish coverage summary
+        if: always()
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const path = require('path');
+
+          const summaryPath = process.env.GITHUB_STEP_SUMMARY;
+          if (!summaryPath) {
+            process.exit(0);
+          }
+
+          const readTotal = (relativePath) => {
+            const filePath = path.join(process.cwd(), relativePath);
+            if (!fs.existsSync(filePath)) {
+              return null;
+            }
+            const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+            return data.total ?? null;
+          };
+
+          const fmt = (total, key) => {
+            if (!total || !total[key] || total[key].pct === undefined || total[key].pct === null) {
+              return 'n/a';
+            }
+            return `${total[key].pct}%`;
+          };
+
+          const backendTotal = readTotal(path.join('coverage', 'server', 'coverage-summary.json'));
+          const frontendTotal = readTotal(path.join('coverage', 'client', 'coverage-summary.json'));
+
+          const lines = [
+            '# Coverage summary',
+            '',
+            '| Scope | Statements | Branches | Functions | Lines |',
+            '| --- | ---: | ---: | ---: | ---: |',
+            `| Backend (\`coverage/server\`) | ${fmt(backendTotal, 'statements')} | ${fmt(backendTotal, 'branches')} | ${fmt(backendTotal, 'functions')} | ${fmt(backendTotal, 'lines')} |`,
+            `| Frontend ciblé auth/2FA (\`coverage/client\`) | ${fmt(frontendTotal, 'statements')} | ${fmt(frontendTotal, 'branches')} | ${fmt(frontendTotal, 'functions')} | ${fmt(frontendTotal, 'lines')} |`,
+            '',
+            '> Frontend note: this Vitest coverage is intentionally limited to the currently exercised RTL auth/2FA flows in `client/src/pages/Login.tsx` and `client/src/pages/AccountSettings.tsx`. It is not whole-frontend coverage.',
+            '',
+            '- Artifacts are uploaded even on failure for diagnosis.',
+            '- `npm run test:coverage` combines broad backend coverage with this targeted frontend scope; do not present it as a uniform monorepo frontend+backend percentage.',
+          ];
+
+          fs.appendFileSync(summaryPath, `${lines.join('\n')}\n`, 'utf8');
+          NODE
+
+      - name: Upload coverage artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-artifacts
+          path: |
+            coverage/server
+            coverage/client
+          if-no-files-found: warn
