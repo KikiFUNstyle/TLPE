@@ -112,6 +112,9 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
   - distinction explicite entre erreurs de validation utilisateur/parsing attendu (4xx avec message exploitable) et erreurs inattendues de persistance/runtime (5xx générique sans fuite de détails internes),
   - présence d'un test de non-régression couvrant au moins un cas 4xx métier et un cas 5xx interne masqué,
   - journalisation serveur des erreurs inattendues avant réponse 5xx.
+- Pour toute route destructive `DELETE` sur une entité encore référencée par des FKs métier, vérifier en review:
+  - conversion explicite des erreurs `FOREIGN KEY constraint failed` en réponse métier 409/4xx exploitable (jamais 500 brut),
+  - présence d'un test de non-régression couvrant la tentative de suppression encore référencée puis la suppression réussie après nettoyage métier.
 - Pour toute route d'export personnalisé / report builder (prévisualisation, export CSV/XLSX, sauvegarde de modèle), vérifier en review:
   - distinction stricte entre erreurs de configuration utilisateur (colonne inconnue, valeur numérique/booléenne invalide, filtre/tri incompatible) en 4xx et pannes internes SQLite/runtime en 5xx générique,
   - absence de fuite des messages internes (`disk I/O error`, stack, SQL) côté réponse API,
