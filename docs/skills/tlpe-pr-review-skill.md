@@ -257,6 +257,13 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
 
 ### 18) Double authentification TOTP portail contribuable (appris sur US9.1)
 - Vérifier qu'une US 2FA n'est pas considérée livrée si seuls les endpoints backend existent : exiger aussi un **point d'entrée UI réel** (menu/sidebar + route dédiée) vers l'écran paramètres du compte.
+- Pour toute US CI/sécurité type OWASP ZAP, vérifier explicitement en review :
+  - workflow dédié versionné sous `.github/workflows/security.yml` (ou nom équivalent clair) déclenché au minimum sur `pull_request` et `push` vers `main`,
+  - build complet de l'application avant scan puis démarrage réel en mode production avec smoke test bloquant (`/api/health`) avant exécution du scanner,
+  - publication des rapports ZAP HTML + JSON en artefacts GitHub Actions,
+  - seuils évalués explicitement après scan : `High|Medium` => alerte visible, blocage du déploiement prod sur `main` si `High` persiste, sans rendre les PRs inutilement rouges pour de simples `Medium`,
+  - fichier de faux positifs / exclusions versionné (`.zap/rules.tsv`) avec justification textuelle, jamais vide de sens implicite,
+  - arrêt propre du processus applicatif lancé pour le scan même en cas d'échec (`if: always()`).
 - Vérifier que l'écran frontend expose bien tout le parcours métier demandé : génération du QR code, secret manuel de secours, activation par code TOTP, affichage des 10 codes de récupération et désactivation confirmée par code.
 - Vérifier qu'au moins un test frontend couvre le wiring UI principal (présence de la route/entrée de navigation et rendu du panneau 2FA) ; des helpers/test unitaires isolés côté auth ne suffisent pas.
 - Vérifier que la route de login gère un état intermédiaire `requires_two_factor` typé explicitement côté TypeScript pour éviter les régressions de build (`union` discriminée / type guard) quand le backend peut renvoyer soit un JWT, soit un challenge 2FA.
