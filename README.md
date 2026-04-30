@@ -378,6 +378,13 @@ Automatisation GitHub Actions :
   - backup quotidien à `01:17 UTC`,
   - drill de restauration mensuel le 1er du mois à `02:33 UTC`,
   - mode manuel `workflow_dispatch` (`backup` ou `restore-test`).
+- `.github/workflows/security.yml`
+  - build systématique de l'application avant scan,
+  - démarrage de TLPE en mode production puis smoke test `GET /api/health`,
+  - scan OWASP ZAP baseline sur `http://127.0.0.1:4000`,
+  - publication des rapports `report_html.html`, `report_json.json` et `report_md.md` comme artefacts,
+  - alerte GitHub Actions si findings `High` ou `Medium`, blocage du pipeline `push` sur `main` uniquement si des findings `High` persistent,
+  - gestion centralisée des faux positifs / exclusions qualifiés dans `.zap/rules.tsv`.
 
 Procédure manuelle de restauration :
 
