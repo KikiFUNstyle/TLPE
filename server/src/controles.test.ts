@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
+import XLSX from 'xlsx';
 import { db, initSchema } from './db';
 import { hashPassword, signToken, type AuthUser } from './auth';
 import { controlesRouter } from './routes/controles';
@@ -44,11 +45,13 @@ async function request(params: {
       body: params.body ? JSON.stringify(params.body) : undefined,
     });
     const contentType = res.headers.get('content-type') || '';
-    const text = await res.text();
+    const bodyBuffer = Buffer.from(await res.arrayBuffer());
+    const text = bodyBuffer.toString('utf8');
     return {
       status: res.status,
       contentType,
       text,
+      bodyBuffer,
       contentDisposition: res.headers.get('content-disposition'),
       generatedAt: res.headers.get('x-tlpe-generated-at'),
       contentHash: res.headers.get('x-tlpe-content-hash'),
@@ -432,6 +435,123 @@ test('POST /api/controles retourne 400 quand la création de dispositif référe
   assert.match(String((response.data as { error: string }).error), /assujetti|type|zone|référentiel|referentiel/i);
 });
 
+test('POST /api/controles rejette les payloads ambigus, les anomalies sans description et les dispositifs inexistants', async () => {
+  const fx = resetFixtures();
+
+  const ambiguous = await request({
+    method: 'POST',
+    path: '/api/controles',
+    headers: makeAuthHeader(fx.controleur),
+    body: {
+      dispositif_id: fx.dispositifId,
+      date_controle: '2026-05-13',
+      latitude: 48.857,
+      longitude: 2.353,
+      surface_mesuree: 6,
+      nombre_faces_mesurees: 1,
+      ecart_detecte: true,
+      ecart_description: 'Payload ambigu',
+      statut: 'saisi',
+      create_dispositif: {
+        assujetti_id: fx.assujettiId,
+        type_id: fx.typeId,
+        zone_id: fx.zoneId,
+        surface: 6,
+        nombre_faces: 1,
+      },
+    },
+  });
+  assert.equal(ambiguous.status, 400);
+  assert.match(String((ambiguous.data as { error: string }).error), /Choisissez soit/i);
+
+  const missingDescription = await request({
+    method: 'POST',
+    path: '/api/controles',
+    headers: makeAuthHeader(fx.controleur),
+    body: {
+      dispositif_id: fx.dispositifId,
+      date_controle: '2026-05-13',
+      latitude: 48.857,
+      longitude: 2.353,
+      surface_mesuree: 6,
+      nombre_faces_mesurees: 1,
+      ecart_detecte: true,
+      ecart_description: '   ',
+      statut: 'saisi',
+    },
+  });
+  assert.equal(missingDescription.status, 400);
+  assert.match(String((missingDescription.data as { error: string }).error), /description de l’écart/i);
+
+  const missingDispositif = await request({
+    method: 'POST',
+    path: '/api/controles',
+    headers: makeAuthHeader(fx.controleur),
+    body: {
+      dispositif_id: 999999,
+      date_controle: '2026-05-13',
+      latitude: 48.857,
+      longitude: 2.353,
+      surface_mesuree: 6,
+      nombre_faces_mesurees: 1,
+      ecart_detecte: false,
+      statut: 'saisi',
+    },
+  });
+  assert.equal(missingDispositif.status, 404);
+  assert.match(String((missingDispositif.data as { error: string }).error), /Dispositif introuvable/i);
+});
+
+test('POST /api/controles peut déduire la zone et les valeurs par défaut lors de la création d’un dispositif', async () => {
+  const fx = resetFixtures();
+
+  const importedZone = await request({
+    method: 'POST',
+    path: '/api/controles',
+    headers: makeAuthHeader(fx.controleur),
+    body: {
+      date_controle: '2026-05-13',
+      latitude: 48.857,
+      longitude: 2.353,
+      surface_mesuree: 5,
+      nombre_faces_mesurees: 1,
+      ecart_detecte: true,
+      ecart_description: 'Dispositif créé avec zone calculée',
+      statut: 'saisi',
+      create_dispositif: {
+        assujetti_id: fx.assujettiId,
+        type_id: fx.typeId,
+        latitude: 48.2,
+        longitude: 2.2,
+        surface: 5,
+      },
+    },
+  });
+
+  assert.equal(importedZone.status, 201);
+  const createdBody = importedZone.data as { dispositif_id: number };
+  const createdDispositif = db.prepare(
+    `SELECT zone_id, statut, notes, adresse_rue, adresse_cp, adresse_ville, nombre_faces
+     FROM dispositifs WHERE id = ?`,
+  ).get(createdBody.dispositif_id) as {
+    zone_id: number | null;
+    statut: string;
+    notes: string | null;
+    adresse_rue: string | null;
+    adresse_cp: string | null;
+    adresse_ville: string | null;
+    nombre_faces: number;
+  } | undefined;
+  assert.ok(createdDispositif);
+  assert.equal(createdDispositif?.zone_id, null);
+  assert.equal(createdDispositif?.statut, 'controle');
+  assert.equal(createdDispositif?.notes, 'Créé depuis un constat terrain');
+  assert.equal(createdDispositif?.adresse_rue, null);
+  assert.equal(createdDispositif?.adresse_cp, null);
+  assert.equal(createdDispositif?.adresse_ville, null);
+  assert.equal(createdDispositif?.nombre_faces, 1);
+});
+
 test('POST /api/pieces-jointes refuse au contrôleur les PDF sur une entité contrôle', async () => {
   const fx = resetFixtures();
 
@@ -599,6 +719,95 @@ test('POST /api/controles/report refuse un constat non clôturé', async () => {
 
   assert.equal(report.status, 409);
   assert.match(String((report.data as { error: string }).error), /clôtur/i);
+});
+
+test('POST /api/controles/report valide les erreurs de payload, l’absence de contrôles et l’export XLSX', async () => {
+  const fx = resetFixtures();
+
+  const invalidPayload = await request({
+    method: 'POST',
+    path: '/api/controles/report',
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: { controle_ids: [], format: 'pdf' },
+  });
+  assert.equal(invalidPayload.status, 400);
+
+  const missingRows = await request({
+    method: 'POST',
+    path: '/api/controles/report',
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: { controle_ids: [999999], format: 'pdf' },
+  });
+  assert.equal(missingRows.status, 404);
+  assert.match(String((missingRows.data as { error: string }).error), /Aucun contrôle trouvé/i);
+
+  const created = await request({
+    method: 'POST',
+    path: '/api/controles',
+    headers: makeAuthHeader(fx.controleur),
+    body: {
+      dispositif_id: fx.dispositifId,
+      date_controle: '2026-05-14',
+      latitude: 48.8566,
+      longitude: 2.3522,
+      surface_mesuree: 16,
+      nombre_faces_mesurees: 3,
+      ecart_detecte: true,
+      ecart_description: 'Export XLSX attendu',
+      statut: 'cloture',
+    },
+  });
+  assert.equal(created.status, 201);
+  const controleId = (created.data as { id: number }).id;
+
+  const report = await request({
+    method: 'POST',
+    path: '/api/controles/report',
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      controle_ids: [controleId],
+      format: 'xlsx',
+    },
+  });
+
+  assert.equal(report.status, 200);
+  assert.match(report.contentType, /spreadsheetml/);
+  assert.match(report.contentDisposition ?? '', /rapport-controles-2026-05-14\.xlsx/);
+  assert.equal(report.generatedAt, '2026-05-14');
+  assert.match(report.contentHash ?? '', /^[a-f0-9]{64}$/);
+
+  const workbook = XLSX.read(report.bodyBuffer, { type: 'buffer' });
+  const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1, raw: false }) as Array<Array<string | number>>;
+  assert.deepEqual(rows[0], [
+    'Controle ID',
+    'Date',
+    'Assujetti',
+    'Dispositif',
+    'Type',
+    'Surface declaree',
+    'Surface mesuree',
+    'Faces declarees',
+    'Faces mesurees',
+    'Taxe declaree',
+    'Taxe mesuree',
+    'Delta taxe',
+    'Ecart detecte',
+    'Description',
+  ]);
+  assert.equal(String(rows[1][1]), '2026-05-14');
+  assert.equal(String(rows[1][2]), 'Alpha Controle');
+  assert.equal(String(rows[1][3]), 'DSP-CTRL-001');
+  assert.equal(String(rows[1][12]), 'oui');
+
+  const audit = db.prepare(
+    `SELECT details FROM audit_log WHERE action = 'export-rapport-controle' ORDER BY id DESC LIMIT 1`,
+  ).get() as { details: string } | undefined;
+  assert.ok(audit);
+  const details = JSON.parse(audit!.details) as { format: string; count: number; generated_at: string; content_hash: string };
+  assert.equal(details.format, 'xlsx');
+  assert.equal(details.count, 1);
+  assert.equal(details.generated_at, '2026-05-14');
+  assert.equal(details.content_hash, report.contentHash);
 });
 
 test('POST /api/controles/proposer-rectification crée une déclaration d’office à partir des écarts sélectionnés', async () => {
@@ -780,4 +989,65 @@ test('POST /api/controles/lancer-redressement ouvre un contentieux de contrôle 
   assert.equal(timeline.length, 1);
   assert.equal(timeline[0].type, 'ouverture');
   assert.match(timeline[0].description, /Contrôles source : #/);
+});
+
+test('POST /api/controles/proposer-rectification et /lancer-redressement valident les payloads et les cas sans anomalie', async () => {
+  const fx = resetFixtures();
+
+  const invalidRectification = await request({
+    method: 'POST',
+    path: '/api/controles/proposer-rectification',
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: { controle_ids: [], mode: 'declaration_office' },
+  });
+  assert.equal(invalidRectification.status, 400);
+
+  const invalidRedressement = await request({
+    method: 'POST',
+    path: '/api/controles/lancer-redressement',
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: { controle_ids: [] },
+  });
+  assert.equal(invalidRedressement.status, 400);
+
+  const noAnomaly = await request({
+    method: 'POST',
+    path: '/api/controles',
+    headers: makeAuthHeader(fx.controleur),
+    body: {
+      dispositif_id: fx.dispositifId,
+      date_controle: '2026-05-15',
+      latitude: 48.8566,
+      longitude: 2.3522,
+      surface_mesuree: 12,
+      nombre_faces_mesurees: 2,
+      ecart_detecte: false,
+      statut: 'cloture',
+    },
+  });
+  assert.equal(noAnomaly.status, 201);
+  const controleId = (noAnomaly.data as { id: number }).id;
+
+  const rectificationWithoutAnomaly = await request({
+    method: 'POST',
+    path: '/api/controles/proposer-rectification',
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      controle_ids: [controleId],
+      mode: 'declaration_office',
+    },
+  });
+  assert.equal(rectificationWithoutAnomaly.status, 400);
+  assert.match(String((rectificationWithoutAnomaly.data as { error: string }).error), /au moins un contrôle avec anomalie/i);
+
+  const redressementWithoutAnomaly = await request({
+    method: 'POST',
+    path: '/api/controles/lancer-redressement',
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      controle_ids: [controleId],
+    },
+  });
+  assert.equal(redressementWithoutAnomaly.status, 400);
+  assert.match(String((redressementWithoutAnomaly.data as { error: string }).error), /au moins un contrôle avec anomalie/i);
 });

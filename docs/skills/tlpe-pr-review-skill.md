@@ -55,6 +55,7 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
 - Pour tout parseur MT940/format bancaire, vérifier que les références métier sont préservées même sans séparateur `//` et que le code type (`NTRF`, `NMSC`, etc.) n'est pas restitué comme référence client.
 - Pour toute liste UI de doublons/aperçus importés, vérifier une clé React réellement unique et stable (`transaction_id` seul est insuffisant si la vue affiche plusieurs doublons du même identifiant).
 - Pour toute US avec document généré (PDF, accusé, courrier), ajouter un test API qui valide la présence des métadonnées de restitution (`token/hash/download_url`) et un test service qui vérifie la persistance + réutilisation idempotente.
+- Pour tout test d'export binaire (XLSX/PDF/XML) via `fetch`, lire la réponse en `arrayBuffer()` puis parser le `Buffer` brut ; ne pas reconstruire le binaire depuis `response.text()` sous peine de corrompre l'archive et de masquer un faux échec de test.
 - Pour toute assertion de sécurité sur un PDF généré, ne jamais se contenter d'un `buffer.includes(...)` sur le binaire brut : vérifier la donnée avant rendu ou décompresser les flux PDF compressés pour éviter un faux positif.
 - Pour toute US de mise en demeure sur titres, vérifier explicitement en review :
   - route manuelle sécurisée (`POST /api/titres/:id/mise-en-demeure`) + route batch sécurisée (`POST /api/titres/mises-en-demeure/batch`),
