@@ -43,7 +43,7 @@ export interface NormalizedImportRow {
   email: string | null;
   telephone: string | null;
   portail_actif: number;
-  statut: 'actif' | 'inactif' | 'radie' | 'contentieux';
+  statut: 'actif' | 'inactif' | 'radie' | 'contentieux' | 'email_invalide';
   notes: string | null;
 }
 
@@ -99,10 +99,10 @@ function normalizeBoolean(value: string): number {
   return -1;
 }
 
-function normalizeStatut(value: string): 'actif' | 'inactif' | 'radie' | 'contentieux' | null {
+function normalizeStatut(value: string): 'actif' | 'inactif' | 'radie' | 'contentieux' | 'email_invalide' | null {
   const v = value.trim().toLowerCase();
   if (!v) return 'actif';
-  if (v === 'actif' || v === 'inactif' || v === 'radie' || v === 'contentieux') return v;
+  if (v === 'actif' || v === 'inactif' || v === 'radie' || v === 'contentieux' || v === 'email_invalide') return v;
   return null;
 }
 
@@ -247,7 +247,7 @@ export function validateImportRows(rows: RawImportRow[]): ValidationResult {
 
     const statut = normalizeStatut(row.statut || '');
     if (!statut) {
-      anomalies.push({ line: row.line, field: 'statut', message: 'Statut invalide (actif, inactif, radie, contentieux)' });
+      anomalies.push({ line: row.line, field: 'statut', message: 'Statut invalide (actif, inactif, radie, contentieux, email_invalide)' });
     }
 
     if (identifiant) {

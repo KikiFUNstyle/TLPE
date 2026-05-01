@@ -145,16 +145,18 @@ test('runRelancesDeclarations J-15 inclut un lien direct vers le formulaire dans
 
   const row = db
     .prepare(
-      `SELECT corps, relance_niveau
+      `SELECT corps, relance_niveau, tentatives, provider_message_id
        FROM notifications_email
        WHERE campagne_id = ?
        ORDER BY id DESC
        LIMIT 1`,
     )
-    .get(campagneId) as { corps: string; relance_niveau: string } | undefined;
+    .get(campagneId) as { corps: string; relance_niveau: string; tentatives: number; provider_message_id: string | null } | undefined;
 
   assert.ok(row);
   assert.equal(row?.relance_niveau, 'J-15');
+  assert.equal(row?.tentatives, 1);
+  assert.match(row?.provider_message_id ?? '', /^mock-success-/);
   assert.match(row!.corps, /\/declarations/);
 });
 

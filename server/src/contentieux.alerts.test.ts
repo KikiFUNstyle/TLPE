@@ -4,6 +4,8 @@ import { db, initSchema } from './db';
 import { createContentieuxDeadlineAlerts, listContentieuxDeadlineAlerts } from './contentieuxAlerts';
 import { getDashboardMetrics } from './dashboardMetrics';
 
+process.env.TLPE_EMAIL_DELIVERY_MODE = 'mock-success';
+
 function resetTables() {
   initSchema();
   db.pragma('foreign_keys = OFF');
@@ -131,7 +133,7 @@ test('createContentieuxDeadlineAlerts génère les alertes J-30/J-7, journalise 
 
   const notifRows = db
     .prepare(
-      `SELECT email_destinataire, template_code, relance_niveau, statut
+      `SELECT email_destinataire, template_code, relance_niveau, statut, tentatives, provider_message_id
        FROM notifications_email
        WHERE assujetti_id = ?
        ORDER BY id`,
@@ -141,25 +143,98 @@ test('createContentieuxDeadlineAlerts génère les alertes J-30/J-7, journalise 
       template_code: string;
       relance_niveau: string | null;
       statut: string;
+      tentatives: number;
+      provider_message_id: string | null;
     }>;
-  assert.deepEqual(notifRows, [
-    {
-      email_destinataire: 'gest-contentieux@example.test',
-      template_code: 'alerte_contentieux',
-      relance_niveau: 'J-30',
-      statut: 'envoye',
-    },
-    {
-      email_destinataire: 'gest-contentieux@example.test',
-      template_code: 'alerte_contentieux',
-      relance_niveau: 'J-7',
-      statut: 'envoye',
-    },
-  ]);
+  assert.equal(notifRows.length, 2);
+  assert.deepEqual(
+    notifRows.map((row) => ({
+      email_destinataire: row.email_destinataire,
+      template_code: row.template_code,
+      relance_niveau: row.relance_niveau,
+      statut: row.statut,
+      tentatives: row.tentatives,
+    })),
+    [
+      {
+        email_destinataire: 'gest-contentieux@example.test',
+        template_code: 'alerte_contentieux',
+        relance_niveau: 'J-30',
+        statut: 'envoye',
+        tentatives: 1,
+      },
+      {
+        email_destinataire: 'gest-contentieux@example.test',
+        template_code: 'alerte_contentieux',
+        relance_niveau: 'J-7',
+        statut: 'envoye',
+        tentatives: 1,
+      },
+    ],
+  );
+  assert.match(notifRows[0].provider_message_id ?? '', /^mock-success-/);
+  assert.match(notifRows[1].provider_message_id ?? '', /^mock-success-/);
 
   const auditCount = (db.prepare("SELECT COUNT(*) AS c FROM audit_log WHERE action = 'contentieux-deadline-alert'").get() as { c: number }).c;
   assert.equal(auditCount, 2);
   assert.ok(contentieuxId > 0);
+});
+
+test('createContentieuxDeadlineAlerts queue l’email en pending quand le worker SMTP asynchrone est actif', () => {
+  resetTables();
+  const previousMode = process.env.TLPE_EMAIL_DELIVERY_MODE;
+  const previousDevMode = process.env.TLPE_SMTP_DEV_MODE;
+  delete process.env.TLPE_EMAIL_DELIVERY_MODE;
+  process.env.TLPE_SMTP_DEV_MODE = 'log-only';
+
+  try {
+    const gestionnaireId = seedUser('gest-queued@example.test', 'gestionnaire');
+    const assujettiId = seedAssujetti('TLPE-CTX-QUEUE');
+
+    db.prepare(
+      `INSERT INTO contentieux (
+        numero, assujetti_id, type, montant_litige, description,
+        date_ouverture, date_limite_reponse, statut
+      ) VALUES ('CTX-QUEUE-1', ?, 'contentieux', 880, 'Recours file attente', '2026-01-15', '2026-07-15', 'ouvert')`,
+    ).run(assujettiId);
+
+    const run = createContentieuxDeadlineAlerts({ runDateIso: '2026-06-15', userId: gestionnaireId });
+    assert.equal(run.created, 1);
+    assert.equal(run.emailed, 0);
+
+    const alert = db
+      .prepare(
+        `SELECT email_status, email_error, email_notification_id
+         FROM contentieux_alerts
+         ORDER BY id DESC
+         LIMIT 1`,
+      )
+      .get() as { email_status: string; email_error: string | null; email_notification_id: number | null };
+    assert.equal(alert.email_status, 'pending');
+    assert.equal(alert.email_error, 'Envoi différé: service SMTP non configuré');
+    assert.ok((alert.email_notification_id ?? 0) > 0);
+
+    const notif = db
+      .prepare(
+        `SELECT statut, tentatives, provider_message_id
+         FROM notifications_email
+         WHERE id = ?`,
+      )
+      .get(alert.email_notification_id) as {
+        statut: string;
+        tentatives: number;
+        provider_message_id: string | null;
+      };
+    assert.equal(notif.statut, 'pending');
+    assert.equal(notif.tentatives, 0);
+    assert.equal(notif.provider_message_id, null);
+  } finally {
+    if (previousMode === undefined) delete process.env.TLPE_EMAIL_DELIVERY_MODE;
+    else process.env.TLPE_EMAIL_DELIVERY_MODE = previousMode;
+
+    if (previousDevMode === undefined) delete process.env.TLPE_SMTP_DEV_MODE;
+    else process.env.TLPE_SMTP_DEV_MODE = previousDevMode;
+  }
 });
 
 test('createContentieuxDeadlineAlerts signale les dossiers en dépassement et getDashboardMetrics les expose', () => {

@@ -1,8 +1,10 @@
 import { runEscaladeImpayes } from '../impayes';
 import { runRelancesDeclarations } from '../relances';
 import { createContentieuxDeadlineAlerts } from '../contentieuxAlerts';
+import { resolveEmailWorkerEnabled, resolveEmailWorkerIntervalMs, runPendingEmailNotificationsWorker } from '../services/mail';
 
 let timer: NodeJS.Timeout | null = null;
+let emailWorkerTimer: NodeJS.Timeout | null = null;
 
 function msUntilNextDailyRun(hour = 5, minute = 0): number {
   const now = new Date();
@@ -53,13 +55,42 @@ function scheduleNextDailyTick() {
   }, delay);
 }
 
+function scheduleEmailWorkerTick() {
+  const delay = resolveEmailWorkerIntervalMs();
+  emailWorkerTimer = setTimeout(async () => {
+    try {
+      const result = await runPendingEmailNotificationsWorker();
+      if (result.processed > 0) {
+        // eslint-disable-next-line no-console
+        console.log('[TLPE] Worker email execute', result);
+      }
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('[TLPE] Erreur worker email', error);
+    } finally {
+      if (emailWorkerTimer) {
+        scheduleEmailWorkerTick();
+      }
+    }
+  }, delay);
+}
+
 export function startRelancesScheduler() {
-  if (timer) return;
-  scheduleNextDailyTick();
+  if (!timer) {
+    scheduleNextDailyTick();
+  }
+  if (!emailWorkerTimer && resolveEmailWorkerEnabled()) {
+    scheduleEmailWorkerTick();
+  }
 }
 
 export function stopRelancesScheduler() {
-  if (!timer) return;
-  clearTimeout(timer);
-  timer = null;
+  if (timer) {
+    clearTimeout(timer);
+    timer = null;
+  }
+  if (emailWorkerTimer) {
+    clearTimeout(emailWorkerTimer);
+    emailWorkerTimer = null;
+  }
 }

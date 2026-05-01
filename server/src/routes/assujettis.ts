@@ -91,7 +91,7 @@ const assujettiSchema = z.object({
   email: z.string().email().optional().nullable().or(z.literal('')),
   telephone: z.string().optional().nullable(),
   portail_actif: z.boolean().optional(),
-  statut: z.enum(['actif', 'inactif', 'radie', 'contentieux']).optional(),
+  statut: z.enum(['actif', 'inactif', 'radie', 'contentieux', 'email_invalide']).optional(),
   notes: z.string().optional().nullable(),
 });
 

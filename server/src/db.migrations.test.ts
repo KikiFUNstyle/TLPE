@@ -188,13 +188,18 @@ test('initSchema migre notifications_email legacy et rend campagne_id nullable',
     const byName = new Map(columns.map((column) => [column.name, column]));
     assert.equal(byName.get('relance_niveau')?.name, 'relance_niveau');
     assert.equal(byName.get('piece_jointe_path')?.name, 'piece_jointe_path');
+    assert.equal(byName.get('pieces_jointes_json')?.name, 'pieces_jointes_json');
+    assert.equal(byName.get('tentatives')?.name, 'tentatives');
+    assert.equal(byName.get('prochain_essai_at')?.name, 'prochain_essai_at');
+    assert.equal(byName.get('provider_message_id')?.name, 'provider_message_id');
     assert.equal(byName.get('campagne_id')?.notnull, 0);
 
     const sql = getCreateTableSql(ctx, 'notifications_email') ?? '';
     assert.match(sql, /relance_niveau\s+TEXT\s+CHECK\s*\(\s*relance_niveau\s+IN\s*\('J-30','J-15','J-7','depasse'\)\s*\)/i);
 
     const row = ctx.db.prepare(
-      `SELECT id, campagne_id, assujetti_id, email_destinataire, magic_link, mode, statut, relance_niveau, piece_jointe_path
+      `SELECT id, campagne_id, assujetti_id, email_destinataire, magic_link, mode, statut, relance_niveau, piece_jointe_path,
+              pieces_jointes_json, tentatives, prochain_essai_at, provider_message_id
        FROM notifications_email
        WHERE id = 1`,
     ).get() as {
@@ -207,6 +212,10 @@ test('initSchema migre notifications_email legacy et rend campagne_id nullable',
       statut: string;
       relance_niveau: string | null;
       piece_jointe_path: string | null;
+      pieces_jointes_json: string | null;
+      tentatives: number;
+      prochain_essai_at: string | null;
+      provider_message_id: string | null;
     };
     assert.equal(row.id, 1);
     assert.equal(row.campagne_id, campagneId);
@@ -217,10 +226,15 @@ test('initSchema migre notifications_email legacy et rend campagne_id nullable',
     assert.equal(row.statut, 'envoye');
     assert.equal(row.relance_niveau, null);
     assert.equal(row.piece_jointe_path, null);
+    assert.equal(row.pieces_jointes_json, null);
+    assert.equal(row.tentatives, 0);
+    assert.equal(row.prochain_essai_at, null);
+    assert.equal(row.provider_message_id, null);
 
     const indexes = getIndexNames(ctx, 'notifications_email');
     assert.equal(indexes.has('idx_notifications_email_campagne'), true);
     assert.equal(indexes.has('idx_notifications_email_statut'), true);
+    assert.equal(indexes.has('idx_notifications_email_retry'), true);
 
     ctx.db.prepare(
       `INSERT INTO notifications_email (

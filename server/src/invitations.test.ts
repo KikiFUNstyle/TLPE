@@ -79,7 +79,7 @@ test('openCampagne envoie les invitations email et trace notifications_email', (
 
   const notifications = db
     .prepare(
-      `SELECT assujetti_id, email_destinataire, objet, corps, magic_link, statut
+      `SELECT assujetti_id, email_destinataire, objet, corps, magic_link, statut, tentatives, provider_message_id
        FROM notifications_email
        WHERE campagne_id = ?
        ORDER BY assujetti_id`,
@@ -91,10 +91,14 @@ test('openCampagne envoie les invitations email et trace notifications_email', (
     corps: string;
     magic_link: string | null;
     statut: string;
+    tentatives: number;
+    provider_message_id: string | null;
   }>;
 
   assert.equal(notifications.length, 2);
   assert.ok(notifications.every((n) => n.statut === 'envoye'));
+  assert.ok(notifications.every((n) => n.tentatives === 1));
+  assert.ok(notifications.every((n) => /^mock-success-/.test(n.provider_message_id ?? '')));
   assert.ok(notifications.every((n) => n.objet.includes('Campagne TLPE 2032')));
   assert.ok(notifications.every((n) => /date limite/i.test(n.corps)));
 

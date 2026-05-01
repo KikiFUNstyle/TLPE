@@ -1,5 +1,6 @@
 import * as crypto from 'node:crypto';
 import { db, logAudit } from './db';
+import { isMockEmailDeliveryMode, persistEmailNotification, queueEmailNotification } from './services/mail';
 
 export type InvitationMode = 'auto' | 'manual';
 
@@ -31,6 +32,9 @@ type DeliveryStatus = 'envoye' | 'pending' | 'echec';
 interface DeliveryResult {
   status: DeliveryStatus;
   erreur: string | null;
+  sentAt: string | null;
+  providerMessageId: string | null;
+  attempts: number;
 }
 
 const PORTAL_BASE_URL = (process.env.TLPE_PORTAL_BASE_URL || 'http://localhost:5173').replace(/\/$/, '');
@@ -47,17 +51,83 @@ function deliverInvitationEmail(): DeliveryResult {
   const mode = process.env.TLPE_EMAIL_DELIVERY_MODE ?? 'disabled';
 
   if (mode === 'mock-success') {
-    return { status: 'envoye', erreur: null };
+    return {
+      status: 'envoye',
+      erreur: null,
+      sentAt: new Date().toISOString(),
+      providerMessageId: `mock-success-${Date.now()}`,
+      attempts: 1,
+    };
   }
 
   if (mode === 'mock-failure') {
-    return { status: 'echec', erreur: "Echec d'envoi (mode mock-failure)" };
+    return {
+      status: 'echec',
+      erreur: "Echec d'envoi (mode mock-failure)",
+      sentAt: null,
+      providerMessageId: null,
+      attempts: 1,
+    };
   }
 
   return {
     status: 'pending',
     erreur: 'Envoi differe: service SMTP non configure',
+    sentAt: null,
+    providerMessageId: null,
+    attempts: 0,
   };
+}
+
+function persistInvitationDelivery(input: {
+  campagneId: number;
+  assujettiId: number;
+  emailDestinataire: string;
+  objet: string;
+  corps: string;
+  magicLink: string | null;
+  mode: InvitationMode;
+  createdBy: number | null;
+  delivery: DeliveryResult;
+  metadata: Record<string, unknown>;
+}) {
+  if (isMockEmailDeliveryMode()) {
+    persistEmailNotification({
+      campagneId: input.campagneId,
+      assujettiId: input.assujettiId,
+      emailDestinataire: input.emailDestinataire,
+      objet: input.objet,
+      corps: input.corps,
+      templateCode: 'invitation_campagne',
+      magicLink: input.magicLink,
+      mode: input.mode,
+      createdBy: input.createdBy,
+      status: input.delivery.status,
+      error: input.delivery.erreur,
+      sentAt: input.delivery.sentAt,
+      providerMessageId: input.delivery.providerMessageId,
+      attempts: input.delivery.attempts,
+      metadata: input.metadata,
+    });
+    return;
+  }
+
+  queueEmailNotification({
+    campagneId: input.campagneId,
+    assujettiId: input.assujettiId,
+    emailDestinataire: input.emailDestinataire,
+    objet: input.objet,
+    corps: input.corps,
+    templateCode: 'invitation_campagne',
+    magicLink: input.magicLink,
+    mode: input.mode,
+    createdBy: input.createdBy,
+    metadata: {
+      ...input.metadata,
+      initial_delivery_status: input.delivery.status,
+      initial_delivery_error: input.delivery.erreur,
+    },
+  });
 }
 
 interface AssujettiCible {
@@ -149,13 +219,6 @@ export function sendInvitationsForCampagne(args: SendInvitationArgs): SendInvita
   let pending = 0;
   let nonEligible = 0;
 
-  const insertNotif = db.prepare(
-    `INSERT INTO notifications_email (
-      campagne_id, assujetti_id, email_destinataire, objet, corps,
-      template_code, magic_link, mode, statut, erreur, sent_at, created_by
-    ) VALUES (?, ?, ?, ?, ?, 'invitation_campagne', ?, ?, ?, ?, ?, ?)`,
-  );
-
   for (const assujetti of assujettis) {
     try {
       const hasPortal = hasContribuableAccount(assujetti.id);
@@ -165,19 +228,20 @@ export function sendInvitationsForCampagne(args: SendInvitationArgs): SendInvita
       const content = buildInvitationEmail({ campagne, assujetti, magicLink });
       const storedCorps = magicLink ? content.corps.replace(magicLink, redactMagicLink(magicLink)) : content.corps;
 
-      insertNotif.run(
-        args.campagneId,
-        assujetti.id,
-        assujetti.email,
-        content.objet,
-        storedCorps,
-        magicLink ? redactMagicLink(magicLink) : null,
+      persistInvitationDelivery({
+        campagneId: args.campagneId,
+        assujettiId: assujetti.id,
+        emailDestinataire: assujetti.email ?? '',
+        objet: content.objet,
+        corps: storedCorps,
+        magicLink: magicLink ? redactMagicLink(magicLink) : null,
         mode,
-        delivery.status,
-        delivery.erreur,
-        delivery.status === 'envoye' ? new Date().toISOString() : null,
-        args.userId ?? null,
-      );
+        createdBy: args.userId ?? null,
+        delivery,
+        metadata: {
+          magic_link_token_hash: magic?.tokenHash ?? null,
+        },
+      });
 
       logAudit({
         userId: args.userId ?? null,
