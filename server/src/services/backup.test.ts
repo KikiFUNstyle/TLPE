@@ -9,7 +9,9 @@ import {
   createBackup,
   decryptBackupPayload,
   planBackupRetention,
+  resolveBackupConfigFromEnv,
   restoreLatestBackup,
+  sendBackupAlert,
   type BackupConfig,
 } from './backup';
 
@@ -133,5 +135,142 @@ test('restoreLatestBackup restaure une sauvegarde locale et valide l’intégrit
     assert.equal(row.email, 'admin@tlpe.local');
   } finally {
     fs.rmSync(rootDir, { recursive: true, force: true });
+  }
+});
+
+test('restoreLatestBackup échoue sans sauvegarde disponible', async () => {
+  const rootDir = createTempDir('tlpe-restore-empty-');
+  const config = makeLocalConfig(rootDir);
+  fs.mkdirSync(config.localStorageDir!, { recursive: true });
+
+  try {
+    await assert.rejects(() => restoreLatestBackup(config), /Aucune sauvegarde disponible/);
+  } finally {
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  }
+});
+
+test('createBackup échoue si le stockage local n’a pas de répertoire configuré', async () => {
+  const rootDir = createTempDir('tlpe-backup-local-missing-dir-');
+  const config = makeLocalConfig(rootDir, { localStorageDir: undefined });
+
+  try {
+    await assert.rejects(() => createBackup(config), /TLPE_BACKUP_LOCAL_DIR est obligatoire/);
+  } finally {
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  }
+});
+
+test('createBackup échoue si le stockage S3 n’a pas de bucket configuré', async () => {
+  const rootDir = createTempDir('tlpe-backup-s3-missing-bucket-');
+  const config = makeLocalConfig(rootDir, {
+    storageMode: 's3',
+    localStorageDir: undefined,
+    s3Bucket: undefined,
+  });
+
+  try {
+    await assert.rejects(() => createBackup(config), /TLPE_BACKUP_S3_BUCKET est obligatoire/);
+  } finally {
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  }
+});
+
+test('restoreLatestBackup exige une clé privée pour déchiffrer la dernière sauvegarde', async () => {
+  const rootDir = createTempDir('tlpe-restore-no-private-key-');
+  const config = makeLocalConfig(rootDir);
+
+  try {
+    await createBackup(config, new Date('2026-04-30T08:00:00.000Z'));
+    await assert.rejects(
+      () => restoreLatestBackup({ ...config, privateKeyPem: undefined }),
+      /TLPE_BACKUP_PRIVATE_KEY est obligatoire/,
+    );
+  } finally {
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  }
+});
+
+test('decryptBackupPayload rejette un format invalide ou une intégrité compromise', async () => {
+  const rootDir = createTempDir('tlpe-backup-corruption-');
+  const config = makeLocalConfig(rootDir);
+
+  try {
+    const result = await createBackup(config, new Date('2026-04-30T09:00:00.000Z'));
+    const encrypted = fs.readFileSync(path.join(config.localStorageDir!, result.objectKey));
+    const envelope = JSON.parse(encrypted.toString('utf8')) as {
+      version: string;
+      encryptedKey: string;
+      iv: string;
+      tag: string;
+      ciphertext: string;
+      archiveSha256: string;
+    };
+
+    const invalidVersion = Buffer.from(JSON.stringify({ ...envelope, version: 'broken-envelope' }), 'utf8');
+    assert.throws(() => decryptBackupPayload(invalidVersion, config.privateKeyPem!), /Format de sauvegarde chiffrée invalide/);
+
+    const corruptedIntegrity = Buffer.from(
+      JSON.stringify({ ...envelope, archiveSha256: envelope.archiveSha256.replace(/^./, envelope.archiveSha256.startsWith('a') ? 'b' : 'a') }),
+      'utf8',
+    );
+    assert.throws(() => decryptBackupPayload(corruptedIntegrity, config.privateKeyPem!), /Intégrité de la sauvegarde compromise/);
+  } finally {
+    fs.rmSync(rootDir, { recursive: true, force: true });
+  }
+});
+
+test('resolveBackupConfigFromEnv valide le mode de stockage et la clé publique', () => {
+  assert.throws(
+    () =>
+      resolveBackupConfigFromEnv({
+        TLPE_BACKUP_STORAGE_MODE: 'ftp',
+        TLPE_BACKUP_PUBLIC_KEY: 'pub',
+      }),
+    /TLPE_BACKUP_STORAGE_MODE invalide/,
+  );
+
+  assert.throws(() => resolveBackupConfigFromEnv({}), /TLPE_BACKUP_PUBLIC_KEY est obligatoire/);
+});
+
+test('resolveBackupConfigFromEnv rejette les rétentions non positives', () => {
+  assert.throws(
+    () =>
+      resolveBackupConfigFromEnv({
+        TLPE_BACKUP_PUBLIC_KEY: 'pub',
+        TLPE_BACKUP_RETENTION_DAILY_DAYS: '0',
+      }),
+    /dailyDays doit être un entier strictement positif/,
+  );
+
+  assert.throws(
+    () =>
+      resolveBackupConfigFromEnv({
+        TLPE_BACKUP_PUBLIC_KEY: 'pub',
+        TLPE_BACKUP_RETENTION_WEEKLY_WEEKS: 'abc',
+      }),
+    /weeklyWeeks doit être un entier strictement positif/,
+  );
+});
+
+test('sendBackupAlert ignore l’absence de webhook et remonte les échecs HTTP', async () => {
+  await sendBackupAlert({} as BackupConfig, { ok: true });
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({ ok: false, status: 502 }) as Response) as typeof fetch;
+
+  try {
+    await assert.rejects(
+      () =>
+        sendBackupAlert(
+          {
+            alertWebhookUrl: 'https://alerts.example.test/webhook',
+          } as BackupConfig,
+          { status: 'failed' },
+        ),
+      /Webhook d’alerte en échec \(502\)/,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
   }
 });

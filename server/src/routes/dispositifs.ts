@@ -20,6 +20,10 @@ function genIdentifiantDispositif(): string {
   return `DSP-${y}-${String(count + 1).padStart(6, '0')}`;
 }
 
+function isForeignKeyConstraintError(error: unknown): boolean {
+  return error instanceof Error && /foreign key constraint failed/i.test(error.message);
+}
+
 dispositifsRouter.get('/', (req, res) => {
   const { assujetti_id, statut, q, zone_id, type_id, annee } = req.query as {
     assujetti_id?: string;
@@ -309,8 +313,15 @@ dispositifsRouter.get('/:id', (req, res) => {
 });
 
 dispositifsRouter.delete('/:id', requireRole('admin', 'gestionnaire'), (req, res) => {
-  const info = db.prepare('DELETE FROM dispositifs WHERE id = ?').run(req.params.id);
-  if (info.changes === 0) return res.status(404).json({ error: 'Introuvable' });
-  logAudit({ userId: req.user!.id, action: 'delete', entite: 'dispositif', entiteId: Number(req.params.id) });
-  res.status(204).end();
+  try {
+    const info = db.prepare('DELETE FROM dispositifs WHERE id = ?').run(req.params.id);
+    if (info.changes === 0) return res.status(404).json({ error: 'Introuvable' });
+    logAudit({ userId: req.user!.id, action: 'delete', entite: 'dispositif', entiteId: Number(req.params.id) });
+    res.status(204).end();
+  } catch (error) {
+    if (isForeignKeyConstraintError(error)) {
+      return res.status(409).json({ error: 'Suppression impossible: dispositif encore reference' });
+    }
+    throw error;
+  }
 });

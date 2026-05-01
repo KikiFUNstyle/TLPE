@@ -65,9 +65,61 @@ rm -f server/data/tlpe.db && npm run seed
 
 # tests du moteur de calcul + import assujettis
 npm test
+
+# couverture backend (c8)
+npm run test:coverage:server
+
+# couverture frontend critique ciblée (auth / 2FA via Vitest + RTL)
+npm run test:coverage:client
+
+# agrégation couverture (backend complet + frontend ciblé)
+npm run test:coverage
 ```
 
 Ouvrir ensuite http://localhost:5173.
+
+## Stratégie de couverture de tests (US10.5)
+
+### Backend
+
+- Les tests backend restent exécutés via `tsx --test` dans le workspace `server`.
+- Les parcours HTTP sont couverts par **Supertest** dans des fichiers dédiés (par ex. `server/src/auth.supertest.test.ts`, `server/src/routes.coverage.supertest.test.ts`).
+- La mesure de couverture backend se fait avec **c8** via `npm run test:coverage:server`.
+- En CI, le workflow `.github/workflows/test-coverage.yml` publie les artefacts générés dans `coverage/server`.
+
+### Frontend
+
+- Les composants critiques côté front utilisent **Vitest + React Testing Library**.
+- La configuration est centralisée dans `client/vite.config.ts` et le bootstrap RTL dans `client/src/test/setup.ts`.
+- La mesure de couverture frontend se fait via `npm run test:coverage:client`, avec rapports écrits dans `coverage/client`.
+- **Portée actuelle explicite** : ce rapport Vitest ne mesure aujourd'hui que les parcours RTL couverts sur `client/src/pages/Login.tsx` et `client/src/pages/AccountSettings.tsx`.
+- Il s'agit donc d'une **couverture ciblée des flux d'authentification / 2FA**, et **pas** d'un indicateur global de couverture de tout le frontend.
+- En conséquence, `npm run test:coverage` agrège une couverture backend large avec cette couverture frontend ciblée ; il ne faut pas présenter cette commande comme un pourcentage monorepo homogène sur l'ensemble du client.
+
+### Mocks DB / fixtures backend
+
+- Les tests de routes réutilisent `initSchema()` puis purgent explicitement les tables dépendantes avant de reseeder les données minimales.
+- Le pattern recommandé est :
+  1. `initSchema()`
+  2. suppression des tables enfants puis parentes
+  3. seed minimal (`users`, `assujettis`, `zones`, `types_dispositifs`, données métier utiles au scénario)
+  4. requêtes Supertest avec en-tête `Authorization: Bearer <token>`
+- Pour les scénarios sensibles aux contraintes SQLite, créer d'abord les lignes référencées (ex. `users` avant `audit_log`, `dispositifs` avant `lignes_declaration`).
+- Pour les tests purement métier/services, préférer des fixtures minimales et hermétiques ; éviter de dépendre de données déjà présentes dans `server/data/`.
+
+
+### Ce qu'il faut tester en priorité
+
+- **Routes backend** : auth, déclarations, dispositifs, campagnes, référentiels, uploads et exports.
+- **Services backend** : calcul métier, crypto, backup, génération de reçus et intégrations critiques.
+- **Frontend critique** : authentification, 2FA, écrans déclenchant des exports, workflows d'upload et composants affichant des états d'erreur métier.
+
+### CI couverture
+
+- Workflow : `.github/workflows/test-coverage.yml`
+- Étapes : installation, build, couverture backend, couverture frontend ciblée, publication des artefacts, publication d'un résumé GitHub Actions
+- Les rapports sont téléversés même en cas d'échec (`if: always()`) pour faciliter le diagnostic des seuils non atteints.
+- Le résumé GitHub Actions rappelle explicitement que la couverture frontend publiée est limitée au flux `Login` / `AccountSettings` (authentification + 2FA) et affiche, quand disponibles, les pourcentages extraits des `coverage-summary.json`.
 
 ## Vérification de lancement appli (obligatoire TLPE loop)
 
@@ -214,10 +266,11 @@ Exemple d'appel :
 ```bash
 curl -X POST http://localhost:4000/api/sepa/export-batch \
   -H 'Content-Type: application/json' \
-  -H 'Authorization: Bearer ***' \
+  -H 'Authorization: Bearer <token>' \
   -d '{"date_reference":"2026-08-31","date_prelevement":"2026-09-05"}' \
   -o pain.008-000001.xml
 ```
+
 
 ## API pièces jointes (US2.5)
 

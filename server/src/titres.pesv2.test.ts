@@ -265,6 +265,51 @@ test('POST /api/titres/export-pesv2 supporte une sélection par période de date
   assert.doesNotMatch(res.text, /TIT-2025-000001/);
 });
 
+test('POST /api/titres/export-pesv2 valide les sélections campagne/période exclusives et complètes', async () => {
+  const fx = resetFixtures();
+
+  const mixedSelection = await request({
+    method: 'POST',
+    path: '/api/titres/export-pesv2',
+    headers: makeAuthHeader(fx.financier),
+    body: { campagne_id: fx.campagneId, date_debut: '2026-04-01', date_fin: '2026-04-30' },
+  });
+  assert.equal(mixedSelection.status, 400);
+  assert.match(mixedSelection.text, /campagne_id|date_debut|date_fin/i);
+
+  const missingDateFin = await request({
+    method: 'POST',
+    path: '/api/titres/export-pesv2',
+    headers: makeAuthHeader(fx.financier),
+    body: { date_debut: '2026-04-01' },
+  });
+  assert.equal(missingDateFin.status, 400);
+  assert.match(missingDateFin.text, /date_debut et date_fin sont requis/i);
+
+  const reversedPeriod = await request({
+    method: 'POST',
+    path: '/api/titres/export-pesv2',
+    headers: makeAuthHeader(fx.financier),
+    body: { date_debut: '2026-05-01', date_fin: '2026-04-01' },
+  });
+  assert.equal(reversedPeriod.status, 400);
+  assert.match(reversedPeriod.text, /date_debut doit être antérieure ou égale à date_fin/i);
+});
+
+test('POST /api/titres/export-pesv2 retourne 404 quand une période valide ne contient aucun titre', async () => {
+  const fx = resetFixtures();
+
+  const res = await request({
+    method: 'POST',
+    path: '/api/titres/export-pesv2',
+    headers: makeAuthHeader(fx.financier),
+    body: { date_debut: '2035-01-01', date_fin: '2035-01-31' },
+  });
+
+  assert.equal(res.status, 404);
+  assert.match(res.text, /Aucun titre à exporter/i);
+});
+
 test('POST /api/titres/export-pesv2 rejette une date de période invalide au format calendrier', async () => {
   const fx = resetFixtures();
 

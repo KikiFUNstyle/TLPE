@@ -318,6 +318,65 @@ test('GET /api/rapports/contentieux exporte en XLSX et PDF avec archive et audit
   });
 });
 
+test('GET /api/rapports/contentieux exporte aussi les libellés gracieux/contrôle et le statut instruction', async () => {
+  await withContentieuxReportTestContext(async (ctx) => {
+    const fx = resetFixtures(ctx);
+
+    const assujettiGracieuxId = Number(
+      ctx.db.prepare(`INSERT INTO assujettis (identifiant_tlpe, raison_sociale, statut) VALUES ('TLPE-CTX-005', 'Epsilon Gracieux', 'actif')`).run().lastInsertRowid,
+    );
+    const assujettiControleId = Number(
+      ctx.db.prepare(`INSERT INTO assujettis (identifiant_tlpe, raison_sociale, statut) VALUES ('TLPE-CTX-006', 'Zeta Contrôle', 'actif')`).run().lastInsertRowid,
+    );
+
+    ctx.db.prepare(
+      `INSERT INTO contentieux (
+        numero, assujetti_id, type, montant_litige, montant_degreve, date_ouverture, date_limite_reponse, statut, description
+      ) VALUES ('CTX-2026-00005', ?, 'gracieux', 250, NULL, '2026-03-01', '2026-12-15', 'ouvert', 'Demande gracieuse encore ouverte')`,
+    ).run(assujettiGracieuxId);
+    ctx.db.prepare(
+      `INSERT INTO contentieux (
+        numero, assujetti_id, type, montant_litige, montant_degreve, date_ouverture, date_limite_reponse, statut, description
+      ) VALUES ('CTX-2026-00006', ?, 'controle', 410, NULL, '2026-03-10', '2026-12-20', 'instruction', 'Contrôle en cours d instruction')`,
+    ).run(assujettiControleId);
+
+    const xlsx = await requestReport(ctx, {
+      path: '/api/rapports/contentieux?date_reference=2026-06-30&format=xlsx',
+      headers: makeAuthHeader(ctx, fx.financier),
+    });
+    assert.equal(xlsx.status, 200);
+
+    const workbook = XLSX.read(xlsx.buffer, { type: 'buffer' });
+    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1, raw: false }) as Array<Array<string | number>>;
+    const summaryRows = rows.slice(9, 13).map((row) => [String(row[0]), String(row[5])]);
+    assert.ok(summaryRows.some((row) => row[0] === 'Gracieux' && row[1] === '1 ouvert'));
+    assert.ok(summaryRows.some((row) => row[0] === 'Contrôle' && row[1] === '1 instruction'));
+  });
+});
+
+test('GET /api/rapports/contentieux exporte un PDF sans alerte quand aucune échéance n est à J-30', async () => {
+  await withContentieuxReportTestContext(async (ctx) => {
+    const fx = resetFixtures(ctx);
+
+    const res = await requestReport(ctx, {
+      path: '/api/rapports/contentieux?date_reference=2026-01-01&format=pdf',
+      headers: makeAuthHeader(ctx, fx.financier),
+    });
+
+    assert.equal(res.status, 200);
+    assert.match(res.contentType, /application\/pdf/);
+    assert.match(res.disposition, /synthese-contentieux-2026-01-01\.pdf/);
+    assert.equal(res.buffer.subarray(0, 4).toString('utf8'), '%PDF');
+
+    const archive = ctx.db.prepare(
+      `SELECT titres_count, total_montant FROM rapports_exports WHERE type_rapport = 'synthese_contentieux' AND annee = 2026 ORDER BY id DESC LIMIT 1`,
+    ).get() as { titres_count: number; total_montant: number } | undefined;
+    assert.ok(archive);
+    assert.equal(archive?.titres_count, 2);
+    assert.equal(archive?.total_montant, 1500);
+  });
+});
+
 test('GET /api/rapports/contentieux nettoie l archive si la persistance SQL échoue', async () => {
   await withContentieuxReportTestContext(async (ctx) => {
     const fx = resetFixtures(ctx);

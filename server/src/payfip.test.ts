@@ -281,6 +281,187 @@ test('POST /api/titres/:id/payfip/initiate retourne 409 si le titre est déjà s
   assert.match(String(res.json?.error), /soldé|payé/i);
 });
 
+test('POST /api/titres/:id/payfip/initiate retourne 404 pour un titre inexistant', async () => {
+  const fx = resetFixtures();
+
+  const res = await request({
+    method: 'POST',
+    path: '/api/titres/999999/payfip/initiate',
+    headers: makeAuthHeader(fx.contribuable),
+  });
+
+  assert.equal(res.status, 404);
+  assert.equal(res.json?.error, 'Titre introuvable');
+});
+
+test('POST /api/titres/:id/payfip/initiate refuse un rôle non contribuable', async () => {
+  const fx = resetFixtures();
+
+  const res = await request({
+    method: 'POST',
+    path: `/api/titres/${fx.titreId}/payfip/initiate`,
+    headers: makeAuthHeader(fx.financier),
+  });
+
+  assert.equal(res.status, 403);
+  assert.match(String(res.json?.error), /droits insuffisants/i);
+});
+
+test('POST /api/paiements/callback/payfip rejette une signature invalide', async () => {
+  const fx = resetFixtures();
+  const initiation = await request({
+    method: 'POST',
+    path: `/api/titres/${fx.titreId}/payfip/initiate`,
+    headers: makeAuthHeader(fx.contribuable),
+  });
+
+  const callback = await request({
+    method: 'POST',
+    path: '/api/paiements/callback/payfip',
+    body: {
+      numero_titre: fx.titreNumero,
+      reference: String(initiation.json?.reference),
+      montant: 275.4,
+      statut: 'success',
+      transaction_id: 'PAYFIP-TX-BAD-MAC',
+      mac: '0'.repeat(64),
+    },
+    skipJsonContentType: true,
+  });
+
+  assert.equal(callback.status, 400);
+  assert.equal(callback.json?.error, 'Signature PayFip invalide');
+  const paiementsCount = db.prepare('SELECT COUNT(*) AS count FROM paiements').get() as { count: number };
+  assert.equal(paiementsCount.count, 0);
+});
+
+test('POST /api/paiements/callback/payfip retourne 404 si le titre est introuvable', async () => {
+  resetFixtures();
+
+  const callback = await request({
+    method: 'POST',
+    path: '/api/paiements/callback/payfip',
+    body: {
+      numero_titre: 'TIT-INCONNU',
+      reference: 'TLPE-PAYFIP-404',
+      montant: 275.4,
+      statut: 'success',
+      transaction_id: 'PAYFIP-TX-404',
+      mac: buildCallbackMac({
+        numeroTitre: 'TIT-INCONNU',
+        reference: 'TLPE-PAYFIP-404',
+        montant: 275.4,
+        statut: 'success',
+        transactionId: 'PAYFIP-TX-404',
+      }),
+    },
+    skipJsonContentType: true,
+  });
+
+  assert.equal(callback.status, 404);
+  assert.equal(callback.json?.error, 'Titre introuvable');
+});
+
+test('POST /api/paiements/callback/payfip ignore un doublon de transaction déjà rapproché', async () => {
+  const fx = resetFixtures();
+  const initiation = await request({
+    method: 'POST',
+    path: `/api/titres/${fx.titreId}/payfip/initiate`,
+    headers: makeAuthHeader(fx.contribuable),
+  });
+
+  const reference = String(initiation.json?.reference);
+  const transactionId = 'PAYFIP-TX-DUPLICATE';
+  const payload = {
+    numero_titre: fx.titreNumero,
+    reference,
+    montant: 275.4,
+    statut: 'success' as const,
+    transaction_id: transactionId,
+    mac: buildCallbackMac({
+      numeroTitre: fx.titreNumero,
+      reference,
+      montant: 275.4,
+      statut: 'success',
+      transactionId,
+    }),
+  };
+
+  const first = await request({
+    method: 'POST',
+    path: '/api/paiements/callback/payfip',
+    body: payload,
+    skipJsonContentType: true,
+  });
+  assert.equal(first.status, 200);
+  assert.equal(first.json?.statut, 'paye');
+
+  const duplicate = await request({
+    method: 'POST',
+    path: '/api/paiements/callback/payfip',
+    body: payload,
+    skipJsonContentType: true,
+  });
+
+  assert.equal(duplicate.status, 200);
+  assert.deepEqual(duplicate.json, { ok: true, duplicated: true });
+  const paiementsCount = db.prepare('SELECT COUNT(*) AS count FROM paiements WHERE transaction_id = ?').get(transactionId) as { count: number };
+  assert.equal(paiementsCount.count, 1);
+});
+
+test('POST /api/paiements/callback/payfip trace une annulation sans solder le titre', async () => {
+  const fx = resetFixtures();
+  const initiation = await request({
+    method: 'POST',
+    path: `/api/titres/${fx.titreId}/payfip/initiate`,
+    headers: makeAuthHeader(fx.contribuable),
+  });
+
+  const reference = String(initiation.json?.reference);
+  const transactionId = 'PAYFIP-TX-CANCEL';
+  const mac = buildCallbackMac({
+    numeroTitre: fx.titreNumero,
+    reference,
+    montant: 275.4,
+    statut: 'cancel',
+    transactionId,
+  });
+
+  const callback = await request({
+    method: 'POST',
+    path: '/api/paiements/callback/payfip',
+    body: {
+      numero_titre: fx.titreNumero,
+      reference,
+      montant: 275.4,
+      statut: 'cancel',
+      transaction_id: transactionId,
+      mac,
+    },
+    skipJsonContentType: true,
+  });
+
+  assert.equal(callback.status, 200);
+  assert.equal(callback.json?.ok, true);
+  assert.equal(callback.json?.statut, 'annule');
+  assert.equal(callback.json?.montant_paye, 0);
+
+  const paiement = db.prepare('SELECT statut, provider, transaction_id FROM paiements WHERE titre_id = ?').get(fx.titreId) as
+    | { statut: string; provider: string | null; transaction_id: string | null }
+    | undefined;
+  assert.ok(paiement);
+  assert.equal(paiement!.statut, 'annule');
+  assert.equal(paiement!.provider, 'payfip');
+  assert.equal(paiement!.transaction_id, transactionId);
+
+  const titre = db.prepare('SELECT montant_paye, statut FROM titres WHERE id = ?').get(fx.titreId) as
+    | { montant_paye: number; statut: string }
+    | undefined;
+  assert.ok(titre);
+  assert.equal(titre!.montant_paye, 0);
+  assert.equal(titre!.statut, 'emis');
+});
+
 test('POST /api/paiements/callback/payfip rapproche automatiquement un paiement confirmé et journalise la transaction', async () => {
   const fx = resetFixtures();
   const initiation = await request({

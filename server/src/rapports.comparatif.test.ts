@@ -487,6 +487,61 @@ test('GET /api/rapports/comparatif exporte en XLSX/PDF, archive et trace l’aud
   });
 });
 
+test('GET /api/rapports/comparatif expose aussi les catégories préenseigne et les dispositifs sans zone', async () => {
+  await withComparatifTestContext(async (ctx) => {
+    const fx = resetFixtures(ctx);
+
+    const preenseigneTypeId = Number(
+      ctx.db
+        .prepare(`INSERT INTO types_dispositifs (code, libelle, categorie) VALUES ('PRE-COMP', 'Préenseigne comparatif', 'preenseigne')`)
+        .run().lastInsertRowid,
+    );
+    const assujettiId = Number(
+      ctx.db.prepare(`INSERT INTO assujettis (identifiant_tlpe, raison_sociale, statut) VALUES ('TLPE-COMP-005', 'Epsilon Sans Zone', 'actif')`).run().lastInsertRowid,
+    );
+    const declarationId = Number(
+      ctx.db.prepare(`INSERT INTO declarations (numero, assujetti_id, annee, statut, montant_total) VALUES ('DEC-COMP-2026-003', ?, 2026, 'validee', 250)`).run(assujettiId).lastInsertRowid,
+    );
+    const dispositifId = Number(
+      ctx.db
+        .prepare(
+          `INSERT INTO dispositifs (identifiant, assujetti_id, type_id, zone_id, surface, nombre_faces, statut)
+           VALUES ('DSP-COMP-2026-004', ?, ?, NULL, 3, 1, 'declare')`,
+        )
+        .run(assujettiId, preenseigneTypeId).lastInsertRowid,
+    );
+    ctx.db
+      .prepare(
+        `INSERT INTO lignes_declaration (declaration_id, dispositif_id, surface_declaree, nombre_faces, date_pose, montant_ligne)
+         VALUES (?, ?, 3, 1, '2026-01-18', 250)`,
+      )
+      .run(declarationId, dispositifId);
+    ctx.db
+      .prepare(
+        `INSERT INTO titres (numero, declaration_id, assujetti_id, annee, montant, montant_paye, date_emission, date_echeance, statut)
+         VALUES ('TIT-COMP-2026-003', ?, ?, 2026, 250, 0, '2026-04-09', '2026-06-30', 'emis')`,
+      )
+      .run(declarationId, assujettiId);
+
+    const res = await requestReport(ctx, {
+      path: '/api/rapports/comparatif?annee=2026',
+      headers: makeAuthHeader(ctx, fx.financier),
+    });
+
+    assert.equal(res.status, 200);
+    const zoneLabels = res.json?.breakdowns.zone.map((row: { label: string }) => row.label) ?? [];
+    const categorieLabels = res.json?.breakdowns.categorie.map((row: { label: string }) => row.label) ?? [];
+    assert.ok(zoneLabels.includes('Sans zone'));
+    assert.ok(categorieLabels.includes('Préenseigne'));
+
+    const sansZone = res.json?.breakdowns.zone.find((row: { label: string }) => row.label === 'Sans zone');
+    assert.deepEqual(
+      sansZone?.values.map((value: { annee: number; montant_emis: number; montant_recouvre: number }) => [value.annee, value.montant_emis, value.montant_recouvre]),
+      [[2026, 250, 0], [2025, 0, 0], [2024, 0, 0]],
+    );
+  });
+});
+
 test('GET /api/rapports/comparatif réutilise le jeu de données agrégé pour éviter une double requête brute à l’export', async () => {
   await withComparatifTestContext(async (ctx) => {
     const fx = resetFixtures(ctx);

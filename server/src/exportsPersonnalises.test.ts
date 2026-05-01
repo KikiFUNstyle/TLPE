@@ -244,6 +244,82 @@ test('POST /api/exports-personnalises/preview retourne un aperçu filtré, trié
   });
 });
 
+test('POST /api/exports-personnalises/preview rejette les colonnes, filtres, tris et booléens invalides', async () => {
+  await withContext(async (ctx) => {
+    const fx = resetFixtures(ctx);
+
+    const unknownColumn = await requestJson(ctx, {
+      method: 'POST',
+      path: '/api/exports-personnalises/preview',
+      headers: makeAuthHeader(ctx, fx.financier),
+      body: {
+        entite: 'assujettis',
+        colonnes: ['raison_sociale', 'colonne_inconnue'],
+        filtres: [],
+        ordre: { colonne: 'raison_sociale', direction: 'asc' },
+      },
+    });
+    assert.equal(unknownColumn.status, 400);
+    assert.match(String(unknownColumn.json?.error ?? ''), /Colonne inconnue/i);
+
+    const invalidFilterColumn = await requestJson(ctx, {
+      method: 'POST',
+      path: '/api/exports-personnalises/preview',
+      headers: makeAuthHeader(ctx, fx.financier),
+      body: {
+        entite: 'assujettis',
+        colonnes: ['raison_sociale'],
+        filtres: [{ colonne: 'inconnue', operateur: 'eq', valeur: 'Alpha Média' }],
+        ordre: { colonne: 'raison_sociale', direction: 'asc' },
+      },
+    });
+    assert.equal(invalidFilterColumn.status, 400);
+    assert.match(String(invalidFilterColumn.json?.error ?? ''), /Filtre invalide/i);
+
+    const invalidOperator = await requestJson(ctx, {
+      method: 'POST',
+      path: '/api/exports-personnalises/preview',
+      headers: makeAuthHeader(ctx, fx.financier),
+      body: {
+        entite: 'assujettis',
+        colonnes: ['raison_sociale', 'portail_actif'],
+        filtres: [{ colonne: 'portail_actif', operateur: 'contains', valeur: 'oui' }],
+        ordre: { colonne: 'raison_sociale', direction: 'asc' },
+      },
+    });
+    assert.equal(invalidOperator.status, 400);
+    assert.match(String(invalidOperator.json?.error ?? ''), /Opérateur contains non autorisé/i);
+
+    const invalidBoolean = await requestJson(ctx, {
+      method: 'POST',
+      path: '/api/exports-personnalises/preview',
+      headers: makeAuthHeader(ctx, fx.financier),
+      body: {
+        entite: 'assujettis',
+        colonnes: ['raison_sociale', 'portail_actif'],
+        filtres: [{ colonne: 'portail_actif', operateur: 'eq', valeur: 'peut-être' }],
+        ordre: { colonne: 'raison_sociale', direction: 'asc' },
+      },
+    });
+    assert.equal(invalidBoolean.status, 400);
+    assert.match(String(invalidBoolean.json?.error ?? ''), /Valeur booléenne invalide/i);
+
+    const invalidOrder = await requestJson(ctx, {
+      method: 'POST',
+      path: '/api/exports-personnalises/preview',
+      headers: makeAuthHeader(ctx, fx.financier),
+      body: {
+        entite: 'assujettis',
+        colonnes: ['raison_sociale'],
+        filtres: [],
+        ordre: { colonne: 'ordre_inconnu', direction: 'asc' },
+      },
+    });
+    assert.equal(invalidOrder.status, 400);
+    assert.match(String(invalidOrder.json?.error ?? ''), /Tri invalide/i);
+  });
+});
+
 test('POST /api/exports-personnalises/export?format=csv exporte un fichier CSV et journalise l’audit', async () => {
   await withContext(async (ctx) => {
     const fx = resetFixtures(ctx);
