@@ -45,6 +45,7 @@ basée sur les articles L2333-6 à L2333-16 du CGCT.
 ### Hors périmètre du MVP (prévu phases ultérieures)
 
 - Application mobile de contrôle terrain (§9.2)
+  - cadrage et prérequis documentés dans `docs/mobile-native-roadmap.md` (issue #31)
 - Intégrations externes complètes : FranceConnect+, PayFip, PESV2 (§13.1)
   (un export PESV2 XML local avec validation XSD est implémenté dans US5.2, sans intégration réseau DGFiP/Hélios)
   (le géocodage BAN de base pour l'autocomplete d'adresse est implémenté dans US2.4)

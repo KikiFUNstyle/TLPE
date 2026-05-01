@@ -33,6 +33,7 @@ markdown_extensions:
 nav:
   - Accueil: index.md
   - Installation: installation.md
+  - Feuille de route mobile native: mobile-native-roadmap.md
   - Agents: agents.md
   - Financier: financier.md
   - Contrôleur: controleur.md

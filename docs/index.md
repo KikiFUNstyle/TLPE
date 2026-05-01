@@ -16,6 +16,7 @@ Bienvenue dans la documentation utilisateur du **TLPE Manager**. Ce site regroup
 - **Agent instructeur / gestionnaire** : commencez par le guide [Agents](agents.md).
 - **Équipe finances / recouvrement** : rendez-vous dans [Financier](financier.md).
 - **Contrôle terrain** : consultez [Contrôleur](controleur.md).
+- **Application mobile native (hors MVP)** : consultez la [feuille de route mobile native](mobile-native-roadmap.md) pour les prérequis, l'architecture cible et les jalons restant à lever avant implémentation.
 - **Contribuable** : suivez [Contribuable](contribuable.md).
 - **Paramétrage et supervision** : ouvrez [Administrateur](administrateur.md).
 
