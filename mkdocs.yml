@@ -1,0 +1,40 @@
+site_name: TLPE Manager
+site_description: Documentation utilisateur TLPE Manager
+site_url: https://kikifunstyle.github.io/TLPE/
+repo_url: https://github.com/KikiFUNstyle/TLPE
+edit_uri: edit/main/docs/
+docs_dir: docs
+site_dir: site
+
+theme:
+  name: material
+  language: fr
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - search.suggest
+    - search.highlight
+
+plugins:
+  - search
+  - pdf-export:
+      verbose: false
+      media_type: print
+      combined: false
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Accueil: index.md
+  - Installation: installation.md
+  - Agents: agents.md
+  - Financier: financier.md
+  - Contrôleur: controleur.md
+  - Contribuable: contribuable.md
+  - Administrateur: administrateur.md

@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720" fill="none">
+  <rect width="1200" height="720" rx="32" fill="#F6F7FB"/>
+  <rect x="56" y="52" width="1088" height="616" rx="24" fill="#FFFFFF" stroke="#DDE1EA" stroke-width="2"/>
+  <rect x="56" y="52" width="1088" height="72" rx="24" fill="#000091"/>
+  <text x="96" y="97" fill="#FFFFFF" font-size="34" font-family="Arial" font-weight="700">TLPE Manager</text>
+  <text x="96" y="465" fill="#1B1B35" font-size="28" font-family="Arial" font-weight="700">Tableau de bord exécutif</text>
+  <rect x="88" y="154" width="220" height="468" rx="20" fill="#FFFFFF" stroke="#DDE1EA" stroke-width="2"/>
+  <text x="114" y="196" fill="#5D6887" font-size="18" font-family="Arial">Navigation métier</text>
+  <rect x="108" y="220" width="180" height="42" rx="10" fill="#EEF0FB"/>
+  <text x="124" y="247" fill="#000091" font-size="20" font-family="Arial">Tableau de bord</text>
+  <text x="124" y="298" fill="#1B1B35" font-size="20" font-family="Arial">Assujettis</text>
+  <text x="124" y="342" fill="#1B1B35" font-size="20" font-family="Arial">Déclarations</text>
+  <text x="124" y="386" fill="#1B1B35" font-size="20" font-family="Arial">Titres</text>
+  <text x="124" y="430" fill="#1B1B35" font-size="20" font-family="Arial">Contentieux</text>
+  <rect x="340" y="154" width="764" height="120" rx="22" fill="#EEF0FB"/>
+  <rect x="366" y="184" width="156" height="58" rx="16" fill="#FFFFFF" stroke="#DDE1EA"/>
+  <rect x="544" y="184" width="156" height="58" rx="16" fill="#FFFFFF" stroke="#DDE1EA"/>
+  <rect x="722" y="184" width="156" height="58" rx="16" fill="#FFFFFF" stroke="#DDE1EA"/>
+  <rect x="900" y="184" width="156" height="58" rx="16" fill="#FFFFFF" stroke="#DDE1EA"/>
+  <text x="389" y="216" fill="#5D6887" font-size="16" font-family="Arial">Montant émis</text>
+  <text x="389" y="238" fill="#000091" font-size="24" font-family="Arial" font-weight="700">245 000 €</text>
+  <text x="566" y="216" fill="#5D6887" font-size="16" font-family="Arial">Recouvré</text>
+  <text x="566" y="238" fill="#18753C" font-size="24" font-family="Arial" font-weight="700">182 400 €</text>
+  <text x="744" y="216" fill="#5D6887" font-size="16" font-family="Arial">Impayés</text>
+  <text x="744" y="238" fill="#B34000" font-size="24" font-family="Arial" font-weight="700">42 600 €</text>
+  <text x="920" y="216" fill="#5D6887" font-size="16" font-family="Arial">Contentieux</text>
+  <text x="920" y="238" fill="#E1000F" font-size="24" font-family="Arial" font-weight="700">8 dossiers</text>
+  <rect x="340" y="296" width="368" height="300" rx="22" fill="#FFFFFF" stroke="#DDE1EA" stroke-width="2"/>
+  <rect x="736" y="296" width="368" height="300" rx="22" fill="#FFFFFF" stroke="#DDE1EA" stroke-width="2"/>
+  <path d="M392 520 C450 430 500 470 556 400 C590 360 624 380 662 334" stroke="#4F46E5" stroke-width="8" stroke-linecap="round"/>
+  <circle cx="662" cy="334" r="10" fill="#4F46E5"/>
+  <rect x="778" y="362" width="280" height="26" rx="13" fill="#EEF0FB"/>
+  <rect x="778" y="410" width="196" height="26" rx="13" fill="#D4D9F5"/>
+  <rect x="778" y="458" width="250" height="26" rx="13" fill="#D4D9F5"/>
+  <rect x="778" y="506" width="148" height="26" rx="13" fill="#D4D9F5"/>
+  <circle cx="1020" cy="118" r="26" fill="#FFFFFF" fill-opacity="0.18"/>
+  <text x="1005" y="125" fill="#FFFFFF" font-size="28" font-family="Arial" font-weight="700">?</text>
+  <path d="M1084 112 C1138 96 1148 82 1140 64" stroke="#E1000F" stroke-width="6" stroke-linecap="round"/>
+  <polygon points="1140,64 1125,71 1132,84" fill="#E1000F"/>
+  <text x="948" y="148" fill="#E1000F" font-size="20" font-family="Arial" font-weight="700">Aide contextuelle</text>
+  <path d="M111 270 C92 300 80 336 84 378" stroke="#E1000F" stroke-width="6" stroke-linecap="round"/>
+  <polygon points="84,378 78,360 96,364" fill="#E1000F"/>
+  <text x="94" y="418" fill="#E1000F" font-size="20" font-family="Arial" font-weight="700">Accès métier</text>
+</svg>

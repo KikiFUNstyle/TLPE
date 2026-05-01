@@ -15,8 +15,9 @@
     "build": "npm run build --workspace=client && npm run build --workspace=server",
     "start": "npm run start --workspace=server",
     "seed": "npm run seed --workspace=server",
+    "docs:test": "node --test docs/docs.test.mjs",
     "test": "npm run test --workspace=server",
-    "test:all": "npm run test --workspace=server && npm run test --workspace=client",
+    "test:all": "npm run test --workspace=server && npm run test --workspace=client && npm run docs:test",
     "test:coverage:server": "rm -rf coverage/server && npx --yes c8 --report-dir coverage/server --reporter=text-summary --reporter=json-summary npm run test --workspace=server",
     "test:coverage:client": "npm run test:vitest:coverage --workspace=client",
     "test:coverage": "npm run test:coverage:server && npm run test:coverage:client"

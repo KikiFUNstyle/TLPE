@@ -32,6 +32,7 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
 - Les actions admin ne sont visibles qu'aux admins.
 - Les erreurs API sont affichées de façon exploitable pour l'utilisateur.
 - Le flux UX principal est testé manuellement (liste, import, activation, rafraîchissement).
+- Pour tout nouvel élément d’action ajouté dans un header/toolbar (lien, bouton, CTA), vérifier que les styles communs sont factorisés avec les contrôles voisins existants afin d’éviter une divergence visuelle et des hover states incohérents.
 
 ### 5) Campagnes, jobs & notifications (appris sur US3.4/US3.5)
 - Si une feature ajoute un job planifié (scheduler/cron), vérifier **idempotence** et absence de doublon d'envoi (même campagne + assujetti + niveau/template).
@@ -164,6 +165,8 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
 - Vérifier que les artefacts générés en test/dev (`server/data/receipts/*`, `server/data/mises_en_demeure/*`, `server/data/uploads/rapports/*`) ne polluent pas le diff Git.
 - Maintenir `.gitignore` aligné avec les nouveaux répertoires de sorties runtime avant push.
 - En review, confirmer qu'aucun fichier binaire/généré n'est commité par inadvertance.
+- Pour toute US de documentation statique (MkDocs/Docusaurus), vérifier aussi que le répertoire de build (`site/`, `build/`, etc.) reste ignoré et n'apparaît pas dans le diff après génération locale/PDF.
+- Si une logique UI est extraite en helper pur + composant (`help.ts` + `HelpLink.tsx`, mapping de routes, etc.), vérifier qu'aucun ancien fichier de transition dupliqué ne reste dans le dépôt après refactor et qu'un test RTL couvre l'intégration réelle du composant branché.
 
 ### 9) KPI Dashboard déclaratif (appris sur US3.7)
 - Vérifier que `declarations_recues` ne compte que `soumise|validee|rejetee` (jamais `brouillon`).
