@@ -125,6 +125,24 @@ export function isValidSiret(siret: string): boolean {
   return sum % 10 === 0;
 }
 
+function decodeBase64Strict(contentBase64: string): Buffer {
+  const normalized = contentBase64.trim();
+  if (!normalized || normalized.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(normalized)) {
+    throw new Error('Invalid base64 payload');
+  }
+
+  const buffer = Buffer.from(normalized, 'base64');
+  if (buffer.length === 0) {
+    throw new Error('Invalid base64 payload');
+  }
+
+  if (buffer.toString('base64') !== normalized) {
+    throw new Error('Invalid base64 payload');
+  }
+
+  return buffer;
+}
+
 function decodeCsv(contentBase64: string): RawImportRow[] {
   const csv = Buffer.from(contentBase64, 'base64').toString('utf-8');
   const workbook = XLSX.read(csv, { type: 'string' });
@@ -134,7 +152,7 @@ function decodeCsv(contentBase64: string): RawImportRow[] {
 }
 
 function decodeXlsx(contentBase64: string): RawImportRow[] {
-  const buffer = Buffer.from(contentBase64, 'base64');
+  const buffer = decodeBase64Strict(contentBase64);
   const workbook = XLSX.read(buffer, { type: 'buffer' });
   const sheetName = workbook.SheetNames[0];
   const sheet = workbook.Sheets[sheetName];

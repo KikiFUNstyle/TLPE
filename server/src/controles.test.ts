@@ -882,6 +882,99 @@ test('POST /api/controles/proposer-rectification crée une déclaration d’offi
   assert.equal(declarationSequence?.numero_ordre, 1);
 });
 
+test('POST /api/controles/proposer-rectification refuse un contrôle non clôturé', async () => {
+  const fx = resetFixtures();
+
+  const created = await request({
+    method: 'POST',
+    path: '/api/controles',
+    headers: makeAuthHeader(fx.controleur),
+    body: {
+      dispositif_id: fx.dispositifId,
+      date_controle: '2026-05-12',
+      latitude: 48.8566,
+      longitude: 2.3522,
+      surface_mesuree: 14.5,
+      nombre_faces_mesurees: 2,
+      ecart_detecte: true,
+      ecart_description: 'Contrôle encore ouvert',
+      statut: 'saisi',
+    },
+  });
+  assert.equal(created.status, 201);
+  const controleId = (created.data as { id: number }).id;
+
+  const response = await request({
+    method: 'POST',
+    path: '/api/controles/proposer-rectification',
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      controle_ids: [controleId],
+      mode: 'declaration_office',
+    },
+  });
+
+  assert.equal(response.status, 409);
+  assert.match(String((response.data as { error: string }).error), /doit être clôturé avant proposition de rectification/i);
+});
+
+test('POST /api/controles/proposer-rectification crée un brouillon en mode demande_contribuable', async () => {
+  const fx = resetFixtures();
+
+  const created = await request({
+    method: 'POST',
+    path: '/api/controles',
+    headers: makeAuthHeader(fx.controleur),
+    body: {
+      dispositif_id: fx.dispositifId,
+      date_controle: '2026-05-13',
+      latitude: 48.8566,
+      longitude: 2.3522,
+      surface_mesuree: 15.25,
+      nombre_faces_mesurees: 2,
+      ecart_detecte: true,
+      ecart_description: 'Demande de rectification contribuable',
+      statut: 'cloture',
+    },
+  });
+  assert.equal(created.status, 201);
+  const controleId = (created.data as { id: number }).id;
+
+  const response = await request({
+    method: 'POST',
+    path: '/api/controles/proposer-rectification',
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      controle_ids: [controleId],
+      mode: 'demande_contribuable',
+    },
+  });
+
+  assert.equal(response.status, 201);
+  const body = response.data as {
+    ok: boolean;
+    mode: string;
+    created: Array<{ declaration_id: number; statut: string }>;
+  };
+  assert.equal(body.ok, true);
+  assert.equal(body.mode, 'demande_contribuable');
+  assert.equal(body.created.length, 1);
+  assert.equal(body.created[0].statut, 'brouillon');
+
+  const declaration = db.prepare(
+    `SELECT statut, commentaires FROM declarations WHERE id = ?`,
+  ).get(body.created[0].declaration_id) as { statut: string; commentaires: string | null } | undefined;
+  assert.ok(declaration);
+  assert.equal(declaration?.statut, 'brouillon');
+  assert.match(declaration?.commentaires ?? '', /Demande automatique de rectification adressée au contribuable/i);
+
+  const audit = db.prepare(
+    `SELECT details FROM audit_log WHERE action = 'propose-rectification' ORDER BY id DESC LIMIT 1`,
+  ).get() as { details: string } | undefined;
+  assert.ok(audit);
+  assert.match(audit?.details ?? '', /demande_contribuable/);
+});
+
 test('POST /api/controles/lancer-redressement retourne 409 si aucun assujetti exploitable n’est trouvé sur les contrôles sélectionnés', async () => {
   const fx = resetFixtures();
 
@@ -989,6 +1082,41 @@ test('POST /api/controles/lancer-redressement ouvre un contentieux de contrôle 
   assert.equal(timeline.length, 1);
   assert.equal(timeline[0].type, 'ouverture');
   assert.match(timeline[0].description, /Contrôles source : #/);
+});
+
+test('POST /api/controles/lancer-redressement refuse un contrôle non clôturé', async () => {
+  const fx = resetFixtures();
+
+  const created = await request({
+    method: 'POST',
+    path: '/api/controles',
+    headers: makeAuthHeader(fx.controleur),
+    body: {
+      dispositif_id: fx.dispositifId,
+      date_controle: '2026-05-16',
+      latitude: 48.8566,
+      longitude: 2.3522,
+      surface_mesuree: 15,
+      nombre_faces_mesurees: 2,
+      ecart_detecte: true,
+      ecart_description: 'Redressement impossible car non clôturé',
+      statut: 'saisi',
+    },
+  });
+  assert.equal(created.status, 201);
+  const controleId = (created.data as { id: number }).id;
+
+  const response = await request({
+    method: 'POST',
+    path: '/api/controles/lancer-redressement',
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      controle_ids: [controleId],
+    },
+  });
+
+  assert.equal(response.status, 409);
+  assert.match(String((response.data as { error: string }).error), /doit être clôturé avant ouverture d’un redressement/i);
 });
 
 test('POST /api/controles/proposer-rectification gère un lot mixte création + conflit existant', async () => {
@@ -1147,6 +1275,53 @@ test('POST /api/controles/report déduplique les identifiants côté export XLSX
   assert.deepEqual(details.controles, [controleId]);
   assert.equal(details.count, 1);
   assert.equal(details.format, 'xlsx');
+});
+
+test('POST /api/controles/report retourne 500 si la génération XLSX échoue', async () => {
+  const fx = resetFixtures();
+
+  const created = await request({
+    method: 'POST',
+    path: '/api/controles',
+    headers: makeAuthHeader(fx.controleur),
+    body: {
+      dispositif_id: fx.dispositifId,
+      date_controle: '2026-05-14',
+      latitude: 48.8566,
+      longitude: 2.3522,
+      surface_mesuree: 15,
+      nombre_faces_mesurees: 2,
+      ecart_detecte: true,
+      ecart_description: 'Forcer une erreur export XLSX',
+      statut: 'cloture',
+    },
+  });
+  assert.equal(created.status, 201);
+  const controleId = (created.data as { id: number }).id;
+
+  const previousWrite = XLSX.write;
+  // @ts-ignore monkey patch pour injection de panne en test
+  XLSX.write = (() => {
+    throw new Error('xlsx export failed');
+  }) as typeof XLSX.write;
+
+  try {
+    const report = await request({
+      method: 'POST',
+      path: '/api/controles/report',
+      headers: makeAuthHeader(fx.gestionnaire),
+      body: {
+        controle_ids: [controleId],
+        format: 'xlsx',
+      },
+    });
+
+    assert.equal(report.status, 500);
+    assert.equal((report.data as { error: string }).error, 'Erreur interne génération rapport contrôle');
+  } finally {
+    // @ts-ignore restauration monkey patch après injection de panne
+    XLSX.write = previousWrite;
+  }
 });
 
 test('POST /api/controles/proposer-rectification et /lancer-redressement valident les payloads et les cas sans anomalie', async () => {

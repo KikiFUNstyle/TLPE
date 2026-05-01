@@ -448,3 +448,126 @@ test('POST /api/pieces-jointes refuse un upload qui dépasse le quota total par 
   assert.equal(uploaded.status, 400);
   assert.equal(uploaded.data?.error, 'Taille totale depassee (50 Mo maximum par entite)');
 });
+
+test('POST /api/pieces-jointes refuse un fichier dépassant 10 Mo', async () => {
+  const fx = resetFixtures();
+  const contentieuxId = await createContentieux(fx);
+  const formData = new FormData();
+  formData.set('entite', 'contentieux');
+  formData.set('entite_id', String(contentieuxId));
+  formData.set('type_piece', 'decision');
+  formData.set(
+    'fichier',
+    new File([
+      Buffer.concat([
+        Buffer.from('%PDF-1.4\n', 'utf8'),
+        Buffer.alloc(10 * 1024 * 1024 + 32, 0x41),
+      ]),
+    ], 'too-large.pdf', { type: 'application/pdf' }),
+  );
+
+  const uploaded = await requestMultipart({
+    path: '/api/pieces-jointes',
+    headers: makeAuthHeader(fx.gestionnaire),
+    formData,
+  });
+
+  assert.equal(uploaded.status, 400);
+  assert.equal(uploaded.data?.error, 'Fichier trop volumineux (10 Mo maximum)');
+});
+
+test('POST /api/pieces-jointes refuse plusieurs fichiers pour upload.single', async () => {
+  const fx = resetFixtures();
+  const contentieuxId = await createContentieux(fx);
+  const formData = new FormData();
+  formData.set('entite', 'contentieux');
+  formData.set('entite_id', String(contentieuxId));
+  formData.set('type_piece', 'decision');
+  formData.append('fichier', new File([Buffer.from('%PDF-1.4\nA', 'utf8')], 'first.pdf', { type: 'application/pdf' }));
+  formData.append('fichier', new File([Buffer.from('%PDF-1.4\nB', 'utf8')], 'second.pdf', { type: 'application/pdf' }));
+
+  const uploaded = await requestMultipart({
+    path: '/api/pieces-jointes',
+    headers: makeAuthHeader(fx.gestionnaire),
+    formData,
+  });
+
+  assert.equal(uploaded.status, 400);
+  assert.equal(uploaded.data?.error, 'Erreur upload: LIMIT_FILE_COUNT');
+});
+
+test('GET /api/pieces-jointes/:id retourne 500 sur erreur interne inattendue', async () => {
+  const fx = resetFixtures();
+  const contentieuxId = await createContentieux(fx);
+
+  const uploaded = await requestMultipart({
+    path: '/api/pieces-jointes',
+    headers: makeAuthHeader(fx.gestionnaire),
+    formData: buildPdfUploadForm(contentieuxId, 'decision'),
+  });
+  assert.equal(uploaded.status, 201);
+  const pieceId = (uploaded.data as { id: number }).id;
+
+  const previousPrepare = db.prepare;
+  let forcedOnce = false;
+  // @ts-ignore monkey patch pour injection de panne en test
+  db.prepare = ((sql: string) => {
+    if (!forcedOnce && sql.includes('FROM pieces_jointes') && sql.includes('WHERE id = ?')) {
+      forcedOnce = true;
+      throw new Error('forced read failure');
+    }
+    return previousPrepare.call(db, sql);
+  }) as typeof db.prepare;
+
+  try {
+    const download = await request({
+      method: 'GET',
+      path: `/api/pieces-jointes/${pieceId}`,
+      headers: makeAuthHeader(fx.gestionnaire),
+    });
+
+    assert.equal(download.status, 500);
+    assert.equal(download.data?.error, 'Erreur interne download');
+  } finally {
+    // @ts-ignore restauration monkey patch après injection de panne
+    db.prepare = previousPrepare;
+  }
+});
+
+test('DELETE /api/pieces-jointes/:id retourne 500 sur erreur interne inattendue', async () => {
+  const fx = resetFixtures();
+  const contentieuxId = await createContentieux(fx);
+
+  const uploaded = await requestMultipart({
+    path: '/api/pieces-jointes',
+    headers: makeAuthHeader(fx.gestionnaire),
+    formData: buildPdfUploadForm(contentieuxId, 'decision'),
+  });
+  assert.equal(uploaded.status, 201);
+  const pieceId = (uploaded.data as { id: number }).id;
+
+  const previousPrepare = db.prepare;
+  let forcedOnce = false;
+  // @ts-ignore monkey patch pour injection de panne en test
+  db.prepare = ((sql: string) => {
+    if (!forcedOnce && sql.includes('FROM pieces_jointes') && sql.includes('WHERE id = ?')) {
+      forcedOnce = true;
+      throw new Error('forced delete failure');
+    }
+    return previousPrepare.call(db, sql);
+  }) as typeof db.prepare;
+
+  try {
+    const deleted = await request({
+      method: 'DELETE',
+      path: `/api/pieces-jointes/${pieceId}`,
+      headers: makeAuthHeader(fx.gestionnaire),
+    });
+
+    assert.equal(deleted.status, 500);
+    assert.equal(deleted.data?.error, 'Erreur interne suppression');
+  } finally {
+    // @ts-ignore restauration monkey patch après injection de panne
+    db.prepare = previousPrepare;
+  }
+});

@@ -338,6 +338,13 @@ test('routes coverage smoke: assujettis couvrent CRUD, enrichissement SIRENE, im
   assert.equal(invalidImportDecode.body.valid, 0);
   assert.equal(invalidImportDecode.body.rejected, 0);
 
+  const invalidImportDecodeXlsx = await request(app)
+    .post('/api/assujettis/import')
+    .set(authHeader(fx.admin))
+    .send({ fileName: 'assujettis.xlsx', contentBase64: 'not-base64', mode: 'preview' });
+  assert.equal(invalidImportDecodeXlsx.status, 400);
+  assert.equal(invalidImportDecodeXlsx.body.error, 'Fichier invalide ou format non supporte');
+
   const previewCsv = encodeCsvBase64([
     'identifiant_tlpe,raison_sociale,siret,email,portail_actif,statut',
     'TLPE-2026-00990,Import Preview,12345678901005,preview@example.test,oui,actif',
@@ -369,6 +376,44 @@ test('routes coverage smoke: assujettis couvrent CRUD, enrichissement SIRENE, im
   assert.equal(commitImport.body.updated, 0);
   assert.equal(commitImport.body.rejected, 1);
   assert.equal(commitImport.body.sirene_status, 'degraded');
+
+  cacheApiEntrepriseRecord({ siret: '55210055400013', raisonSociale: 'Import Cache OK', expiresInDays: 15 });
+  const enrichedImportCsv = encodeCsvBase64([
+    'identifiant_tlpe,raison_sociale,siret,email,portail_actif,statut',
+    'TLPE-2026-01000,Placeholder import,55210055400013,cache-import@example.test,oui,actif',
+  ]);
+  const previewCachedImport = await request(app)
+    .post('/api/assujettis/import')
+    .set(authHeader(fx.admin))
+    .send({ fileName: 'assujettis.csv', contentBase64: enrichedImportCsv, mode: 'preview' });
+  assert.equal(previewCachedImport.status, 200);
+  assert.equal(previewCachedImport.body.total, 1);
+  assert.equal(previewCachedImport.body.valid, 1);
+  assert.equal(previewCachedImport.body.rejected, 0);
+  assert.equal(previewCachedImport.body.sirene_status, 'ok');
+  assert.deepEqual(previewCachedImport.body.sirene_messages, []);
+
+  const commitCachedImport = await request(app)
+    .post('/api/assujettis/import')
+    .set(authHeader(fx.admin))
+    .send({ fileName: 'assujettis.csv', contentBase64: enrichedImportCsv, mode: 'commit', onError: 'skip' });
+  assert.equal(commitCachedImport.status, 201);
+  assert.equal(commitCachedImport.body.created, 1);
+  assert.equal(commitCachedImport.body.sirene_status, 'ok');
+  const cachedImportedAssujetti = db.prepare(
+    'SELECT raison_sociale, forme_juridique, adresse_rue, adresse_cp, adresse_ville FROM assujettis WHERE identifiant_tlpe = ?',
+  ).get('TLPE-2026-01000') as {
+    raison_sociale: string;
+    forme_juridique: string | null;
+    adresse_rue: string | null;
+    adresse_cp: string | null;
+    adresse_ville: string | null;
+  };
+  assert.equal(cachedImportedAssujetti.raison_sociale, 'Import Cache OK');
+  assert.equal(cachedImportedAssujetti.forme_juridique, 'SARL');
+  assert.equal(cachedImportedAssujetti.adresse_rue, '1 rue API');
+  assert.equal(cachedImportedAssujetti.adresse_cp, '75001');
+  assert.equal(cachedImportedAssujetti.adresse_ville, 'Paris');
 
   const deleted = await request(app)
     .delete(`/api/assujettis/${createdAssujettiId}`)

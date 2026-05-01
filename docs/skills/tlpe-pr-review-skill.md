@@ -68,6 +68,8 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
   - batch atomique côté validation d'entrée/résolution des titres (pas de résultats partiels silencieux si un élément est introuvable),
   - blocage métier sur les titres soldés, tests couverture happy path + batch + refus 409,
   - présence d'un déclencheur UI explicite côté page Titres (unitaire + lot) réservé aux rôles `admin|financier`.
+- Pour tout service d’intégration externe mis en cache (SIRENE/BAN/API partenaire), vérifier en review et en tests : cache valide, fallback sur cache expiré, timeout explicite, réponse HTTP non-OK, payload vide/malformé, et propagation contrôlée des erreurs réseau inattendues.
+- Pour tout document métier généré (accusé, PDF, courrier), vérifier en review et en tests : lookup introuvable, idempotence, mode dégradé d’envoi (ex. SMTP absent), tolérance de formats de date métier attendus, et pagination/multi-pages quand le volume de lignes augmente fortement.
 - Pour tout export binaire métier (PDF/XLSX bordereau, titre, rapport), vérifier en review:
   - contrôle d'accès explicite par rôle,
   - filtrage métier exact des données exportées,
