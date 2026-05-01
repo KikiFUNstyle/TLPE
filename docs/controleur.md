@@ -25,3 +25,8 @@ Une fois le constat clôturé, les équipes habilitées peuvent :
 - générer un rapport de contrôle ;
 - proposer une rectification ;
 - lancer un redressement ou un contentieux.
+
+## Application mobile native (phase ultérieure)
+
+L'application mobile iOS / Android demandée par l'US7.2 n'est **pas** incluse dans le MVP web actuel.
+La trajectoire prévue, les dépendances externes (comptes stores, stratégie MDM, notifications push) et le contrat d'intégration avec le backend sont détaillés dans la [feuille de route mobile native](mobile-native-roadmap.md).

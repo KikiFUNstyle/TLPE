@@ -10,6 +10,7 @@ const workflowPath = path.join(repoRoot, '.github', 'workflows', 'docs.yml');
 const requiredPages = [
   'docs/index.md',
   'docs/installation.md',
+  'docs/mobile-native-roadmap.md',
   'docs/agents.md',
   'docs/financier.md',
   'docs/controleur.md',
@@ -26,6 +27,7 @@ test('la documentation utilisateur MkDocs référence les sections attendues, ac
   assert.match(config, /site_name:\s*TLPE Manager/i);
   assert.match(config, /theme:\s*[\s\S]*name:\s*material/i);
   assert.match(config, /pdf-export/i);
+  assert.match(config, /Feuille de route mobile native/i);
   assert.match(config, /Agents/i);
   assert.match(config, /Financier/i);
   assert.match(config, /Contrôleur/i);
