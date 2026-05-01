@@ -527,11 +527,13 @@ Le module Référentiels expose désormais une gestion des campagnes annuelles d
   - envoi automatique des invitations aux assujettis `actif` avec email renseigné
   - génération d'un lien d'activation unique (magic link) pour les assujettis sans compte portail
   - traçabilité de chaque envoi dans `notifications_email`
+  - en mode SMTP réel ou dev (`TLPE_SMTP_DEV_MODE=mailhog|log-only`), les invitations sont d'abord placées en file `pending` puis traitées par le worker asynchrone
 - relances automatiques US3.4 :
   - job quotidien (scheduler) qui déclenche les relances J-30 / J-15 / J-7 selon `date_limite_declaration`
   - relance uniquement pour les assujettis sans déclaration `soumise` / `validee`
   - J-15 inclut un lien direct vers le formulaire
   - J-7 peut générer un courrier PDF (si `relance_j7_courrier = 1`) stocké et référencé dans `notifications_email.piece_jointe_path`
+  - en mode SMTP réel ou dev, les relances suivent aussi la file `pending -> envoye|echec` avec compteur `tentatives`, `prochain_essai_at` et `provider_message_id`
 - clôture d'une campagne (statut `ouverte` -> `cloturee`), qui:
   - exécute la relance J-7 à la date limite (si applicable)
   - bascule les déclarations `brouillon` de l'année en `en_instruction`
@@ -558,7 +560,29 @@ Schéma SQL ajouté:
 - `campagne_jobs`
 - `mises_en_demeure`
 - `invitation_magic_links`
-- `notifications_email` (inclut désormais `relance_niveau`, `piece_jointe_path`)
+- `notifications_email` (inclut désormais `relance_niveau`, `piece_jointe_path`, `pieces_jointes_json`, `tentatives`, `prochain_essai_at`, `provider_message_id`)
+
+Configuration SMTP / worker email :
+
+```bash
+export TLPE_EMAIL_DELIVERY_MODE=disabled      # mock-success | mock-failure | disabled
+export TLPE_SMTP_DEV_MODE=mailhog             # mailhog | log-only (optionnel)
+export TLPE_SMTP_MAILHOG_URL=smtp://127.0.0.1:1025
+export TLPE_SMTP_HOST=smtp.example.fr
+export TLPE_SMTP_PORT=587
+export TLPE_SMTP_USER=tlpe
+export TLPE_SMTP_PASSWORD=***
+export TLPE_SMTP_FROM=no-reply@example.fr
+export TLPE_SMTP_SECURE=false
+export TLPE_SMTP_WORKER_INTERVAL_MS=30000
+export TLPE_SMTP_MAX_ATTEMPTS=3
+export TLPE_SMTP_BACKOFF_MS=60000
+```
+
+- `TLPE_EMAIL_DELIVERY_MODE=mock-success|mock-failure` force les modes de test synchrones.
+- Sans mode mock, les emails sont stockés en `pending` puis traités par le worker SMTP embarqué dans le scheduler quotidien.
+- `TLPE_SMTP_DEV_MODE=mailhog` envoie vers MailHog ; `log-only` journalise les emails sans connexion SMTP.
+- Un bounce / destinataire invalide marque l'assujetti en statut `email_invalide` pour éviter les réessais silencieux.
 
 Toute action (`create`, `open`, `close`) est tracée dans `audit_log`. Les relances automatiques et manuelles sont également tracées (`send-relance`).
 

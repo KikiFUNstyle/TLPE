@@ -28,6 +28,96 @@ export function initSchema() {
   const sql = fs.readFileSync(resolveSchemaPath(), 'utf-8');
   db.exec(sql);
 
+  const assujettiColumns = db.prepare("PRAGMA table_info('assujettis')").all() as Array<{ name: string }>;
+  const hasEmailInvalideColumn = assujettiColumns.some((column) => column.name === 'email_invalide');
+  const assujettisSql = (
+    db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'assujettis'").get() as
+      | { sql: string }
+      | undefined
+  )?.sql;
+  const hasEmailInvalideStatut = /statut\s+TEXT\s+NOT\s+NULL\s+DEFAULT\s+'actif'\s+CHECK\s*\(\s*statut\s+IN\s*\('actif','inactif','radie','contentieux','email_invalide'\)\s*\)/i.test(
+    assujettisSql ?? '',
+  );
+  const hasEmailInvalideCheck = /email_invalide\s+INTEGER\s+NOT\s+NULL\s+DEFAULT\s+0\s+CHECK\s*\(\s*email_invalide\s+IN\s*\(0,1\)\s*\)/i.test(
+    assujettisSql ?? '',
+  );
+
+  if (!hasEmailInvalideColumn || !hasEmailInvalideStatut || !hasEmailInvalideCheck) {
+    db.pragma('foreign_keys = OFF');
+    try {
+      db.exec('BEGIN TRANSACTION');
+      try {
+        db.exec(`
+          CREATE TABLE assujettis_new (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            identifiant_tlpe TEXT NOT NULL UNIQUE,
+            raison_sociale   TEXT NOT NULL,
+            siret            TEXT UNIQUE,
+            forme_juridique  TEXT,
+            adresse_rue      TEXT,
+            adresse_cp       TEXT,
+            adresse_ville    TEXT,
+            adresse_pays     TEXT DEFAULT 'France',
+            contact_nom      TEXT,
+            contact_prenom   TEXT,
+            contact_fonction TEXT,
+            email            TEXT,
+            telephone        TEXT,
+            portail_actif    INTEGER NOT NULL DEFAULT 0,
+            statut           TEXT NOT NULL DEFAULT 'actif' CHECK (statut IN ('actif','inactif','radie','contentieux','email_invalide')),
+            email_invalide   INTEGER NOT NULL DEFAULT 0 CHECK (email_invalide IN (0,1)),
+            notes            TEXT,
+            created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
+          );
+
+          INSERT INTO assujettis_new (
+            id, identifiant_tlpe, raison_sociale, siret, forme_juridique,
+            adresse_rue, adresse_cp, adresse_ville, adresse_pays,
+            contact_nom, contact_prenom, contact_fonction,
+            email, telephone, portail_actif, statut, email_invalide, notes, created_at, updated_at
+          )
+          SELECT
+            id,
+            identifiant_tlpe,
+            raison_sociale,
+            siret,
+            forme_juridique,
+            adresse_rue,
+            adresse_cp,
+            adresse_ville,
+            adresse_pays,
+            contact_nom,
+            contact_prenom,
+            contact_fonction,
+            email,
+            telephone,
+            portail_actif,
+            CASE WHEN statut = 'email_invalide' THEN 'email_invalide' ELSE statut END,
+            CASE
+              WHEN ${hasEmailInvalideColumn ? 'email_invalide = 1' : "statut = 'email_invalide'"} THEN 1
+              ELSE 0
+            END,
+            notes,
+            created_at,
+            updated_at
+          FROM assujettis;
+
+          DROP TABLE assujettis;
+          ALTER TABLE assujettis_new RENAME TO assujettis;
+          CREATE INDEX IF NOT EXISTS idx_assujettis_siret ON assujettis(siret);
+          CREATE INDEX IF NOT EXISTS idx_assujettis_raison ON assujettis(raison_sociale);
+        `);
+        db.exec('COMMIT');
+      } catch (error) {
+        db.exec('ROLLBACK');
+        throw error;
+      }
+    } finally {
+      db.pragma('foreign_keys = ON');
+    }
+  }
+
   const userColumns = db.prepare("PRAGMA table_info('users')").all() as Array<{ name: string }>;
   const userColumnNames = new Set(userColumns.map((column) => column.name));
   if (!userColumnNames.has('two_factor_enabled')) {
@@ -566,13 +656,26 @@ export function initSchema() {
     )?.sql;
     const hasRelanceNiveau = notifColumns.some((col) => col.name === 'relance_niveau');
     const hasPieceJointePath = notifColumns.some((col) => col.name === 'piece_jointe_path');
+    const hasPiecesJointesJson = notifColumns.some((col) => col.name === 'pieces_jointes_json');
+    const hasTentatives = notifColumns.some((col) => col.name === 'tentatives');
+    const hasProchainEssaiAt = notifColumns.some((col) => col.name === 'prochain_essai_at');
+    const hasProviderMessageId = notifColumns.some((col) => col.name === 'provider_message_id');
     const campagneIdColumn = notifColumns.find((col) => col.name === 'campagne_id');
     const campagneIdNullable = (campagneIdColumn?.notnull ?? 0) === 0;
     const hasDepasseRelanceLevel = /relance_niveau\s+TEXT\s+CHECK\s*\(\s*relance_niveau\s+IN\s*\('J-30','J-15','J-7','depasse'\)\s*\)/i.test(
       notificationsEmailSql ?? '',
     );
 
-    if (!hasRelanceNiveau || !hasPieceJointePath || !campagneIdNullable || !hasDepasseRelanceLevel) {
+    if (
+      !hasRelanceNiveau
+      || !hasPieceJointePath
+      || !hasPiecesJointesJson
+      || !hasTentatives
+      || !hasProchainEssaiAt
+      || !hasProviderMessageId
+      || !campagneIdNullable
+      || !hasDepasseRelanceLevel
+    ) {
       db.pragma('foreign_keys = OFF');
       try {
         db.exec('BEGIN TRANSACTION');
@@ -588,11 +691,15 @@ export function initSchema() {
               template_code       TEXT NOT NULL DEFAULT 'invitation_campagne',
               relance_niveau      TEXT CHECK (relance_niveau IN ('J-30','J-15','J-7','depasse')),
               piece_jointe_path   TEXT,
+              pieces_jointes_json TEXT,
               magic_link          TEXT,
               mode                TEXT NOT NULL DEFAULT 'auto' CHECK (mode IN ('auto','manual')),
               statut              TEXT NOT NULL DEFAULT 'envoye' CHECK (statut IN ('pending','envoye','echec')),
+              tentatives          INTEGER NOT NULL DEFAULT 0,
+              prochain_essai_at   TEXT,
               erreur              TEXT,
               sent_at             TEXT,
+              provider_message_id TEXT,
               created_by          INTEGER,
               created_at          TEXT NOT NULL DEFAULT (datetime('now')),
               FOREIGN KEY (campagne_id) REFERENCES campagnes(id) ON DELETE CASCADE,
@@ -602,8 +709,8 @@ export function initSchema() {
 
             INSERT INTO notifications_email_new (
               id, campagne_id, assujetti_id, email_destinataire, objet, corps,
-              template_code, relance_niveau, piece_jointe_path, magic_link, mode,
-              statut, erreur, sent_at, created_by, created_at
+              template_code, relance_niveau, piece_jointe_path, pieces_jointes_json, magic_link, mode,
+              statut, tentatives, prochain_essai_at, erreur, sent_at, provider_message_id, created_by, created_at
             )
             SELECT
               id,
@@ -615,11 +722,15 @@ export function initSchema() {
               template_code,
               ${hasRelanceNiveau ? 'relance_niveau' : 'NULL'},
               ${hasPieceJointePath ? 'piece_jointe_path' : 'NULL'},
+              ${hasPiecesJointesJson ? 'pieces_jointes_json' : 'NULL'},
               magic_link,
               mode,
               statut,
+              ${hasTentatives ? 'tentatives' : '0'},
+              ${hasProchainEssaiAt ? 'prochain_essai_at' : 'NULL'},
               erreur,
               sent_at,
+              ${hasProviderMessageId ? 'provider_message_id' : 'NULL'},
               created_by,
               created_at
             FROM notifications_email;
@@ -628,6 +739,7 @@ export function initSchema() {
             ALTER TABLE notifications_email_new RENAME TO notifications_email;
             CREATE INDEX IF NOT EXISTS idx_notifications_email_campagne ON notifications_email(campagne_id, assujetti_id);
             CREATE INDEX IF NOT EXISTS idx_notifications_email_statut ON notifications_email(statut, sent_at);
+            CREATE INDEX IF NOT EXISTS idx_notifications_email_retry ON notifications_email(statut, prochain_essai_at);
           `);
           db.exec('COMMIT');
         } catch (error) {
@@ -638,6 +750,13 @@ export function initSchema() {
         db.pragma('foreign_keys = ON');
       }
     }
+  }
+
+  const notificationsEmailColumns = hasNotificationsEmail
+    ? db.prepare("PRAGMA table_info('notifications_email')").all() as Array<{ name: string }>
+    : [];
+  if (notificationsEmailColumns.some((column) => column.name === 'prochain_essai_at')) {
+    db.exec('CREATE INDEX IF NOT EXISTS idx_notifications_email_retry ON notifications_email(statut, prochain_essai_at)');
   }
 
   // migration legacy -> ajoute alerte_gestionnaire sur declarations si table deja presente

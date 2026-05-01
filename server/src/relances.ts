@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { db, logAudit } from './db';
+import { isMockEmailDeliveryMode, persistEmailNotification, queueEmailNotification } from './services/mail';
 
 export type RelanceNiveau = 'J-30' | 'J-15' | 'J-7';
 
@@ -177,11 +178,39 @@ function generateJ7CourrierPdf(campagne: ActiveCampagne, assujetti: AssujettiRel
   return path.relative(path.resolve(__dirname, '..', 'data'), absolutePath).replace(/\\/g, '/');
 }
 
-function deliverRelanceEmail(): { statut: 'envoye' | 'pending' | 'echec'; erreur: string | null } {
+function deliverRelanceEmail(): {
+  statut: 'envoye' | 'pending' | 'echec';
+  erreur: string | null;
+  sentAt: string | null;
+  providerMessageId: string | null;
+  attempts: number;
+} {
   const mode = process.env.TLPE_EMAIL_DELIVERY_MODE ?? 'disabled';
-  if (mode === 'mock-success') return { statut: 'envoye', erreur: null };
-  if (mode === 'mock-failure') return { statut: 'echec', erreur: "Echec d'envoi (mode mock-failure)" };
-  return { statut: 'pending', erreur: 'Envoi differe: service SMTP non configure' };
+  if (mode === 'mock-success') {
+    return {
+      statut: 'envoye',
+      erreur: null,
+      sentAt: new Date().toISOString(),
+      providerMessageId: `mock-success-${Date.now()}`,
+      attempts: 1,
+    };
+  }
+  if (mode === 'mock-failure') {
+    return {
+      statut: 'echec',
+      erreur: "Echec d'envoi (mode mock-failure)",
+      sentAt: null,
+      providerMessageId: null,
+      attempts: 1,
+    };
+  }
+  return {
+    statut: 'pending',
+    erreur: 'Envoi differe: service SMTP non configure',
+    sentAt: null,
+    providerMessageId: null,
+    attempts: 0,
+  };
 }
 
 export function runRelancesDeclarations(input?: { runDateIso?: string; userId?: number | null; ip?: string | null }): RunRelancesResult {
@@ -222,13 +251,6 @@ export function runRelancesDeclarations(input?: { runDateIso?: string; userId?: 
   let skipped = 0;
   let generatedPdfs = 0;
 
-  const insertNotif = db.prepare(
-    `INSERT INTO notifications_email (
-      campagne_id, assujetti_id, email_destinataire, objet, corps,
-      template_code, relance_niveau, piece_jointe_path, magic_link, mode, statut, erreur, sent_at, created_by
-    ) VALUES (?, ?, ?, ?, ?, 'relance_declaration', ?, ?, NULL, 'auto', ?, ?, ?, ?)`,
-  );
-
   const tx = db.transaction(() => {
     for (const assujetti of assujettis) {
       if (hasNotificationAlreadySent(campagne.id, assujetti.id, niveau)) {
@@ -244,19 +266,26 @@ export function runRelancesDeclarations(input?: { runDateIso?: string; userId?: 
       }
 
       const corps = buildCorps(campagne, assujetti, niveau);
-      insertNotif.run(
-        campagne.id,
-        assujetti.id,
-        assujetti.email,
-        buildObjet(campagne.annee, niveau),
+      persistEmailNotification({
+        campagneId: campagne.id,
+        assujettiId: assujetti.id,
+        emailDestinataire: assujetti.email,
+        objet: buildObjet(campagne.annee, niveau),
         corps,
-        niveau,
+        templateCode: 'relance_declaration',
+        relanceNiveau: niveau,
         pieceJointePath,
-        delivery.statut,
-        delivery.erreur,
-        delivery.statut === 'envoye' ? new Date().toISOString() : null,
-        input?.userId ?? null,
-      );
+        mode: 'auto',
+        createdBy: input?.userId ?? null,
+        status: delivery.statut,
+        error: delivery.erreur,
+        sentAt: delivery.sentAt,
+        providerMessageId: delivery.providerMessageId,
+        attempts: delivery.attempts,
+        metadata: {
+          run_date: runDateIso,
+        },
+      });
 
       logAudit({
         userId: input?.userId ?? null,

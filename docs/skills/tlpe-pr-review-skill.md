@@ -40,6 +40,7 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
 - Vérifier la cohérence **schéma + migrations runtime + API** quand de nouvelles colonnes sont introduites.
 - Vérifier qu'une action de clôture n'introduit pas d'effet de bord silencieux (payload de job, audit associé, date d'exécution attendue).
 - Vérifier la traçabilité complète: `notifications_email`, `campagne_jobs`, `audit_log`.
+- Pour toute US SMTP/notifications, vérifier que la README documente les variables runtime réelles (`TLPE_EMAIL_DELIVERY_MODE`, `TLPE_SMTP_*`, modes `mailhog|log-only`) et que le smoke test couvre un démarrage avec worker email actif.
 
 ### 6) Règles spécifiques mises en demeure J+1 (US3.5)
 - Le déclenchement doit être basé sur `date_cloture + 1` (et non `date_limite_declaration`).

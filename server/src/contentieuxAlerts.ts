@@ -1,4 +1,5 @@
 import { db, logAudit } from './db';
+import { persistEmailNotification } from './services/mail';
 import {
   classifyContentieuxAlertLevel,
   isContentieuxDeadlineActive,
@@ -73,19 +74,49 @@ function getManagerAlertRecipient(): ManagerAlertRecipient | null {
   };
 }
 
-function deliverAlertEmail(email: string | null): { status: 'pending' | 'envoye' | 'echec'; error: string | null; sentAt: string | null } {
+function deliverAlertEmail(email: string | null): {
+  status: 'pending' | 'envoye' | 'echec';
+  error: string | null;
+  sentAt: string | null;
+  providerMessageId: string | null;
+  attempts: number;
+} {
   if (!email || email.trim() === '') {
-    return { status: 'echec', error: 'Aucun email destinataire renseigné', sentAt: null };
+    return {
+      status: 'echec',
+      error: 'Aucun email destinataire renseigné',
+      sentAt: null,
+      providerMessageId: null,
+      attempts: 1,
+    };
   }
 
-  const mode = process.env.TLPE_EMAIL_DELIVERY_MODE ?? 'mock-success';
+  const mode = process.env.TLPE_EMAIL_DELIVERY_MODE ?? 'disabled';
   if (mode === 'mock-failure') {
-    return { status: 'echec', error: "Echec d'envoi (mode mock-failure)", sentAt: null };
+    return {
+      status: 'echec',
+      error: "Echec d'envoi (mode mock-failure)",
+      sentAt: null,
+      providerMessageId: null,
+      attempts: 1,
+    };
   }
   if (mode === 'disabled') {
-    return { status: 'pending', error: 'Envoi différé: service SMTP non configuré', sentAt: null };
+    return {
+      status: 'pending',
+      error: 'Envoi différé: service SMTP non configuré',
+      sentAt: null,
+      providerMessageId: null,
+      attempts: 0,
+    };
   }
-  return { status: 'envoye', error: null, sentAt: new Date().toISOString() };
+  return {
+    status: 'envoye',
+    error: null,
+    sentAt: new Date().toISOString(),
+    providerMessageId: `mock-success-${Date.now()}`,
+    attempts: 1,
+  };
 }
 
 function buildAlertEmailSubject(numero: string, niveau: 'J-30' | 'J-7' | 'depasse') {
@@ -139,13 +170,6 @@ export function createContentieuxDeadlineAlerts(input?: {
   let skippedExisting = 0;
   let overdue = 0;
 
-  const insertNotification = db.prepare(
-    `INSERT INTO notifications_email (
-      campagne_id, assujetti_id, email_destinataire, objet, corps,
-      template_code, relance_niveau, piece_jointe_path, magic_link, mode, statut, erreur, sent_at, created_by
-    ) VALUES (?, ?, ?, ?, ?, 'alerte_contentieux', ?, NULL, NULL, 'auto', ?, ?, ?, ?)`,
-  );
-
   const insertAlert = db.prepare(
     `INSERT INTO contentieux_alerts (
       contentieux_id, assujetti_id, niveau_alerte, date_reference, date_echeance,
@@ -184,19 +208,25 @@ export function createContentieuxDeadlineAlerts(input?: {
       const email = deliverAlertEmail(emailTarget);
       const emailSubject = buildAlertEmailSubject(row.numero, summary.niveau_alerte);
       const emailBody = buildAlertEmailBody(row, summary.niveau_alerte, summary.days_remaining);
-      const notificationResult = insertNotification.run(
-        null,
-        row.assujetti_id,
-        emailTarget ?? '',
-        emailSubject,
-        emailBody,
-        summary.niveau_alerte,
-        email.status,
-        email.error,
-        email.sentAt,
-        input?.userId ?? null,
-      );
-      const notificationId = Number(notificationResult.lastInsertRowid);
+      const notification = persistEmailNotification({
+        campagneId: null,
+        assujettiId: row.assujetti_id,
+        emailDestinataire: emailTarget ?? '',
+        objet: emailSubject,
+        corps: emailBody,
+        templateCode: 'alerte_contentieux',
+        relanceNiveau: summary.niveau_alerte,
+        mode: 'auto',
+        createdBy: input?.userId ?? null,
+        status: email.status,
+        error: email.error,
+        sentAt: email.sentAt,
+        providerMessageId: email.providerMessageId,
+        attempts: email.attempts,
+        metadata: {
+          contentieux_id: row.id,
+        },
+      });
       insertAlert.run(
         row.id,
         row.assujetti_id,
@@ -208,7 +238,7 @@ export function createContentieuxDeadlineAlerts(input?: {
         email.status,
         email.error,
         email.sentAt,
-        notificationId,
+        notification.notificationId,
         input?.userId ?? null,
       );
 
