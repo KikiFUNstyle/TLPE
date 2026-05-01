@@ -1,5 +1,6 @@
 import { Navigate, NavLink, Route, Routes } from 'react-router-dom';
 import { useAuth } from './auth';
+import { HelpLink } from './helpLink';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Assujettis from './pages/Assujettis';
@@ -63,6 +64,7 @@ export default function App() {
           {user.prenom} {user.nom}
           <span className="role">{user.role}</span>
         </div>
+        <HelpLink />
         <button onClick={logout}>Deconnexion</button>
       </header>
 

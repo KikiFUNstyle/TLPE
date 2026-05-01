@@ -18,4 +18,5 @@ coverage/
 **/data/uploads/rapports/
 **/*.tsbuildinfo
 uploads/
+site/
 TLPE/

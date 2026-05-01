@@ -66,6 +66,20 @@ a:hover { text-decoration: underline; }
   font-size: 13px;
 }
 .header button:hover { background: rgba(255,255,255,0.25); }
+.header-help-link {
+  margin-left: 12px;
+  color: white;
+  border: 1px solid rgba(255,255,255,0.3);
+  border-radius: 3px;
+  padding: 4px 10px;
+  font-size: 13px;
+  text-decoration: none;
+  background: rgba(255,255,255,0.08);
+}
+.header-help-link:hover {
+  background: rgba(255,255,255,0.2);
+  text-decoration: none;
+}
 
 .sidebar {
   grid-area: sidebar;

@@ -11,6 +11,8 @@ basée sur les articles L2333-6 à L2333-16 du CGCT.
 
 ## Modules livrés (MVP)
 
+> 📘 **Documentation utilisateur** : un site MkDocs est désormais prévu dans `docs/` avec publication GitHub Pages, export PDF et bouton `Aide` contextualisé dans l’application.
+
 | Module | Spec | Statut |
 |---|---|---|
 | Référentiels (barème, zones, types + import GeoJSON des zones + exonerations/abattements + campagnes déclaratives annuelles) | §3 / §5.1 | OK |
@@ -125,6 +127,10 @@ Ouvrir ensuite http://localhost:5173.
 
 - `npm run dev` : démarrage backend + frontend sans erreur fatale
 - Smoke test backend : `GET /api/health` → `{"status":"ok"...}`
+- Smoke test documentation utilisateur (US10.6) :
+  - `node --test docs/docs.test.mjs` valide la présence de `mkdocs.yml`, des pages `docs/installation.md`, `docs/agents.md`, `docs/financier.md`, `docs/controleur.md`, `docs/contribuable.md`, `docs/administrateur.md` et de l’activation du plugin `pdf-export`
+  - le bouton `Aide` en en-tête redirige vers la documentation contextualisée selon la route courante (`client/src/help.ts` + `client/src/helpLink.tsx`)
+  - `.github/workflows/docs.yml` publie automatiquement la documentation sur GitHub Pages depuis `main`
 - Smoke test pièces jointes : login + création dispositif + upload PDF + download + soft delete + vérif 404 post-delete (script Node)
 - Smoke test cartographie : accès `/carte`, tuiles OSM + points affichés, export GeoJSON téléchargeable
 - Smoke test US7.1 :
