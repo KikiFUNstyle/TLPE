@@ -32,6 +32,7 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
 - Les actions admin ne sont visibles qu'aux admins.
 - Les erreurs API sont affichées de façon exploitable pour l'utilisateur.
 - Le flux UX principal est testé manuellement (liste, import, activation, rafraîchissement).
+- Pour tout nouvel élément d’action ajouté dans un header/toolbar (lien, bouton, CTA), vérifier que les styles communs sont factorisés avec les contrôles voisins existants afin d’éviter une divergence visuelle et des hover states incohérents.
 
 ### 5) Campagnes, jobs & notifications (appris sur US3.4/US3.5)
 - Si une feature ajoute un job planifié (scheduler/cron), vérifier **idempotence** et absence de doublon d'envoi (même campagne + assujetti + niveau/template).
