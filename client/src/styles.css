@@ -55,7 +55,8 @@ a:hover { text-decoration: underline; }
 .header .spacer { flex: 1; }
 .header .user-info { font-size: 13px; opacity: 0.95; }
 .header .user-info .role { background: rgba(255,255,255,0.2); padding: 2px 8px; border-radius: 3px; margin-left: 8px; text-transform: uppercase; font-size: 11px; }
-.header button {
+.header button,
+.header-help-link {
   margin-left: 12px;
   background: rgba(255,255,255,0.1);
   color: white;
@@ -65,7 +66,16 @@ a:hover { text-decoration: underline; }
   cursor: pointer;
   font-size: 13px;
 }
-.header button:hover { background: rgba(255,255,255,0.25); }
+.header button:hover,
+.header-help-link:hover {
+  background: rgba(255,255,255,0.25);
+}
+.header-help-link {
+  text-decoration: none;
+}
+.header-help-link:hover {
+  text-decoration: none;
+}
 
 .sidebar {
   grid-area: sidebar;
@@ -253,6 +263,7 @@ a:hover { text-decoration: underline; }
 .toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
 .toolbar input, .toolbar select { padding: 6px 10px; border: 1px solid var(--c-border); border-radius: 4px; font-size: 14px; }
 .toolbar .spacer { flex: 1; }
+.toolbar-hint { color: var(--c-muted); font-size: 12px; }
 
 .dialog-backdrop {
   position: fixed;
@@ -275,3 +286,180 @@ a:hover { text-decoration: underline; }
 }
 .dialog h2 { margin-top: 0; }
 .dialog .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+
+.contentieux-detail {
+  padding: 20px 12px 8px;
+}
+
+.contentieux-detail-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(320px, 0.9fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.timeline-card {
+  min-height: 100%;
+}
+
+.timeline-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.timeline-header h3,
+.contentieux-actions-stack h3 {
+  margin: 0;
+}
+
+.timeline-header p {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--c-muted);
+}
+
+.timeline-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.timeline-item {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 12px;
+}
+
+.timeline-item-marker {
+  position: relative;
+  width: 18px;
+}
+
+.timeline-item-marker::before {
+  content: '';
+  position: absolute;
+  left: 8px;
+  top: 0;
+  bottom: -16px;
+  width: 2px;
+  background: #d6dbf5;
+}
+
+.timeline-item:last-child .timeline-item-marker::before {
+  bottom: 8px;
+}
+
+.timeline-item-marker::after {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 6px;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--c-primary);
+  box-shadow: 0 0 0 3px #eef1ff;
+}
+
+.timeline-item-body {
+  background: #f8f9fc;
+  border: 1px solid #e2e7f6;
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+
+.timeline-item-topline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.timeline-item-body p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.timeline-muted {
+  font-size: 12px;
+  color: var(--c-muted);
+}
+
+.contentieux-actions-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.contentieux-attachments-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.contentieux-attachment-item {
+  width: 100%;
+  text-align: left;
+  border: 1px solid #d6dbf5;
+  background: #f8f9fc;
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  cursor: pointer;
+}
+
+.contentieux-attachment-item.active {
+  border-color: var(--c-primary);
+  box-shadow: inset 0 0 0 1px var(--c-primary);
+}
+
+.contentieux-attachment-preview {
+  margin-top: 12px;
+  border-top: 1px solid var(--c-border);
+  padding-top: 12px;
+}
+
+.contentieux-attachment-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+
+.contentieux-attachment-toolbar-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.contentieux-attachment-frame {
+  width: 100%;
+  min-height: 420px;
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+  background: white;
+}
+
+.contentieux-attachment-image {
+  max-width: 100%;
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+  display: block;
+}
+
+.table-row-danger td {
+  background: rgba(204, 65, 83, 0.08);
+}
+
+@media (max-width: 1180px) {
+  .contentieux-detail-grid {
+    grid-template-columns: 1fr;
+  }
+}

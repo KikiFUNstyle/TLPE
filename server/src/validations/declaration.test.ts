@@ -92,3 +92,62 @@ test('n’active pas l’alerte si variation <= 30%', () => {
   assert.equal(result.hasManagerAlert, false);
   assert.equal(result.warnings.length, 0);
 });
+
+test('bloque sur nombre_faces invalide (inferieur a 1)', () => {
+  const result = validateDeclarationSubmission({
+    lignes: [makeLine({ id: 40, nombre_faces: 0 })],
+    previousYearSurfaceTotal: 0,
+  });
+  assert.ok(result.blockingErrors.some((e) => e.includes('nombre de faces invalide')));
+});
+
+test('bloque sur date_depose invalide (format incorrect)', () => {
+  const result = validateDeclarationSubmission({
+    lignes: [makeLine({ id: 50, date_pose: '2025-01-01', date_depose: '25/12/2025' })],
+    previousYearSurfaceTotal: 0,
+  });
+  assert.ok(result.blockingErrors.some((e) => e.includes('date de dépose invalide')));
+});
+
+test('declenche une alerte si variation N/N-1 est une forte baisse (> 30%)', () => {
+  const result = validateDeclarationSubmission({
+    lignes: [makeLine({ id: 60, surface_declaree: 50 })],
+    previousYearSurfaceTotal: 100,
+  });
+  assert.equal(result.blockingErrors.length, 0);
+  assert.equal(result.hasManagerAlert, true);
+  assert.ok(result.warnings.some((w) => w.includes('supérieure à 30%')));
+});
+
+test('aucune erreur ni alerte pour une declaration completement valide', () => {
+  const result = validateDeclarationSubmission({
+    lignes: [
+      makeLine({
+        id: 70,
+        surface_declaree: 15,
+        nombre_faces: 2,
+        quote_part: 0.5,
+        type_id: 1,
+        categorie: 'enseigne',
+        date_pose: '2025-01-01',
+        date_depose: '2025-12-31',
+        adresse_rue: '1 rue de la Paix',
+        adresse_cp: '75001',
+        adresse_ville: 'Paris',
+      }),
+    ],
+    previousYearSurfaceTotal: 14,
+  });
+  assert.equal(result.blockingErrors.length, 0);
+  assert.equal(result.hasManagerAlert, false);
+  assert.equal(result.warnings.length, 0);
+});
+
+test("n'active pas l'alerte si previousYearSurfaceTotal est 0", () => {
+  const result = validateDeclarationSubmission({
+    lignes: [makeLine({ id: 80, surface_declaree: 1000 })],
+    previousYearSurfaceTotal: 0,
+  });
+  assert.equal(result.blockingErrors.length, 0);
+  assert.equal(result.hasManagerAlert, false);
+});

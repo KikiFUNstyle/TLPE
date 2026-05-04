@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { db, initSchema } from '../db';
-import { ensureDeclarationReceipt, getDeclarationReceiptByToken, getDeclarationReceiptRecord } from './declarationReceipt';
+import { ensureDeclarationReceipt, getDeclarationReceiptByToken, getDeclarationReceiptRecord, createReceiptDownloadUrl, getReceiptDownloadPath } from './declarationReceipt';
 
 function resetFixtures() {
   initSchema();
@@ -127,6 +127,158 @@ test('ensureDeclarationReceipt génère le PDF, persiste le token et expose la v
   assert.ok(byToken);
   assert.equal(byToken?.declaration_id, fx.declarationId);
   assert.equal(byToken?.payload_hash, receipt.payloadHash);
+});
+
+test('ensureDeclarationReceipt marque un échec si l’email assujetti est absent', async () => {
+  const fx = resetFixtures();
+  process.env.TLPE_EMAIL_DELIVERY_MODE = 'mock-success';
+
+  const receipt = await ensureDeclarationReceipt({
+    declarationId: fx.declarationId,
+    numeroDeclaration: 'DEC-2026-000999',
+    payloadHash: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    generatedBy: fx.userId,
+    submittedAtIsoUtc: '2026-03-15T08:20:00.000Z',
+    assujetti: {
+      id: fx.assujettiId,
+      identifiantTlpe: 'TLPE-RCPT-1',
+      raisonSociale: 'Assujetti Recette',
+      email: null,
+    },
+    lignes: [],
+  });
+
+  assert.equal(receipt.emailStatus, 'echec');
+  assert.equal(receipt.emailSentAt, null);
+  assert.match(receipt.emailError ?? '', /Email assujetti manquant/);
+});
+
+test('ensureDeclarationReceipt marque un échec en mode mock-failure', async () => {
+  const fx = resetFixtures();
+  process.env.TLPE_EMAIL_DELIVERY_MODE = 'mock-failure';
+
+  const receipt = await ensureDeclarationReceipt({
+    declarationId: fx.declarationId,
+    numeroDeclaration: 'DEC-2026-000999',
+    payloadHash: 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+    generatedBy: fx.userId,
+    submittedAtIsoUtc: '2026-03-15T08:20:00.000Z',
+    assujetti: {
+      id: fx.assujettiId,
+      identifiantTlpe: 'TLPE-RCPT-1',
+      raisonSociale: 'Assujetti Recette',
+      email: 'recette@example.fr',
+    },
+    lignes: [],
+  });
+
+  assert.equal(receipt.emailStatus, 'echec');
+  assert.match(receipt.emailError ?? '', /mock-failure/);
+  assert.equal(receipt.emailSentAt, null);
+});
+
+test('createReceiptDownloadUrl encode correctement les segments et getReceiptDownloadPath résout le chemin local', () => {
+  const relativePath = 'receipts/declarations/token test/accusé.pdf';
+
+  assert.equal(
+    createReceiptDownloadUrl(relativePath),
+    '/api/declarations/receipts/receipts/declarations/token%20test/accus%C3%A9.pdf',
+  );
+
+  const absolutePath = getReceiptDownloadPath(relativePath);
+  assert.equal(absolutePath, path.resolve(__dirname, '..', '..', 'data', relativePath));
+});
+
+test('getDeclarationReceiptByToken retourne null pour un jeton inconnu', () => {
+  resetFixtures();
+  assert.equal(getDeclarationReceiptByToken('token-inconnu'), null);
+});
+
+test('getDeclarationReceiptRecord retourne null pour une déclaration inconnue', () => {
+  resetFixtures();
+  assert.equal(getDeclarationReceiptRecord(999999), null);
+});
+
+test('ensureDeclarationReceipt laisse l’email en pending si le SMTP n’est pas configuré', async () => {
+  const fx = resetFixtures();
+  delete process.env.TLPE_EMAIL_DELIVERY_MODE;
+
+  const receipt = await ensureDeclarationReceipt({
+    declarationId: fx.declarationId,
+    numeroDeclaration: 'DEC-2026-000999',
+    payloadHash: 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+    generatedBy: fx.userId,
+    submittedAtIsoUtc: '2026-03-15T08:20:00.000Z',
+    assujetti: {
+      id: fx.assujettiId,
+      identifiantTlpe: 'TLPE-RCPT-1',
+      raisonSociale: 'Assujetti Recette',
+      email: 'recette@example.fr',
+    },
+    lignes: [],
+  });
+
+  assert.equal(receipt.emailStatus, 'pending');
+  assert.equal(receipt.emailSentAt, null);
+  assert.match(receipt.emailError ?? '', /SMTP non configuré|Envoi différé/);
+});
+
+test('ensureDeclarationReceipt accepte un horodatage UTC sans suffixe timezone', async () => {
+  const fx = resetFixtures();
+  process.env.TLPE_EMAIL_DELIVERY_MODE = 'mock-success';
+
+  const receipt = await ensureDeclarationReceipt({
+    declarationId: fx.declarationId,
+    numeroDeclaration: 'DEC-2026-000999',
+    payloadHash: 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+    generatedBy: fx.userId,
+    submittedAtIsoUtc: '2026-03-15T08:20:00',
+    assujetti: {
+      id: fx.assujettiId,
+      identifiantTlpe: 'TLPE-RCPT-1',
+      raisonSociale: 'Assujetti Recette',
+      email: 'recette@example.fr',
+    },
+    lignes: [],
+  });
+
+  assert.equal(receipt.emailStatus, 'envoye');
+  assert.ok(receipt.generatedAt);
+});
+
+test('ensureDeclarationReceipt génère plusieurs pages quand la déclaration contient de nombreuses lignes', async () => {
+  const fx = resetFixtures();
+  process.env.TLPE_EMAIL_DELIVERY_MODE = 'mock-success';
+
+  const lignes = Array.from({ length: 35 }, (_, index) => ({
+    dispositifIdentifiant: `DSP-RCPT-${index + 1}`,
+    typeLibelle: `Enseigne test ${index + 1}`,
+    categorie: 'enseigne',
+    surfaceDeclaree: 4.5 + index,
+    nombreFaces: (index % 3) + 1,
+    adresseRue: `${index + 1} rue Test`,
+    adresseCp: '75001',
+    adresseVille: 'Paris',
+  }));
+
+  const receipt = await ensureDeclarationReceipt({
+    declarationId: fx.declarationId,
+    numeroDeclaration: 'DEC-2026-000999',
+    payloadHash: 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
+    generatedBy: fx.userId,
+    submittedAtIsoUtc: '2026-03-15T08:20:00.000Z',
+    assujetti: {
+      id: fx.assujettiId,
+      identifiantTlpe: 'TLPE-RCPT-1',
+      raisonSociale: 'Assujetti Recette',
+      email: 'recette@example.fr',
+    },
+    lignes,
+  });
+
+  const absPdf = path.resolve(__dirname, '..', '..', 'data', receipt.pdfRelativePath);
+  assert.ok(fs.existsSync(absPdf));
+  assert.ok(fs.statSync(absPdf).size > 1500);
 });
 
 test('ensureDeclarationReceipt est idempotent pour un hash identique', async () => {

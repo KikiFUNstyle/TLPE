@@ -1,0 +1,11 @@
+# OWASP ZAP baseline rules for TLPE
+# Format: <pluginId>\t<LEVEL>\t<justification>
+# Levels supported by ZAP: PASS, IGNORE, INFO, WARN, FAIL, OUTOFSCOPE
+#
+# Politique projet:
+# - documenter ici chaque faux positif ou exclusion validé(e), avec justification métier/technique
+# - privilégier WARN/FAIL par défaut; n'utiliser IGNORE qu'après qualification explicite
+# - conserver le lien vers l'issue/PR de qualification dans la justification
+#
+# Exemple (à décommenter et adapter si un faux positif est confirmé) :
+# 10038	IGNORE	Faux positif validé sur endpoint health sans cookie de session — voir issue #47

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { initSchema, db } from './db';
 import { hashPassword } from './auth';
-import { detectMimeFromMagicBytes } from './routes/piecesJointes';
+import { detectMimeFromMagicBytes, isMimeAllowedForEntity, readStoredFileBuffer, saveFile } from './routes/piecesJointes';
 
 const uploadsRoot = path.resolve(__dirname, '..', 'data', 'uploads');
 
@@ -24,6 +24,7 @@ function seedFixture() {
   db.exec('DELETE FROM pieces_jointes');
   db.exec('DELETE FROM lignes_declaration');
   db.exec('DELETE FROM declarations');
+  db.exec('DELETE FROM controles');
   db.exec('DELETE FROM dispositifs');
   db.exec('DELETE FROM campagnes');
   db.exec('DELETE FROM audit_log');
@@ -122,6 +123,10 @@ test('pieces_jointes schema supports deleted_at and indexes', () => {
   assert.ok(colNames.has('uploaded_by'));
   assert.ok(colNames.has('created_at'));
   assert.ok(colNames.has('deleted_at'));
+  assert.ok(colNames.has('type_piece'));
+
+  const createSql = (db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'pieces_jointes'").get() as { sql: string }).sql;
+  assert.match(createSql, /type_piece\s+TEXT\s+CHECK\s*\(\s*type_piece\s+IS\s+NULL\s+OR\s*\(\s*entite\s*=\s*'contentieux'\s+AND\s+type_piece\s+IN\s*\('courrier-admin','courrier-contribuable','decision','jugement'\)\s*\)\s*\)/i);
 
   const indexes = db.prepare("PRAGMA index_list('pieces_jointes')").all() as Array<{ name: string }>;
   const names = new Set(indexes.map((i) => i.name));
@@ -222,6 +227,26 @@ test('storage path policy keeps files under server/data/uploads', () => {
   assert.ok(!fs.existsSync(abs));
 });
 
+test('saveFile chiffre les pièces jointes au repos et readStoredFileBuffer les restitue en clair', async () => {
+  process.env.TLPE_DATA_KEY = Buffer.alloc(32, 5).toString('base64');
+  delete process.env.TLPE_DATA_KEYS;
+  delete process.env.TLPE_DATA_KEY_VERSION;
+
+  const relPath = path.posix.join('contentieux', '99', '2026', '04', 'secret.pdf');
+  const abs = path.join(uploadsRoot, relPath);
+  const payload = Buffer.from('%PDF-1.7\nsecret-piece-jointe', 'utf8');
+
+  await saveFile(relPath, payload, 'application/pdf');
+
+  const storedBytes = fs.readFileSync(abs);
+  assert.equal(storedBytes.includes('secret-piece-jointe'), false);
+
+  const restored = await readStoredFileBuffer(relPath);
+  assert.deepEqual(restored, payload);
+
+  fs.unlinkSync(abs);
+});
+
 test('detectMimeFromMagicBytes - detects allowed formats and rejects unknown payloads', () => {
   const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
   const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
@@ -232,4 +257,11 @@ test('detectMimeFromMagicBytes - detects allowed formats and rejects unknown pay
   assert.equal(detectMimeFromMagicBytes(png), 'image/png');
   assert.equal(detectMimeFromMagicBytes(pdf), 'application/pdf');
   assert.equal(detectMimeFromMagicBytes(txt), null);
+});
+
+test('isMimeAllowedForEntity limite les contrôles aux photos jpeg/png', () => {
+  assert.equal(isMimeAllowedForEntity('controle', 'image/jpeg'), true);
+  assert.equal(isMimeAllowedForEntity('controle', 'image/png'), true);
+  assert.equal(isMimeAllowedForEntity('controle', 'application/pdf'), false);
+  assert.equal(isMimeAllowedForEntity('titre', 'application/pdf'), true);
 });

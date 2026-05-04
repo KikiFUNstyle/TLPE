@@ -15,9 +15,25 @@ CREATE TABLE IF NOT EXISTS users (
   role          TEXT NOT NULL CHECK (role IN ('admin','gestionnaire','financier','controleur','contribuable')),
   assujetti_id  INTEGER,
   actif         INTEGER NOT NULL DEFAULT 1,
+  two_factor_enabled INTEGER NOT NULL DEFAULT 0 CHECK (two_factor_enabled IN (0,1)),
+  two_factor_secret_encrypted TEXT,
+  two_factor_pending_secret_encrypted TEXT,
   created_at    TEXT NOT NULL DEFAULT (datetime('now')),
   FOREIGN KEY (assujetti_id) REFERENCES assujettis(id) ON DELETE SET NULL
 );
+
+-- =====================================================================
+-- Codes de récupération 2FA (usage unique)
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS codes_recuperation (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id     INTEGER NOT NULL,
+  code_hash   TEXT NOT NULL,
+  used_at     TEXT,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_codes_recuperation_user ON codes_recuperation(user_id, used_at);
 
 -- =====================================================================
 -- Referentiel : zones tarifaires
@@ -98,7 +114,8 @@ CREATE TABLE IF NOT EXISTS assujettis (
   email            TEXT,
   telephone        TEXT,
   portail_actif    INTEGER NOT NULL DEFAULT 0,
-  statut           TEXT NOT NULL DEFAULT 'actif' CHECK (statut IN ('actif','inactif','radie','contentieux')),
+  statut           TEXT NOT NULL DEFAULT 'actif' CHECK (statut IN ('actif','inactif','radie','contentieux','email_invalide')),
+  email_invalide   INTEGER NOT NULL DEFAULT 0 CHECK (email_invalide IN (0,1)),
   notes            TEXT,
   created_at       TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
@@ -191,19 +208,23 @@ CREATE INDEX IF NOT EXISTS idx_magic_links_campaign_assujetti ON invitation_magi
 
 CREATE TABLE IF NOT EXISTS notifications_email (
   id                 INTEGER PRIMARY KEY AUTOINCREMENT,
-  campagne_id         INTEGER NOT NULL,
+  campagne_id         INTEGER,
   assujetti_id        INTEGER NOT NULL,
   email_destinataire  TEXT NOT NULL,
   objet               TEXT NOT NULL,
   corps               TEXT NOT NULL,
   template_code       TEXT NOT NULL DEFAULT 'invitation_campagne',
-  relance_niveau      TEXT CHECK (relance_niveau IN ('J-30','J-15','J-7')),
+  relance_niveau      TEXT CHECK (relance_niveau IN ('J-30','J-15','J-7','depasse')),
   piece_jointe_path   TEXT,
+  pieces_jointes_json TEXT,
   magic_link          TEXT,
   mode                TEXT NOT NULL DEFAULT 'auto' CHECK (mode IN ('auto','manual')),
   statut              TEXT NOT NULL DEFAULT 'envoye' CHECK (statut IN ('pending','envoye','echec')),
+  tentatives          INTEGER NOT NULL DEFAULT 0,
+  prochain_essai_at   TEXT,
   erreur              TEXT,
   sent_at             TEXT,
+  provider_message_id TEXT,
   created_by          INTEGER,
   created_at          TEXT NOT NULL DEFAULT (datetime('now')),
   FOREIGN KEY (campagne_id) REFERENCES campagnes(id) ON DELETE CASCADE,
@@ -264,6 +285,14 @@ CREATE TABLE IF NOT EXISTS declarations (
   UNIQUE (assujetti_id, annee)
 );
 
+CREATE TABLE IF NOT EXISTS declaration_sequences (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  annee            INTEGER NOT NULL,
+  numero_ordre     INTEGER NOT NULL,
+  created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (annee, numero_ordre)
+);
+
 -- Accuse de reception de soumission (US3.6)
 CREATE TABLE IF NOT EXISTS declaration_receipts (
   id                  INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -314,11 +343,28 @@ CREATE TABLE IF NOT EXISTS titres (
   montant         REAL NOT NULL,
   date_emission   TEXT NOT NULL,
   date_echeance   TEXT NOT NULL,
-  statut          TEXT NOT NULL DEFAULT 'emis' CHECK (statut IN ('emis','paye_partiel','paye','impaye','mise_en_demeure','admis_en_non_valeur')),
+  statut          TEXT NOT NULL DEFAULT 'emis' CHECK (statut IN ('emis','paye_partiel','paye','impaye','mise_en_demeure','transmis_comptable','admis_en_non_valeur')),
   montant_paye    REAL NOT NULL DEFAULT 0,
   FOREIGN KEY (declaration_id) REFERENCES declarations(id),
   FOREIGN KEY (assujetti_id) REFERENCES assujettis(id)
 );
+
+CREATE TABLE IF NOT EXISTS titres_executoires (
+  id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+  titre_id              INTEGER NOT NULL UNIQUE,
+  numero_flux           INTEGER NOT NULL UNIQUE,
+  xml_filename          TEXT NOT NULL,
+  xml_content           TEXT NOT NULL,
+  xml_hash              TEXT NOT NULL,
+  mention_signature     TEXT NOT NULL,
+  xsd_validation_ok     INTEGER NOT NULL DEFAULT 0 CHECK (xsd_validation_ok IN (0,1)),
+  xsd_validation_report TEXT,
+  transmitted_at        TEXT NOT NULL DEFAULT (datetime('now')),
+  transmitted_by        INTEGER,
+  FOREIGN KEY (titre_id) REFERENCES titres(id) ON DELETE CASCADE,
+  FOREIGN KEY (transmitted_by) REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_titres_executoires_transmitted_at ON titres_executoires(transmitted_at DESC);
 
 -- Exports comptables PESV2 Hélios (US5.2)
 CREATE TABLE IF NOT EXISTS pesv2_exports (
@@ -495,6 +541,27 @@ CREATE INDEX IF NOT EXISTS idx_rapprochements_log_ligne ON rapprochements_log(li
 CREATE INDEX IF NOT EXISTS idx_rapprochements_log_created_at ON rapprochements_log(created_at DESC, id DESC);
 
 -- =====================================================================
+-- Recouvrement des impayés / historique par titre
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS recouvrement_actions (
+  id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+  titre_id           INTEGER NOT NULL,
+  niveau             TEXT NOT NULL CHECK (niveau IN ('J+10','J+30','J+60','retour_comptable')),
+  action_type        TEXT NOT NULL CHECK (action_type IN ('rappel_email','mise_en_demeure','transmission_comptable','admission_non_valeur')),
+  statut             TEXT NOT NULL CHECK (statut IN ('pending','envoye','echec','transmis','classe')),
+  email_destinataire TEXT,
+  piece_jointe_path  TEXT,
+  details            TEXT,
+  created_by         INTEGER,
+  created_at         TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (titre_id) REFERENCES titres(id) ON DELETE CASCADE,
+  FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+  UNIQUE (titre_id, niveau, action_type)
+);
+CREATE INDEX IF NOT EXISTS idx_recouvrement_actions_titre ON recouvrement_actions(titre_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_recouvrement_actions_niveau ON recouvrement_actions(niveau, statut, created_at DESC);
+
+-- =====================================================================
 -- Contentieux
 -- =====================================================================
 CREATE TABLE IF NOT EXISTS contentieux (
@@ -504,26 +571,80 @@ CREATE TABLE IF NOT EXISTS contentieux (
   titre_id        INTEGER,
   type            TEXT NOT NULL CHECK (type IN ('gracieux','contentieux','moratoire','controle')),
   montant_litige  REAL,
+  montant_degreve REAL CHECK (montant_degreve IS NULL OR montant_degreve >= 0),
   date_ouverture  TEXT NOT NULL DEFAULT (date('now')),
+  date_limite_reponse TEXT,
+  date_limite_reponse_initiale TEXT,
+  delai_prolonge_justification TEXT,
+  delai_prolonge_par INTEGER,
+  delai_prolonge_at TEXT,
   date_cloture    TEXT,
   statut          TEXT NOT NULL DEFAULT 'ouvert' CHECK (statut IN ('ouvert','instruction','clos_maintenu','degrevement_partiel','degrevement_total','non_lieu')),
   description     TEXT,
   decision        TEXT,
   FOREIGN KEY (assujetti_id) REFERENCES assujettis(id),
-  FOREIGN KEY (titre_id) REFERENCES titres(id)
+  FOREIGN KEY (titre_id) REFERENCES titres(id),
+  FOREIGN KEY (delai_prolonge_par) REFERENCES users(id) ON DELETE SET NULL
 );
+
+CREATE TABLE IF NOT EXISTS contentieux_sequences (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  annee            INTEGER NOT NULL,
+  numero_ordre     INTEGER NOT NULL,
+  created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (annee, numero_ordre)
+);
+
+CREATE TABLE IF NOT EXISTS contentieux_alerts (
+  id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+  contentieux_id           INTEGER NOT NULL,
+  assujetti_id             INTEGER NOT NULL,
+  niveau_alerte            TEXT NOT NULL CHECK (niveau_alerte IN ('J-30','J-7','depasse')),
+  date_reference           TEXT NOT NULL,
+  date_echeance            TEXT NOT NULL,
+  days_remaining           INTEGER NOT NULL,
+  overdue                  INTEGER NOT NULL DEFAULT 0 CHECK (overdue IN (0,1)),
+  email_status             TEXT NOT NULL DEFAULT 'pending' CHECK (email_status IN ('pending','envoye','echec')),
+  email_error              TEXT,
+  email_sent_at            TEXT,
+  email_notification_id    INTEGER,
+  created_by               INTEGER,
+  created_at               TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (contentieux_id) REFERENCES contentieux(id) ON DELETE CASCADE,
+  FOREIGN KEY (assujetti_id) REFERENCES assujettis(id) ON DELETE CASCADE,
+  FOREIGN KEY (email_notification_id) REFERENCES notifications_email(id) ON DELETE SET NULL,
+  FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+  UNIQUE (contentieux_id, niveau_alerte, date_echeance)
+);
+CREATE INDEX IF NOT EXISTS idx_contentieux_alerts_contentieux ON contentieux_alerts(contentieux_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_contentieux_alerts_echeance ON contentieux_alerts(date_echeance, niveau_alerte);
+
+CREATE TABLE IF NOT EXISTS evenements_contentieux (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  contentieux_id   INTEGER NOT NULL,
+  type             TEXT NOT NULL CHECK (type IN ('ouverture','courrier','statut','decision','jugement','relance','commentaire')),
+  date             TEXT NOT NULL,
+  auteur           TEXT,
+  description      TEXT NOT NULL,
+  piece_jointe_id  INTEGER,
+  created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (contentieux_id) REFERENCES contentieux(id) ON DELETE CASCADE,
+  FOREIGN KEY (piece_jointe_id) REFERENCES pieces_jointes(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_evenements_contentieux_contentieux ON evenements_contentieux(contentieux_id, date, created_at);
 
 -- =====================================================================
 -- Pieces jointes
 -- =====================================================================
 CREATE TABLE IF NOT EXISTS pieces_jointes (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
-  entite        TEXT NOT NULL CHECK (entite IN ('dispositif','declaration','contentieux')),
+  entite        TEXT NOT NULL CHECK (entite IN ('dispositif','declaration','contentieux','titre','controle')),
   entite_id     INTEGER NOT NULL,
   nom           TEXT NOT NULL,
   mime_type     TEXT NOT NULL,
   taille        INTEGER NOT NULL CHECK (taille > 0),
   chemin        TEXT NOT NULL,
+  type_piece    TEXT CHECK (type_piece IS NULL OR (entite = 'contentieux' AND type_piece IN ('courrier-admin','courrier-contribuable','decision','jugement'))),
   uploaded_by   INTEGER,
   created_at    TEXT NOT NULL DEFAULT (datetime('now')),
   deleted_at    TEXT,
@@ -531,6 +652,82 @@ CREATE TABLE IF NOT EXISTS pieces_jointes (
 );
 CREATE INDEX IF NOT EXISTS idx_pieces_jointes_entite ON pieces_jointes(entite, entite_id, deleted_at);
 CREATE INDEX IF NOT EXISTS idx_pieces_jointes_uploaded_by ON pieces_jointes(uploaded_by);
+
+-- =====================================================================
+-- Contrôles terrain
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS controles (
+  id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+  dispositif_id          INTEGER,
+  agent_id               INTEGER NOT NULL,
+  date_controle          TEXT NOT NULL,
+  latitude               REAL NOT NULL,
+  longitude              REAL NOT NULL,
+  surface_mesuree        REAL NOT NULL CHECK (surface_mesuree > 0),
+  nombre_faces_mesurees  INTEGER NOT NULL CHECK (nombre_faces_mesurees >= 1 AND nombre_faces_mesurees <= 4),
+  ecart_detecte          INTEGER NOT NULL DEFAULT 0 CHECK (ecart_detecte IN (0,1)),
+  ecart_description      TEXT,
+  statut                 TEXT NOT NULL DEFAULT 'saisi' CHECK (statut IN ('saisi','cloture')),
+  created_at             TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at             TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (dispositif_id) REFERENCES dispositifs(id) ON DELETE SET NULL,
+  FOREIGN KEY (agent_id) REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_controles_date ON controles(date_controle DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_controles_dispositif ON controles(dispositif_id);
+CREATE INDEX IF NOT EXISTS idx_controles_agent ON controles(agent_id);
+
+CREATE TABLE IF NOT EXISTS titre_mises_en_demeure (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  numero           TEXT NOT NULL UNIQUE,
+  titre_id         INTEGER NOT NULL UNIQUE,
+  piece_jointe_id  INTEGER NOT NULL UNIQUE,
+  annee            INTEGER NOT NULL,
+  mode             TEXT NOT NULL DEFAULT 'manuel' CHECK (mode IN ('manuel','batch')),
+  generated_by     INTEGER,
+  created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (titre_id) REFERENCES titres(id) ON DELETE CASCADE,
+  FOREIGN KEY (piece_jointe_id) REFERENCES pieces_jointes(id) ON DELETE CASCADE,
+  FOREIGN KEY (generated_by) REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_titre_mises_en_demeure_annee ON titre_mises_en_demeure(annee, numero);
+
+CREATE TABLE IF NOT EXISTS titre_mises_en_demeure_sequences (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  annee            INTEGER NOT NULL,
+  numero_ordre     INTEGER NOT NULL,
+  created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (annee, numero_ordre)
+);
+
+CREATE TABLE IF NOT EXISTS rapports_exports (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  type_rapport  TEXT NOT NULL CHECK (type_rapport IN ('role_tlpe','etat_recouvrement','comparatif_pluriannuel','suivi_relances','synthese_contentieux','recettes_geographiques')),
+  annee         INTEGER NOT NULL,
+  format        TEXT NOT NULL CHECK (format IN ('pdf','xlsx')),
+  filename      TEXT NOT NULL,
+  storage_path  TEXT NOT NULL,
+  content_hash  TEXT NOT NULL,
+  titres_count  INTEGER NOT NULL DEFAULT 0,
+  total_montant REAL NOT NULL DEFAULT 0,
+  generated_by  INTEGER,
+  exported_at   TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (generated_by) REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rapports_exports_type_annee ON rapports_exports(type_rapport, annee, exported_at DESC);
+
+CREATE TABLE IF NOT EXISTS exports_sauvegardes (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id        INTEGER NOT NULL,
+  nom            TEXT NOT NULL,
+  entite         TEXT NOT NULL CHECK (entite IN ('assujettis','dispositifs','declarations','titres','paiements','contentieux')),
+  configuration  TEXT NOT NULL,
+  created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at     TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  UNIQUE (user_id, nom)
+);
+CREATE INDEX IF NOT EXISTS idx_exports_sauvegardes_user_updated ON exports_sauvegardes(user_id, updated_at DESC);
 
 -- =====================================================================
 -- Audit log (traçabilite cf. section 12.2)
@@ -548,3 +745,4 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 CREATE INDEX IF NOT EXISTS idx_audit_entite ON audit_log(entite, entite_id);
 CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(user_id);
+CREATE INDEX IF NOT EXISTS idx_audit_created_at ON audit_log(created_at DESC, id DESC);

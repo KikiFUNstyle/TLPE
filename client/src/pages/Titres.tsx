@@ -2,9 +2,24 @@ import { FormEvent, useEffect, useState } from 'react';
 import { api, apiBlob, apiBlobWithMetadata } from '../api';
 import { formatDate, formatEuro } from '../format';
 import { useAuth } from '../auth';
+import { TitreRecouvrementHistory, type RecouvrementAction } from './TitreRecouvrementHistory';
 import { buildBordereauFilename, buildBordereauPath, canExportBordereau } from './titresBordereau';
+import { buildRoleTlpeFilename, buildRoleTlpePath, canExportRoleTlpe } from './roleTlpeReport';
+import {
+  canGenerateMiseEnDemeure,
+  getBatchEligibleTitreIds,
+  getMiseEnDemeureActionLabel,
+} from './titresMiseEnDemeure';
 import { parsePayfipConfirmationSearch } from './payfip';
 import { PayfipConfirmationView } from './PayfipConfirmation';
+import {
+  TITRE_STATUS_OPTIONS,
+  canAdmettreNonValeur,
+  canRendreExecutoire,
+  canViewRecouvrementHistory,
+  getTitreStatusBadgeVariant,
+  getTitreStatusLabel,
+} from './titreStatut';
 
 interface Titre {
   id: number;
@@ -25,6 +40,11 @@ interface CampagneOption {
   statut: string;
 }
 
+interface TitreHistoriqueResponse {
+  titre: Titre;
+  actions: RecouvrementAction[];
+}
+
 export default function Titres() {
   const { hasRole } = useAuth();
   const [rows, setRows] = useState<Titre[]>([]);
@@ -37,8 +57,14 @@ export default function Titres() {
   const [statut, setStatut] = useState('');
   const [err, setErr] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
-  const [exporting, setExporting] = useState<null | 'pdf' | 'xlsx' | 'pesv2'>(null);
+  const [exporting, setExporting] = useState<
+    null | 'bordereau-pdf' | 'bordereau-xlsx' | 'role-pdf' | 'role-xlsx' | 'pesv2' | 'mise-en-demeure-batch'
+  >(null);
+  const [downloadingMiseEnDemeureId, setDownloadingMiseEnDemeureId] = useState<number | null>(null);
   const [paiementFor, setPaiementFor] = useState<Titre | null>(null);
+  const [historyFor, setHistoryFor] = useState<Titre | null>(null);
+  const [historyData, setHistoryData] = useState<TitreHistoriqueResponse | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [payfipConfirmation, setPayfipConfirmation] = useState<ReturnType<typeof parsePayfipConfirmationSearch> | null>(null);
 
   useEffect(() => {
@@ -78,7 +104,10 @@ export default function Titres() {
   }, []);
 
   const canManageTitres = hasRole('admin', 'financier');
+  const selectedMiseEnDemeureTitreIds = getBatchEligibleTitreIds(rows, canManageTitres);
+  const canRunMiseEnDemeureBatch = canManageTitres && exporting === null && selectedMiseEnDemeureTitreIds.length > 0;
   const canExport = canExportBordereau({ annee, canManage: canManageTitres });
+  const canExportRole = canExportRoleTlpe({ annee, canManage: canManageTitres });
   const canExportPesv2 =
     canManageTitres &&
     exporting === null &&
@@ -87,7 +116,7 @@ export default function Titres() {
 
   const downloadBordereau = async (format: 'pdf' | 'xlsx') => {
     if (!canExport) return;
-    setExporting(format);
+    setExporting(format === 'pdf' ? 'bordereau-pdf' : 'bordereau-xlsx');
     setErr(null);
     setInfo(null);
     try {
@@ -101,6 +130,29 @@ export default function Titres() {
       anchor.remove();
       window.URL.revokeObjectURL(href);
       setInfo(`Bordereau ${format.toUpperCase()} téléchargé.`);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setExporting(null);
+    }
+  };
+
+  const downloadRoleTlpe = async (format: 'pdf' | 'xlsx') => {
+    if (!canExportRole) return;
+    setExporting(format === 'pdf' ? 'role-pdf' : 'role-xlsx');
+    setErr(null);
+    setInfo(null);
+    try {
+      const blob = await apiBlob(buildRoleTlpePath(annee, format));
+      const href = window.URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = href;
+      anchor.download = buildRoleTlpeFilename(annee, format);
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(href);
+      setInfo(`Rôle TLPE ${format.toUpperCase()} téléchargé.`);
     } catch (e) {
       setErr((e as Error).message);
     } finally {
@@ -164,6 +216,58 @@ export default function Titres() {
     }
   };
 
+  const downloadMiseEnDemeure = async (titre: Titre) => {
+    if (!canGenerateMiseEnDemeure(titre, canManageTitres)) return;
+    setDownloadingMiseEnDemeureId(titre.id);
+    setErr(null);
+    setInfo(null);
+    try {
+      const payload = await api<{
+        numero: string;
+        download_url: string;
+      }>(`/api/titres/${titre.id}/mise-en-demeure`, {
+        method: 'POST',
+      });
+      const blob = await apiBlob(payload.download_url);
+      const href = window.URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = href;
+      anchor.download = `${payload.numero}.pdf`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(href);
+      setInfo(`Mise en demeure ${payload.numero} téléchargée.`);
+      load();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setDownloadingMiseEnDemeureId(null);
+    }
+  };
+
+  const runMiseEnDemeureBatch = async () => {
+    if (!canRunMiseEnDemeureBatch) return;
+    setExporting('mise-en-demeure-batch');
+    setErr(null);
+    setInfo(null);
+    try {
+      const payload = await api<{
+        count: number;
+        items: Array<{ numero: string }>;
+      }>('/api/titres/mises-en-demeure/batch', {
+        method: 'POST',
+        body: JSON.stringify({ titre_ids: selectedMiseEnDemeureTitreIds }),
+      });
+      setInfo(`Lot de ${payload.count} mises en demeure généré (${payload.items.map((item) => item.numero).join(', ')}).`);
+      load();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setExporting(null);
+    }
+  };
+
   const initiatePayfipPayment = async (titre: Titre) => {
     setErr(null);
     setInfo(null);
@@ -178,6 +282,77 @@ export default function Titres() {
       });
       setInfo(`Redirection PayFip préparée pour le titre ${payload.numero_titre} (${formatEuro(payload.montant)}).`);
       window.location.href = payload.redirect_url;
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  };
+
+  const openHistory = async (titre: Titre) => {
+    setHistoryFor(titre);
+    setHistoryData(null);
+    setHistoryLoading(true);
+    setErr(null);
+    try {
+      const payload = await api<TitreHistoriqueResponse>(`/api/titres/${titre.id}/historique`);
+      setHistoryData(payload);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  const refreshHistoryIfOpen = async (titre: Titre) => {
+    if (historyFor?.id !== titre.id) return;
+    try {
+      const payload = await api<TitreHistoriqueResponse>(`/api/titres/${titre.id}/historique`);
+      setHistoryData(payload);
+      setHistoryFor(payload.titre);
+    } catch {
+      // noop: l'erreur principale est déjà affichée via l'action initiatrice
+    }
+  };
+
+  const downloadTitreExecutoire = async (titre: Titre) => {
+    setErr(null);
+    setInfo(null);
+    try {
+      const { blob, filename } = await apiBlobWithMetadata(`/api/titres/${titre.id}/rendre-executoire`, {
+        method: 'POST',
+      });
+      const href = window.URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = href;
+      anchor.download = filename || `titre-executoire-${titre.numero}.xml`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(href);
+      setInfo(`Titre ${titre.numero} transmis au comptable public.`);
+      load();
+      await refreshHistoryIfOpen(titre);
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  };
+
+  const markAdmisNonValeur = async (titre: Titre) => {
+    const commentaire = window.prompt(
+      'Commentaire de retour comptable (admission en non-valeur) :',
+      'Retour comptable negatif - creance irrecouvrable',
+    );
+    if (commentaire === null) return;
+
+    setErr(null);
+    setInfo(null);
+    try {
+      await api(`/api/titres/${titre.id}/admettre-non-valeur`, {
+        method: 'POST',
+        body: JSON.stringify({ commentaire }),
+      });
+      setInfo(`Titre ${titre.numero} admis en non-valeur.`);
+      load();
+      await refreshHistoryIfOpen(titre);
     } catch (e) {
       setErr((e as Error).message);
     }
@@ -203,12 +378,11 @@ export default function Titres() {
           <option>{new Date().getFullYear()}</option>
         </select>
         <select value={statut} onChange={(e) => setStatut(e.target.value)}>
-          <option value="">Tous statuts</option>
-          <option value="emis">Emis</option>
-          <option value="paye_partiel">Paye partiel</option>
-          <option value="paye">Paye</option>
-          <option value="impaye">Impaye</option>
-          <option value="mise_en_demeure">Mise en demeure</option>
+          {TITRE_STATUS_OPTIONS.map((option) => (
+            <option key={option.value || 'all'} value={option.value}>
+              {option.label}
+            </option>
+          ))}
         </select>
         <div className="spacer" />
         {canManageTitres && (
@@ -221,7 +395,7 @@ export default function Titres() {
               }}
               title={canExport ? 'Exporter le bordereau PDF' : 'Sélectionner une année pour exporter le bordereau'}
             >
-              {exporting === 'pdf' ? 'Export PDF...' : 'Bordereau PDF'}
+              {exporting === 'bordereau-pdf' ? 'Export PDF...' : 'Bordereau PDF'}
             </button>
             <button
               className="btn secondary"
@@ -231,7 +405,27 @@ export default function Titres() {
               }}
               title={canExport ? 'Exporter le bordereau Excel' : 'Sélectionner une année pour exporter le bordereau'}
             >
-              {exporting === 'xlsx' ? 'Export Excel...' : 'Bordereau Excel'}
+              {exporting === 'bordereau-xlsx' ? 'Export Excel...' : 'Bordereau Excel'}
+            </button>
+            <button
+              className="btn secondary"
+              disabled={!canExportRole || exporting !== null}
+              onClick={() => {
+                void downloadRoleTlpe('pdf');
+              }}
+              title={canExportRole ? 'Générer le rôle TLPE PDF' : 'Sélectionner une année pour générer le rôle TLPE'}
+            >
+              {exporting === 'role-pdf' ? 'Export rôle PDF...' : 'Rôle TLPE PDF'}
+            </button>
+            <button
+              className="btn secondary"
+              disabled={!canExportRole || exporting !== null}
+              onClick={() => {
+                void downloadRoleTlpe('xlsx');
+              }}
+              title={canExportRole ? 'Générer le rôle TLPE Excel' : 'Sélectionner une année pour générer le rôle TLPE'}
+            >
+              {exporting === 'role-xlsx' ? 'Export rôle Excel...' : 'Rôle TLPE Excel'}
             </button>
             <select value={pesv2SelectionMode} onChange={(e) => setPesv2SelectionMode(e.target.value as 'campagne' | 'periode')} title="Mode de sélection PESV2">
               <option value="campagne">PESV2 par campagne</option>
@@ -272,6 +466,25 @@ export default function Titres() {
             >
               {exporting === 'pesv2' ? 'Export PESV2...' : 'Export PESV2 XML'}
             </button>
+            <button
+              className="btn secondary"
+              disabled={!canRunMiseEnDemeureBatch}
+              onClick={() => {
+                void runMiseEnDemeureBatch();
+              }}
+              title={
+                selectedMiseEnDemeureTitreIds.length > 0
+                  ? `Générer un lot pour ${selectedMiseEnDemeureTitreIds.length} titre(s) éligible(s)`
+                  : 'Aucun titre impayé éligible dans la liste courante'
+              }
+            >
+              {exporting === 'mise-en-demeure-batch'
+                ? 'Génération lot MED...'
+                : `Lot mises en demeure (${selectedMiseEnDemeureTitreIds.length})`}
+            </button>
+            <span className="toolbar-hint">
+              Génère les courriers PDF pour les titres impayés affichés (max 100) et les archive dans les pièces jointes.
+            </span>
           </>
         )}
         <span style={{ color: 'var(--c-muted)', fontSize: 13 }}>{rows.length} resultat(s)</span>
@@ -299,9 +512,32 @@ export default function Titres() {
                 <td>{formatEuro(t.montant - t.montant_paye)}</td>
                 <td>{formatDate(t.date_emission)}</td>
                 <td>{formatDate(t.date_echeance)}</td>
-                <td><span className={`badge ${t.statut === 'paye' ? 'success' : t.statut === 'emis' ? 'info' : 'warn'}`}>{t.statut}</span></td>
+                <td><span className={`badge ${getTitreStatusBadgeVariant(t.statut)}`}>{getTitreStatusLabel(t.statut)}</span></td>
                 <td>
                   <a className="btn small secondary" href={`/api/titres/${t.id}/pdf`} target="_blank" rel="noreferrer">PDF</a>
+                  {hasRole('admin', 'financier') && canGenerateMiseEnDemeure(t, canManageTitres) && (
+                    <button
+                      className="btn small secondary"
+                      style={{ marginLeft: 4 }}
+                      disabled={downloadingMiseEnDemeureId === t.id}
+                      onClick={() => {
+                        void downloadMiseEnDemeure(t);
+                      }}
+                    >
+                      {downloadingMiseEnDemeureId === t.id ? 'MED...' : getMiseEnDemeureActionLabel(t)}
+                    </button>
+                  )}
+                  {canViewRecouvrementHistory(t.statut, canManageTitres) && (
+                    <button
+                      className="btn small secondary"
+                      style={{ marginLeft: 4 }}
+                      onClick={() => {
+                        void openHistory(t);
+                      }}
+                    >
+                      Historique
+                    </button>
+                  )}
                   {hasRole('contribuable') && t.statut !== 'paye' && (
                     <button
                       className="btn small secondary"
@@ -316,6 +552,28 @@ export default function Titres() {
                   {hasRole('admin', 'financier') && t.statut !== 'paye' && (
                     <button className="btn small" style={{ marginLeft: 4 }} onClick={() => setPaiementFor(t)}>Paiement</button>
                   )}
+                  {canRendreExecutoire(t.statut, canManageTitres) && (
+                    <button
+                      className="btn small secondary"
+                      style={{ marginLeft: 4 }}
+                      onClick={() => {
+                        void downloadTitreExecutoire(t);
+                      }}
+                    >
+                      Rendre exécutoire
+                    </button>
+                  )}
+                  {canAdmettreNonValeur(t.statut, canManageTitres) && (
+                    <button
+                      className="btn small secondary"
+                      style={{ marginLeft: 4 }}
+                      onClick={() => {
+                        void markAdmisNonValeur(t);
+                      }}
+                    >
+                      Admettre non-valeur
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}
@@ -324,7 +582,46 @@ export default function Titres() {
       </div>
 
       {paiementFor && <PaiementModal titre={paiementFor} onClose={() => setPaiementFor(null)} onDone={() => { setPaiementFor(null); load(); }} />}
+      {historyFor && (
+        <TitreHistoryModal
+          titre={historyFor}
+          loading={historyLoading}
+          data={historyData}
+          onClose={() => {
+            setHistoryFor(null);
+            setHistoryData(null);
+            setHistoryLoading(false);
+          }}
+        />
+      )}
     </>
+  );
+}
+
+function TitreHistoryModal({
+  titre,
+  loading,
+  data,
+  onClose,
+}: {
+  titre: Titre;
+  loading: boolean;
+  data: TitreHistoriqueResponse | null;
+  onClose: () => void;
+}) {
+  return (
+    <div className="dialog-backdrop" onClick={onClose}>
+      <div className="dialog" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 760 }}>
+        <h2>Historique de recouvrement</h2>
+        <p style={{ color: 'var(--c-muted)', fontSize: 13 }}>
+          Titre {titre.numero} · Statut {getTitreStatusLabel(titre.statut)} · Solde dû {formatEuro(titre.montant - titre.montant_paye)}
+        </p>
+        {loading ? <div>Chargement...</div> : <TitreRecouvrementHistory actions={data?.actions ?? []} />}
+        <div className="actions">
+          <button type="button" className="btn secondary" onClick={onClose}>Fermer</button>
+        </div>
+      </div>
+    </div>
   );
 }
 

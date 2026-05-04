@@ -84,12 +84,22 @@ function seedUsers() {
   const count = (db.prepare('SELECT COUNT(*) AS c FROM users').get() as { c: number }).c;
   if (count > 0) return;
   const stmt = db.prepare(
-    `INSERT INTO users (email, password_hash, nom, prenom, role) VALUES (?, ?, ?, ?, ?)`,
+    `INSERT INTO users (
+      email,
+      password_hash,
+      nom,
+      prenom,
+      role,
+      assujetti_id,
+      two_factor_enabled,
+      two_factor_secret_encrypted,
+      two_factor_pending_secret_encrypted
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
-  stmt.run('admin@tlpe.local', hashPassword('admin123'), 'Admin', 'Systeme', 'admin');
-  stmt.run('gestionnaire@tlpe.local', hashPassword('gestion123'), 'Martin', 'Claire', 'gestionnaire');
-  stmt.run('financier@tlpe.local', hashPassword('finance123'), 'Dubois', 'Paul', 'financier');
-  stmt.run('controleur@tlpe.local', hashPassword('controle123'), 'Leroy', 'Sophie', 'controleur');
+  stmt.run('admin@tlpe.local', hashPassword('admin123'), 'Admin', 'Systeme', 'admin', null, 0, null, null);
+  stmt.run('gestionnaire@tlpe.local', hashPassword('gestion123'), 'Martin', 'Claire', 'gestionnaire', null, 0, null, null);
+  stmt.run('financier@tlpe.local', hashPassword('finance123'), 'Dubois', 'Paul', 'financier', null, 0, null, null);
+  stmt.run('controleur@tlpe.local', hashPassword('controle123'), 'Leroy', 'Sophie', 'controleur', null, 0, null, null);
 }
 
 function seedDonneesDemo() {
@@ -144,8 +154,17 @@ function seedDonneesDemo() {
 
   // Creation d'un compte contribuable lie a a1
   db.prepare(
-    `INSERT INTO users (email, password_hash, nom, prenom, role, assujetti_id)
-     VALUES (?, ?, ?, ?, 'contribuable', ?)`,
+    `INSERT INTO users (
+      email,
+      password_hash,
+      nom,
+      prenom,
+      role,
+      assujetti_id,
+      two_factor_enabled,
+      two_factor_secret_encrypted,
+      two_factor_pending_secret_encrypted
+    ) VALUES (?, ?, ?, ?, 'contribuable', ?, 0, NULL, NULL)`,
   ).run(
     'contribuable@tlpe.local',
     hashPassword('contrib123'),

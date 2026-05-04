@@ -9,6 +9,8 @@ import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { db, logAudit } from '../db';
 import { authMiddleware, requireRole } from '../auth';
+import { listRecouvrementActionsByTitre } from '../impayes';
+import { deleteStoredFile, saveFile } from './piecesJointes';
 import { registerPayfipTitresRoutes } from './paiements';
 
 export const titresRouter = Router();
@@ -33,6 +35,236 @@ class Pesv2RouteError extends Error {
 function genNumeroTitre(annee: number): string {
   const c = (db.prepare('SELECT COUNT(*) AS c FROM titres WHERE annee = ?').get(annee) as { c: number }).c;
   return `TIT-${annee}-${String(c + 1).padStart(6, '0')}`;
+}
+
+function buildNumeroMiseEnDemeure(annee: number, ordre: number): string {
+  return `MED-${annee}-${String(ordre).padStart(6, '0')}`;
+}
+
+function allocateNumeroOrdreMiseEnDemeure(annee: number): number {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const next = (
+      db
+        .prepare(
+          `SELECT COALESCE(MAX(numero_ordre), 0) + 1 AS next
+           FROM titre_mises_en_demeure_sequences
+           WHERE annee = ?`,
+        )
+        .get(annee) as { next: number }
+    ).next;
+
+    db.prepare(`INSERT INTO titre_mises_en_demeure_sequences (annee, numero_ordre) VALUES (?, ?)`).run(annee, next);
+    db.exec('COMMIT');
+    return next;
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+function genNumeroMiseEnDemeure(annee: number): string {
+  return buildNumeroMiseEnDemeure(annee, allocateNumeroOrdreMiseEnDemeure(annee));
+}
+
+function buildTitreMiseEnDemeureStoragePath(annee: number, nom: string): string {
+  return path.posix.join('mises_en_demeure_titres', String(annee), nom);
+}
+
+type TitreMiseEnDemeureRow = {
+  titre_id: number;
+  numero: string;
+  piece_jointe_id: number;
+  chemin: string;
+  nom: string;
+  deleted_at?: string | null;
+};
+
+type TitreWithDebiteur = {
+  id: number;
+  numero: string;
+  declaration_id: number;
+  assujetti_id: number;
+  annee: number;
+  montant: number;
+  montant_paye: number;
+  date_emission: string;
+  date_echeance: string;
+  statut: string;
+  raison_sociale: string;
+  identifiant_tlpe: string;
+  siret: string | null;
+  adresse_rue: string | null;
+  adresse_cp: string | null;
+  adresse_ville: string | null;
+};
+
+function createMiseEnDemeurePdf(
+  titre: TitreWithDebiteur,
+  numeroMiseEnDemeure: string,
+): Promise<{ nom: string; chemin: string; taille: number; buffer: Buffer }> {
+  const nom = `${numeroMiseEnDemeure}.pdf`;
+  const chemin = buildTitreMiseEnDemeureStoragePath(titre.annee, nom);
+  const doc = new PDFDocument({ size: 'A4', margin: 48 });
+  const chunks: Buffer[] = [];
+
+  return new Promise<{ nom: string; chemin: string; taille: number; buffer: Buffer }>((resolve, reject) => {
+    doc.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+    doc.on('error', reject);
+    doc.on('end', () => {
+      const buffer = Buffer.concat(chunks);
+      resolve({
+        nom,
+        chemin,
+        taille: buffer.length,
+        buffer,
+      });
+    });
+
+    const montantDu = Number((titre.montant - titre.montant_paye).toFixed(2));
+    const adresse = [titre.adresse_rue, [titre.adresse_cp, titre.adresse_ville].filter(Boolean).join(' ')].filter(Boolean).join(' - ');
+
+    doc.fontSize(13).text(BORDEREAU_COLLECTIVITE);
+    doc.fontSize(10).fillColor('#555').text(BORDEREAU_ORDONNATEUR);
+    doc.moveDown(1).fillColor('black');
+    doc.fontSize(18).text('MISE EN DEMEURE DE PAYER - TLPE', { align: 'center' });
+    doc.moveDown(0.6);
+    doc.fontSize(11).fillColor('#555').text('Lettre recommandee avec accuse de reception', { align: 'center' });
+    doc.moveDown(1).fillColor('black');
+
+    doc.fontSize(11);
+    doc.text(`Numero de mise en demeure : ${numeroMiseEnDemeure}`);
+    doc.text(`Reference du titre : ${titre.numero}`);
+    doc.text(`Date d'emission du titre : ${titre.date_emission}`);
+    doc.text(`Date d'echeance initiale : ${titre.date_echeance}`);
+    doc.text('Delai de paiement apres reception : 30 jours');
+    doc.moveDown();
+
+    doc.fontSize(12).text('Debiteur', { underline: true });
+    doc.fontSize(11);
+    doc.text(`Raison sociale : ${titre.raison_sociale}`);
+    doc.text(`Identifiant TLPE : ${titre.identifiant_tlpe}`);
+    if (titre.siret) doc.text(`SIRET : ${titre.siret}`);
+    if (adresse) doc.text(`Adresse : ${adresse}`);
+    doc.moveDown();
+
+    doc.fontSize(12).text('Montants dus', { underline: true });
+    doc.fontSize(11);
+    doc.text(`Montant initial du titre : ${titre.montant.toFixed(2)} EUR`);
+    doc.text(`Montant deja regle : ${titre.montant_paye.toFixed(2)} EUR`);
+    doc.text(`Montant restant du : ${montantDu.toFixed(2)} EUR`);
+    doc.moveDown();
+
+    doc.fontSize(12).text('Objet', { underline: true });
+    doc.fontSize(11).text(
+      'Par la presente, vous etes mis en demeure de regler le solde du titre de recettes mentionne ci-dessus dans un delai de 30 jours a compter de la reception de ce courrier.',
+      { align: 'justify' },
+    );
+    doc.moveDown();
+    doc.text(
+      'A defaut de paiement dans ce delai, la collectivite pourra engager la procedure de recouvrement force et transmettre le dossier au comptable public.',
+      { align: 'justify' },
+    );
+    doc.moveDown();
+    doc.fontSize(12).text('Voies de recours et mentions legales', { underline: true });
+    doc.fontSize(11).text(
+      'Toute contestation doit etre adressee au service TLPE par ecrit, avec les justificatifs utiles, dans les delais legaux applicables. Le present courrier vaut mise en demeure prealable avant poursuites de recouvrement.',
+      { align: 'justify' },
+    );
+    doc.moveDown(2);
+
+    doc.text('Fait pour servir et valoir ce que de droit.');
+    doc.moveDown(2);
+    doc.text(BORDEREAU_ORDONNATEUR, { align: 'right' });
+    doc.end();
+  });
+}
+
+async function ensureMiseEnDemeureForTitre(params: {
+  titre: TitreWithDebiteur;
+  userId: number;
+  mode: 'manuel' | 'batch';
+  ip?: string | null;
+}): Promise<TitreMiseEnDemeureRow> {
+  const existing = db
+    .prepare(
+      `SELECT med.titre_id, med.numero, med.piece_jointe_id, pj.chemin, pj.nom, pj.deleted_at
+       FROM titre_mises_en_demeure med
+       JOIN pieces_jointes pj ON pj.id = med.piece_jointe_id
+       WHERE med.titre_id = ?
+       LIMIT 1`,
+    )
+    .get(params.titre.id) as TitreMiseEnDemeureRow | undefined;
+  if (existing && !existing.deleted_at) return existing;
+
+  const solde = Number((params.titre.montant - params.titre.montant_paye).toFixed(2));
+  if (solde <= 0 || params.titre.statut === 'paye') {
+    throw new Pesv2RouteError('Impossible de generer une mise en demeure pour un titre deja solde', 409);
+  }
+
+  const numero = genNumeroMiseEnDemeure(params.titre.annee);
+  const pdf = await createMiseEnDemeurePdf(params.titre, numero);
+  await saveFile(pdf.chemin, pdf.buffer, 'application/pdf');
+
+  const txResult = db.transaction(() => {
+    const pieceInfo = db
+      .prepare(
+        `INSERT INTO pieces_jointes (entite, entite_id, nom, mime_type, taille, chemin, uploaded_by)
+         VALUES ('titre', ?, ?, 'application/pdf', ?, ?, ?)`,
+      )
+      .run(params.titre.id, pdf.nom, pdf.taille, pdf.chemin, params.userId);
+
+    const pieceJointeId = Number(pieceInfo.lastInsertRowid);
+
+    if (existing?.deleted_at) {
+      db.prepare(
+        `UPDATE titre_mises_en_demeure
+         SET numero = ?, piece_jointe_id = ?, mode = ?, generated_by = ?, created_at = datetime('now')
+         WHERE titre_id = ?`,
+      ).run(numero, pieceJointeId, params.mode, params.userId, params.titre.id);
+    } else {
+      db.prepare(
+        `INSERT INTO titre_mises_en_demeure (numero, titre_id, piece_jointe_id, annee, mode, generated_by)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      ).run(numero, params.titre.id, pieceJointeId, params.titre.annee, params.mode, params.userId);
+    }
+
+    if (params.titre.statut !== 'mise_en_demeure') {
+      db.prepare(`UPDATE titres SET statut = 'mise_en_demeure' WHERE id = ?`).run(params.titre.id);
+    }
+
+    logAudit({
+      userId: params.userId,
+      action: 'generate-mise-en-demeure',
+      entite: 'titre',
+      entiteId: params.titre.id,
+      details: {
+        numero,
+        titre_numero: params.titre.numero,
+        piece_jointe_id: pieceJointeId,
+        mode: params.mode,
+        solde,
+        regenerated_after_soft_delete: Boolean(existing?.deleted_at),
+      },
+      ip: params.ip ?? null,
+    });
+
+    return {
+      titre_id: params.titre.id,
+      numero,
+      piece_jointe_id: pieceJointeId,
+      chemin: pdf.chemin,
+      nom: pdf.nom,
+      deleted_at: null,
+    } satisfies TitreMiseEnDemeureRow;
+  });
+
+  try {
+    return txResult();
+  } catch (error) {
+    await deleteStoredFile(pdf.chemin).catch(() => undefined);
+    throw error;
+  }
 }
 
 function formatDateTime(date: Date): string {
@@ -257,6 +489,147 @@ function nextPesv2NumeroBordereau(): number {
   ).next_numero;
 }
 
+type TitreExecutoireRow = {
+  id: number;
+  numero: string;
+  declaration_id: number;
+  declaration_numero: string;
+  assujetti_id: number;
+  annee: number;
+  montant: number;
+  montant_paye: number;
+  date_emission: string;
+  date_echeance: string;
+  statut: string;
+  raison_sociale: string;
+  identifiant_tlpe: string;
+  siret: string | null;
+};
+
+type TitreExecutoireExportRow = {
+  titre_id: number;
+  numero_flux: number;
+  xml_filename: string;
+  xml_content: string;
+  xml_hash: string;
+  mention_signature: string;
+  xsd_validation_ok: number;
+  xsd_validation_report: string | null;
+  transmitted_at: string;
+};
+
+function resolveTitreExecutoireXsdPath(currentDir = __dirname): string {
+  const candidates = [
+    path.resolve(currentDir, '..', 'xsd', 'pesv2-titre-executoire.xsd'),
+    path.resolve(currentDir, '..', '..', 'src', 'xsd', 'pesv2-titre-executoire.xsd'),
+  ];
+  const resolved = candidates.find((candidate) => fs.existsSync(candidate));
+  if (!resolved) {
+    throw new Pesv2RouteError('Schéma XSD titre exécutoire introuvable', 500);
+  }
+  return resolved;
+}
+
+function validateTitreExecutoireXml(xml: string): Pesv2ValidationResult {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tlpe-titre-executoire-'));
+  const xmlPath = path.join(tempDir, 'titre-executoire.xml');
+  const xsdPath = resolveTitreExecutoireXsdPath();
+  fs.writeFileSync(xmlPath, xml, 'utf8');
+  try {
+    const stdout = execFileSync('xmllint', ['--noout', '--schema', xsdPath, xmlPath], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return {
+      ok: true,
+      report: (stdout || 'xmllint validation ok').trim(),
+    };
+  } catch (error) {
+    const stderr =
+      typeof error === 'object' && error !== null && 'stderr' in error
+        ? String((error as { stderr?: string | Buffer }).stderr ?? '').trim()
+        : String(error);
+    return {
+      ok: false,
+      report: stderr || 'Validation XSD titre exécutoire en echec',
+    };
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+function nextTitreExecutoireNumeroFlux(): number {
+  return (
+    db.prepare('SELECT COALESCE(MAX(numero_flux), 0) + 1 AS next_numero FROM titres_executoires').get() as {
+      next_numero: number;
+    }
+  ).next_numero;
+}
+
+function loadTitreExecutoire(titreId: number): TitreExecutoireRow | undefined {
+  return db
+    .prepare(
+      `SELECT t.id, t.numero, t.declaration_id, d.numero AS declaration_numero, t.assujetti_id, t.annee,
+              t.montant, t.montant_paye, t.date_emission, t.date_echeance, t.statut,
+              a.raison_sociale, a.identifiant_tlpe, a.siret
+       FROM titres t
+       JOIN declarations d ON d.id = t.declaration_id
+       JOIN assujettis a ON a.id = t.assujetti_id
+       WHERE t.id = ?`,
+    )
+    .get(titreId) as TitreExecutoireRow | undefined;
+}
+
+function loadTitreExecutoireExport(titreId: number): TitreExecutoireExportRow | undefined {
+  return db
+    .prepare(
+      `SELECT titre_id, numero_flux, xml_filename, xml_content, xml_hash, mention_signature,
+              xsd_validation_ok, xsd_validation_report, transmitted_at
+       FROM titres_executoires
+       WHERE titre_id = ?`,
+    )
+    .get(titreId) as TitreExecutoireExportRow | undefined;
+}
+
+function buildTitreExecutoireXml(titre: TitreExecutoireRow, numeroFlux: number, transmittedAt: string) {
+  const mentionSignature = `Visa pour transmission au comptable public - ${BORDEREAU_ORDONNATEUR}`;
+  const filename = `titre-executoire-${String(numeroFlux).padStart(6, '0')}.xml`;
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<TitreExecutoireComplement>
+  <Entete>
+    <Collectivite>${xmlEscape(BORDEREAU_COLLECTIVITE)}</Collectivite>
+    <Ordonnateur>${xmlEscape(BORDEREAU_ORDONNATEUR)}</Ordonnateur>
+    <NumeroFlux>${String(numeroFlux).padStart(6, '0')}</NumeroFlux>
+    <HorodatageTransmission>${xmlEscape(transmittedAt)}</HorodatageTransmission>
+    <MentionSignature>${xmlEscape(mentionSignature)}</MentionSignature>
+  </Entete>
+  <Titre>
+    <NumeroTitre>${xmlEscape(titre.numero)}</NumeroTitre>
+    <NumeroDeclaration>${xmlEscape(titre.declaration_numero)}</NumeroDeclaration>
+    <AnneeExercice>${titre.annee}</AnneeExercice>
+    <DateEmission>${xmlEscape(titre.date_emission)}</DateEmission>
+    <DateEcheance>${xmlEscape(titre.date_echeance)}</DateEcheance>
+    <Montant>${titre.montant.toFixed(2)}</Montant>
+    <MontantPaye>${titre.montant_paye.toFixed(2)}</MontantPaye>
+    <MontantRestant>${(titre.montant - titre.montant_paye).toFixed(2)}</MontantRestant>
+    <StatutSource>${xmlEscape(titre.statut)}</StatutSource>
+    <Assujetti>
+      <IdentifiantTLPE>${xmlEscape(titre.identifiant_tlpe)}</IdentifiantTLPE>
+      <RaisonSociale>${xmlEscape(titre.raison_sociale)}</RaisonSociale>
+      <Siret>${xmlEscape(titre.siret)}</Siret>
+    </Assujetti>
+  </Titre>
+</TitreExecutoireComplement>
+`;
+
+  return {
+    xml,
+    filename,
+    mentionSignature,
+    xmlHash: crypto.createHash('sha256').update(xml).digest('hex'),
+  };
+}
+
 type BordereauRow = {
   id: number;
   numero: string;
@@ -459,6 +832,40 @@ titresRouter.get('/', (req, res) => {
   res.json(rows);
 });
 
+titresRouter.get('/:id/historique', (req, res) => {
+  const titre = db
+    .prepare(
+      `SELECT t.id, t.numero, t.assujetti_id, t.statut, t.montant, t.montant_paye, t.date_echeance,
+              a.raison_sociale, a.identifiant_tlpe
+       FROM titres t
+       LEFT JOIN assujettis a ON a.id = t.assujetti_id
+       WHERE t.id = ?`,
+    )
+    .get(req.params.id) as
+    | {
+        id: number;
+        numero: string;
+        assujetti_id: number;
+        statut: string;
+        montant: number;
+        montant_paye: number;
+        date_echeance: string;
+        raison_sociale: string | null;
+        identifiant_tlpe: string | null;
+      }
+    | undefined;
+
+  if (!titre) return res.status(404).json({ error: 'Introuvable' });
+  if (req.user!.role === 'contribuable' && req.user!.assujetti_id !== titre.assujetti_id) {
+    return res.status(403).json({ error: 'Droits insuffisants' });
+  }
+
+  res.json({
+    titre,
+    actions: listRecouvrementActionsByTitre(titre.id),
+  });
+});
+
 const bordereauQuerySchema = z.object({
   annee: z.coerce.number().int().min(2000).max(2100),
   format: z.enum(['pdf', 'xlsx']),
@@ -620,6 +1027,306 @@ titresRouter.post('/export-pesv2', requireRole('admin', 'financier'), (req, res)
   }
 });
 
+function loadTitreForMiseEnDemeure(titreId: string): TitreWithDebiteur | undefined {
+  return db
+    .prepare(
+      `SELECT t.id, t.numero, t.declaration_id, t.assujetti_id, t.annee, t.montant, t.montant_paye,
+              t.date_emission, t.date_echeance, t.statut, a.raison_sociale, a.identifiant_tlpe,
+              a.siret, a.adresse_rue, a.adresse_cp, a.adresse_ville
+       FROM titres t
+       JOIN assujettis a ON a.id = t.assujetti_id
+       WHERE t.id = ?`,
+    )
+    .get(titreId) as TitreWithDebiteur | undefined;
+}
+
+const miseEnDemeureBatchSchema = z.object({
+  titre_ids: z.array(z.number().int().positive()).min(1).max(100),
+});
+
+titresRouter.post('/:id/mise-en-demeure', requireRole('admin', 'financier'), async (req, res) => {
+  const titre = loadTitreForMiseEnDemeure(req.params.id);
+  if (!titre) {
+    return res.status(404).json({ error: 'Titre introuvable' });
+  }
+
+  try {
+    const result = await ensureMiseEnDemeureForTitre({
+      titre,
+      userId: req.user!.id,
+      mode: 'manuel',
+      ip: req.ip ?? null,
+    });
+    return res.status(201).json({
+      titre_id: result.titre_id,
+      numero: result.numero,
+      piece_jointe_id: result.piece_jointe_id,
+      download_url: `/api/pieces-jointes/${result.piece_jointe_id}`,
+    });
+  } catch (error) {
+    if (error instanceof Pesv2RouteError) {
+      return res.status(error.status).json({ error: error.message });
+    }
+
+    console.error('[TLPE] Erreur génération mise en demeure', error);
+    return res.status(500).json({ error: 'Erreur interne génération mise en demeure' });
+  }
+});
+
+titresRouter.post('/mises-en-demeure/batch', requireRole('admin', 'financier'), async (req, res) => {
+  const parsed = miseEnDemeureBatchSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.flatten() });
+  }
+
+  try {
+    const titres = parsed.data.titre_ids.map((titreId) => {
+      const titre = loadTitreForMiseEnDemeure(String(titreId));
+      if (!titre) {
+        throw new Pesv2RouteError(`Titre introuvable: ${titreId}`, 404);
+      }
+      return titre;
+    });
+
+    const titresWithReuseState = titres.map((titre) => {
+      const hasActiveMiseEnDemeure = Boolean(
+        db
+          .prepare(
+            `SELECT 1
+             FROM titre_mises_en_demeure med
+             JOIN pieces_jointes pj ON pj.id = med.piece_jointe_id
+             WHERE med.titre_id = ? AND pj.deleted_at IS NULL
+             LIMIT 1`,
+          )
+          .get(titre.id),
+      );
+      return { titre, hasActiveMiseEnDemeure };
+    });
+
+    const titreSolde = titresWithReuseState.find(({ titre, hasActiveMiseEnDemeure }) => {
+      if (hasActiveMiseEnDemeure) return false;
+      const solde = Number((titre.montant - titre.montant_paye).toFixed(2));
+      return solde <= 0 || titre.statut === 'paye';
+    });
+    if (titreSolde) {
+      throw new Pesv2RouteError('Impossible de generer une mise en demeure pour un titre deja solde', 409);
+    }
+
+    const items: Array<{ titre_id: number; numero: string; piece_jointe_id: number; download_url: string }> = [];
+    for (const { titre } of titresWithReuseState) {
+      const result = await ensureMiseEnDemeureForTitre({
+        titre,
+        userId: req.user!.id,
+        mode: 'batch',
+        ip: req.ip ?? null,
+      });
+      items.push({
+        titre_id: result.titre_id,
+        numero: result.numero,
+        piece_jointe_id: result.piece_jointe_id,
+        download_url: `/api/pieces-jointes/${result.piece_jointe_id}`,
+      });
+    }
+
+    return res.status(201).json({ count: items.length, items });
+  } catch (error) {
+    if (error instanceof Pesv2RouteError) {
+      return res.status(error.status).json({ error: error.message });
+    }
+
+    console.error('[TLPE] Erreur génération batch mises en demeure', error);
+    return res.status(500).json({ error: 'Erreur interne génération batch mises en demeure' });
+  }
+});
+
+const admettreNonValeurSchema = z.object({
+  commentaire: z.string().trim().min(3).max(500).optional(),
+});
+
+titresRouter.post('/:id/rendre-executoire', requireRole('admin', 'financier'), (req, res) => {
+  const titreId = Number(req.params.id);
+  const titre = loadTitreExecutoire(titreId);
+  if (!titre) return res.status(404).json({ error: 'Titre introuvable' });
+  if (titre.statut !== 'mise_en_demeure') {
+    return res.status(409).json({ error: 'Seuls les titres en mise en demeure peuvent être rendus exécutoires' });
+  }
+  if (loadTitreExecutoireExport(titre.id)) {
+    return res.status(409).json({ error: 'Titre deja transmis au comptable public' });
+  }
+
+  try {
+    const numeroFlux = nextTitreExecutoireNumeroFlux();
+    const transmittedAt = new Date().toISOString();
+    const built = buildTitreExecutoireXml(titre, numeroFlux, transmittedAt);
+    const validation = validateTitreExecutoireXml(built.xml);
+    if (!validation.ok) {
+      console.error('[TLPE] Validation XSD titre executoire en echec', validation.report);
+      return res.status(500).json({ error: 'Erreur interne export titre executoire' });
+    }
+
+    const details = {
+      numero_flux: numeroFlux,
+      statut_cible: 'transmis_comptable',
+      xml_filename: built.filename,
+      xml_hash: built.xmlHash,
+      mention_signature: built.mentionSignature,
+      download_url: `/api/titres/${titre.id}/executoire/xml`,
+      xsd_validation_ok: validation.ok,
+    };
+
+    const existingTransmission = db
+      .prepare(
+        `SELECT id
+         FROM recouvrement_actions
+         WHERE titre_id = ? AND niveau = 'J+60' AND action_type = 'transmission_comptable'`,
+      )
+      .get(titre.id) as { id: number } | undefined;
+
+    const tx = db.transaction(() => {
+      db.prepare(
+        `INSERT INTO titres_executoires (
+          titre_id, numero_flux, xml_filename, xml_content, xml_hash, mention_signature,
+          xsd_validation_ok, xsd_validation_report, transmitted_at, transmitted_by
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        titre.id,
+        numeroFlux,
+        built.filename,
+        built.xml,
+        built.xmlHash,
+        built.mentionSignature,
+        validation.ok ? 1 : 0,
+        validation.report,
+        transmittedAt,
+        req.user!.id,
+      );
+
+      db.prepare(`UPDATE titres SET statut = 'transmis_comptable' WHERE id = ?`).run(titre.id);
+
+      if (existingTransmission) {
+        db.prepare(
+          `UPDATE recouvrement_actions
+           SET statut = 'transmis', details = ?, created_by = ?, created_at = datetime('now')
+           WHERE id = ?`,
+        ).run(JSON.stringify(details), req.user!.id, existingTransmission.id);
+      } else {
+        db.prepare(
+          `INSERT INTO recouvrement_actions (
+            titre_id, niveau, action_type, statut, email_destinataire, piece_jointe_path, details, created_by
+          ) VALUES (?, 'J+60', 'transmission_comptable', 'transmis', NULL, NULL, ?, ?)`,
+        ).run(titre.id, JSON.stringify(details), req.user!.id);
+      }
+
+      logAudit({
+        userId: req.user!.id,
+        action: 'rendre-executoire',
+        entite: 'titre',
+        entiteId: titre.id,
+        details,
+        ip: req.ip ?? null,
+      });
+    });
+    tx();
+
+    res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${built.filename}"`);
+    res.send(built.xml);
+  } catch (error) {
+    if (error instanceof Pesv2RouteError) {
+      return res.status(error.status).json({
+        error: error.status >= 500 ? 'Erreur interne export titre executoire' : error.message,
+      });
+    }
+
+    console.error('[TLPE] Erreur titre executoire inattendue', error);
+    return res.status(500).json({ error: 'Erreur interne export titre executoire' });
+  }
+});
+
+titresRouter.get('/:id/executoire/xml', (req, res) => {
+  const titreId = Number(req.params.id);
+  const titre = loadTitreExecutoire(titreId);
+  if (!titre) return res.status(404).json({ error: 'Titre introuvable' });
+  if (req.user!.role === 'contribuable' && req.user!.assujetti_id !== titre.assujetti_id) {
+    return res.status(403).json({ error: 'Droits insuffisants' });
+  }
+
+  const exported = loadTitreExecutoireExport(titre.id);
+  if (!exported) return res.status(404).json({ error: 'Flux titre executoire introuvable' });
+
+  logAudit({
+    userId: req.user!.id,
+    action: 'download-executoire-xml',
+    entite: 'titre',
+    entiteId: titre.id,
+    details: {
+      numero_flux: exported.numero_flux,
+      xml_filename: exported.xml_filename,
+      xml_hash: exported.xml_hash,
+    },
+    ip: req.ip ?? null,
+  });
+
+  res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${exported.xml_filename}"`);
+  res.send(exported.xml_content);
+});
+
+titresRouter.post('/:id/admettre-non-valeur', requireRole('admin', 'financier'), (req, res) => {
+  const titreId = Number(req.params.id);
+  const titre = loadTitreExecutoire(titreId);
+  if (!titre) return res.status(404).json({ error: 'Titre introuvable' });
+
+  const parsed = admettreNonValeurSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  if (titre.statut !== 'transmis_comptable') {
+    return res.status(409).json({ error: 'Seuls les titres transmis au comptable public peuvent être admis en non-valeur' });
+  }
+
+  const details = {
+    commentaire: parsed.data.commentaire ?? 'Retour comptable negatif - creance irrecouvrable',
+    previous_status: titre.statut,
+    statut_cible: 'admis_en_non_valeur',
+  };
+
+  const existingRetour = db
+    .prepare(
+      `SELECT id
+       FROM recouvrement_actions
+       WHERE titre_id = ? AND niveau = 'retour_comptable' AND action_type = 'admission_non_valeur'`,
+    )
+    .get(titre.id) as { id: number } | undefined;
+
+  const tx = db.transaction(() => {
+    db.prepare(`UPDATE titres SET statut = 'admis_en_non_valeur' WHERE id = ?`).run(titre.id);
+
+    if (existingRetour) {
+      db.prepare(
+        `UPDATE recouvrement_actions
+         SET statut = 'classe', details = ?, created_by = ?, created_at = datetime('now')
+         WHERE id = ?`,
+      ).run(JSON.stringify(details), req.user!.id, existingRetour.id);
+    } else {
+      db.prepare(
+        `INSERT INTO recouvrement_actions (
+          titre_id, niveau, action_type, statut, email_destinataire, piece_jointe_path, details, created_by
+        ) VALUES (?, 'retour_comptable', 'admission_non_valeur', 'classe', NULL, NULL, ?, ?)`,
+      ).run(titre.id, JSON.stringify(details), req.user!.id);
+    }
+
+    logAudit({
+      userId: req.user!.id,
+      action: 'admettre-non-valeur',
+      entite: 'titre',
+      entiteId: titre.id,
+      details,
+      ip: req.ip ?? null,
+    });
+  });
+  tx();
+
+  res.json({ ok: true, statut: 'admis_en_non_valeur' });
+});
 // Emission d'un titre pour une declaration validee
 const emettreSchema = z.object({
   declaration_id: z.number().int().positive(),

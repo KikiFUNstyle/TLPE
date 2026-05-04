@@ -43,7 +43,7 @@ export interface NormalizedImportRow {
   email: string | null;
   telephone: string | null;
   portail_actif: number;
-  statut: 'actif' | 'inactif' | 'radie' | 'contentieux';
+  statut: 'actif' | 'inactif' | 'radie' | 'contentieux' | 'email_invalide';
   notes: string | null;
 }
 
@@ -99,10 +99,10 @@ function normalizeBoolean(value: string): number {
   return -1;
 }
 
-function normalizeStatut(value: string): 'actif' | 'inactif' | 'radie' | 'contentieux' | null {
+function normalizeStatut(value: string): 'actif' | 'inactif' | 'radie' | 'contentieux' | 'email_invalide' | null {
   const v = value.trim().toLowerCase();
   if (!v) return 'actif';
-  if (v === 'actif' || v === 'inactif' || v === 'radie' || v === 'contentieux') return v;
+  if (v === 'actif' || v === 'inactif' || v === 'radie' || v === 'contentieux' || v === 'email_invalide') return v;
   return null;
 }
 
@@ -125,6 +125,24 @@ export function isValidSiret(siret: string): boolean {
   return sum % 10 === 0;
 }
 
+function decodeBase64Strict(contentBase64: string): Buffer {
+  const normalized = contentBase64.trim();
+  if (!normalized || normalized.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(normalized)) {
+    throw new Error('Invalid base64 payload');
+  }
+
+  const buffer = Buffer.from(normalized, 'base64');
+  if (buffer.length === 0) {
+    throw new Error('Invalid base64 payload');
+  }
+
+  if (buffer.toString('base64') !== normalized) {
+    throw new Error('Invalid base64 payload');
+  }
+
+  return buffer;
+}
+
 function decodeCsv(contentBase64: string): RawImportRow[] {
   const csv = Buffer.from(contentBase64, 'base64').toString('utf-8');
   const workbook = XLSX.read(csv, { type: 'string' });
@@ -134,7 +152,7 @@ function decodeCsv(contentBase64: string): RawImportRow[] {
 }
 
 function decodeXlsx(contentBase64: string): RawImportRow[] {
-  const buffer = Buffer.from(contentBase64, 'base64');
+  const buffer = decodeBase64Strict(contentBase64);
   const workbook = XLSX.read(buffer, { type: 'buffer' });
   const sheetName = workbook.SheetNames[0];
   const sheet = workbook.Sheets[sheetName];
@@ -229,7 +247,7 @@ export function validateImportRows(rows: RawImportRow[]): ValidationResult {
 
     const statut = normalizeStatut(row.statut || '');
     if (!statut) {
-      anomalies.push({ line: row.line, field: 'statut', message: 'Statut invalide (actif, inactif, radie, contentieux)' });
+      anomalies.push({ line: row.line, field: 'statut', message: 'Statut invalide (actif, inactif, radie, contentieux, email_invalide)' });
     }
 
     if (identifiant) {

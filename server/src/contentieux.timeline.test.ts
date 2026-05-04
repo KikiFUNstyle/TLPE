@@ -1,0 +1,1208 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as zlib from 'node:zlib';
+import express from 'express';
+import { db, initSchema } from './db';
+import { hashPassword, signToken, type AuthUser } from './auth';
+import { computeContentieuxResponseDeadline, normalizeIsoDate, summarizeContentieuxDeadline } from './contentieuxDeadline';
+import { contentieuxRouter } from './routes/contentieux';
+
+function createApp() {
+  const app = express();
+  app.use(express.json());
+  app.use('/api/contentieux', contentieuxRouter);
+  return app;
+}
+
+function makeAuthHeader(user: AuthUser): Record<string, string> {
+  return { Authorization: `Bearer ${signToken(user)}` };
+}
+
+async function request(params: {
+  method: 'GET' | 'POST';
+  path: string;
+  headers?: Record<string, string>;
+  body?: unknown;
+}) {
+  const app = createApp();
+  const server = await new Promise<import('node:http').Server>((resolve) => {
+    const s = app.listen(0, () => resolve(s));
+  });
+  const address = server.address();
+  if (!address || typeof address === 'string') {
+    server.close();
+    throw new Error('Impossible de determiner le port de test');
+  }
+
+  try {
+    const res = await fetch(`http://127.0.0.1:${address.port}${params.path}`, {
+      method: params.method,
+      headers: {
+        ...(params.body ? { 'Content-Type': 'application/json' } : {}),
+        ...(params.headers || {}),
+      },
+      body: params.body ? JSON.stringify(params.body) : undefined,
+    });
+    const contentType = res.headers.get('content-type') || '';
+    const text = await res.text();
+    return {
+      status: res.status,
+      contentType,
+      text,
+      data: contentType.includes('application/json') && text ? JSON.parse(text) : null,
+    };
+  } finally {
+    server.close();
+  }
+}
+
+async function requestBinary(params: {
+  method: 'GET';
+  path: string;
+  headers?: Record<string, string>;
+}) {
+  const app = createApp();
+  const server = await new Promise<import('node:http').Server>((resolve) => {
+    const s = app.listen(0, () => resolve(s));
+  });
+  const address = server.address();
+  if (!address || typeof address === 'string') {
+    server.close();
+    throw new Error('Impossible de determiner le port de test');
+  }
+
+  try {
+    const res = await fetch(`http://127.0.0.1:${address.port}${params.path}`, {
+      method: params.method,
+      headers: params.headers,
+    });
+    const buffer = Buffer.from(await res.arrayBuffer());
+    return {
+      status: res.status,
+      headers: {
+        contentType: res.headers.get('content-type') || '',
+        disposition: res.headers.get('content-disposition') || '',
+      },
+      buffer,
+    };
+  } finally {
+    server.close();
+  }
+}
+
+function extractPdfText(buffer: Buffer): string {
+  const pdfSource = buffer.toString('latin1');
+  const streamRegex = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
+  const parts: string[] = [];
+
+  const decodeHexString = (hex: string) => Buffer.from(hex, 'hex').toString('latin1');
+  const decodeTextOperator = (payload: string) => {
+    const tokens = payload.match(/<([0-9A-Fa-f]+)>|\((?:\\.|[^\\)])*\)/g) ?? [];
+    return tokens
+      .map((token) => {
+        if (token.startsWith('<')) return decodeHexString(token.slice(1, -1));
+        return token.slice(1, -1).replace(/\\([\\()])/g, '$1');
+      })
+      .join('');
+  };
+
+  let match: RegExpExecArray | null;
+  while ((match = streamRegex.exec(pdfSource)) !== null) {
+    const streamBuffer = Buffer.from(match[1], 'latin1');
+    const decodedCandidates = [
+      () => zlib.inflateSync(streamBuffer),
+      () => zlib.inflateRawSync(streamBuffer),
+      () => streamBuffer,
+    ];
+
+    for (const decode of decodedCandidates) {
+      try {
+        const text = decode().toString('latin1');
+        if (!text.includes('BT') && !text.includes('Tj') && !text.includes('TJ')) continue;
+
+        const lineTexts = text
+          .split(/\r?\n/)
+          .flatMap((line) => {
+            const chunks: string[] = [];
+            const tjMatch = line.match(/\[(.*)\]\s*TJ/);
+            if (tjMatch) chunks.push(decodeTextOperator(tjMatch[1]));
+            const tjSingleMatch = line.match(/(<[0-9A-Fa-f]+>|\((?:\\.|[^\\)])*\))\s*Tj/);
+            if (tjSingleMatch) chunks.push(decodeTextOperator(tjSingleMatch[1]));
+            return chunks;
+          })
+          .filter(Boolean);
+
+        if (lineTexts.length > 0) {
+          parts.push(lineTexts.join('\n'));
+          break;
+        }
+      } catch {
+        // ignore decode strategy mismatch
+      }
+    }
+  }
+
+  return parts.join('\n');
+}
+
+function resetFixtures() {
+  initSchema();
+  db.exec('DELETE FROM pieces_jointes');
+  db.exec('DELETE FROM evenements_contentieux');
+  db.exec('DELETE FROM contentieux');
+  db.exec('DELETE FROM audit_log');
+  db.exec('DELETE FROM titres');
+  db.exec('DELETE FROM declarations');
+  db.exec('DELETE FROM controles');
+  db.exec('DELETE FROM dispositifs');
+  db.exec('DELETE FROM campagnes');
+  db.exec('DELETE FROM users');
+  db.exec('DELETE FROM assujettis');
+
+  const assujettiId = Number(
+    db.prepare(
+      `INSERT INTO assujettis (identifiant_tlpe, raison_sociale, email, statut)
+       VALUES ('TLPE-CTX-001', 'Alpha Contentieux', 'alpha-contentieux@example.test', 'actif')`,
+    ).run().lastInsertRowid,
+  );
+
+  const gestionnaireId = Number(
+    db.prepare(
+      `INSERT INTO users (email, password_hash, nom, prenom, role, actif)
+       VALUES ('gestionnaire-contentieux@tlpe.local', ?, 'Gest', 'Contentieux', 'gestionnaire', 1)`,
+    ).run(hashPassword('x')).lastInsertRowid,
+  );
+
+  const financierId = Number(
+    db.prepare(
+      `INSERT INTO users (email, password_hash, nom, prenom, role, actif)
+       VALUES ('financier-contentieux@tlpe.local', ?, 'Fin', 'Contentieux', 'financier', 1)`,
+    ).run(hashPassword('x')).lastInsertRowid,
+  );
+
+  const contribuableId = Number(
+    db.prepare(
+      `INSERT INTO users (email, password_hash, nom, prenom, role, assujetti_id, actif)
+       VALUES ('contribuable-contentieux@tlpe.local', ?, 'Contrib', 'Contentieux', 'contribuable', ?, 1)`,
+    ).run(hashPassword('x'), assujettiId).lastInsertRowid,
+  );
+
+  const declarationId = Number(
+    db.prepare(
+      `INSERT INTO declarations (numero, assujetti_id, annee, statut, montant_total)
+       VALUES ('DEC-CTX-2026-001', ?, 2026, 'validee', 830)`,
+    ).run(assujettiId).lastInsertRowid,
+  );
+
+  const titreId = Number(
+    db.prepare(
+      `INSERT INTO titres (numero, declaration_id, assujetti_id, annee, montant, date_emission, date_echeance, statut)
+       VALUES ('TIT-CTX-2026-000001', ?, ?, 2026, 830, '2026-03-10', '2026-07-31', 'emis')`,
+    ).run(declarationId, assujettiId).lastInsertRowid,
+  );
+
+  return {
+    gestionnaire: {
+      id: gestionnaireId,
+      email: 'gestionnaire-contentieux@tlpe.local',
+      role: 'gestionnaire' as const,
+      nom: 'Gest',
+      prenom: 'Contentieux',
+      assujetti_id: null,
+    },
+    financier: {
+      id: financierId,
+      email: 'financier-contentieux@tlpe.local',
+      role: 'financier' as const,
+      nom: 'Fin',
+      prenom: 'Contentieux',
+      assujetti_id: null,
+    },
+    contribuable: {
+      id: contribuableId,
+      email: 'contribuable-contentieux@tlpe.local',
+      role: 'contribuable' as const,
+      nom: 'Contrib',
+      prenom: 'Contentieux',
+      assujetti_id: assujettiId,
+    },
+    assujettiId,
+    titreId,
+  };
+}
+
+function createPieceJointe(params: {
+  entite: 'contentieux' | 'titre';
+  entiteId: number;
+  uploadedBy: number;
+  nom?: string;
+}): number {
+  return Number(
+    db.prepare(
+      `INSERT INTO pieces_jointes (entite, entite_id, nom, mime_type, taille, chemin, uploaded_by)
+       VALUES (?, ?, ?, 'application/pdf', 512, ?, ?)`,
+    ).run(
+      params.entite,
+      params.entiteId,
+      params.nom ?? 'courrier.pdf',
+      `${params.entite}/${params.entiteId}/${params.nom ?? 'courrier.pdf'}`,
+      params.uploadedBy,
+    ).lastInsertRowid,
+  );
+}
+
+test('schema contentieux inclut la table evenements_contentieux attendue', () => {
+  initSchema();
+  const columns = db.prepare("PRAGMA table_info('evenements_contentieux')").all() as Array<{ name: string }>;
+  assert.deepEqual(
+    columns.map((column) => column.name),
+    ['id', 'contentieux_id', 'type', 'date', 'auteur', 'description', 'piece_jointe_id', 'created_at'],
+  );
+});
+
+test('normalizeIsoDate rejette les dates calendrier impossibles', () => {
+  assert.throws(() => normalizeIsoDate('2026-02-30'), /Date invalide: 2026-02-30/);
+  assert.throws(() => computeContentieuxResponseDeadline('2026-13-01'), /Date invalide: 2026-13-01/);
+});
+
+test('initSchema backfill les echeances des contentieux legacy pour les alertes sur dossiers deja ouverts', () => {
+  const fx = resetFixtures();
+
+  db.pragma('foreign_keys = OFF');
+  db.exec('BEGIN TRANSACTION');
+  try {
+    db.exec(`
+      CREATE TABLE contentieux_legacy (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        numero          TEXT NOT NULL UNIQUE,
+        assujetti_id    INTEGER NOT NULL,
+        titre_id        INTEGER,
+        type            TEXT NOT NULL CHECK (type IN ('gracieux','contentieux','moratoire','controle')),
+        montant_litige  REAL,
+        date_ouverture  TEXT NOT NULL DEFAULT (date('now')),
+        date_cloture    TEXT,
+        statut          TEXT NOT NULL DEFAULT 'ouvert' CHECK (statut IN ('ouvert','instruction','clos_maintenu','degrevement_partiel','degrevement_total','non_lieu')),
+        description     TEXT,
+        decision        TEXT,
+        FOREIGN KEY (assujetti_id) REFERENCES assujettis(id),
+        FOREIGN KEY (titre_id) REFERENCES titres(id)
+      );
+
+      INSERT INTO contentieux_legacy (
+        id, numero, assujetti_id, titre_id, type, montant_litige, date_ouverture, date_cloture, statut, description, decision
+      ) VALUES (
+        999, 'CTX-LEGACY-1', ${fx.assujettiId}, ${fx.titreId}, 'contentieux', 830, '2026-01-15', NULL, 'ouvert', 'Legacy sans echeance calculee', NULL
+      );
+
+      DROP TABLE contentieux;
+      ALTER TABLE contentieux_legacy RENAME TO contentieux;
+    `);
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  } finally {
+    db.pragma('foreign_keys = ON');
+  }
+
+  initSchema();
+
+  const migrated = db.prepare(
+    `SELECT date_limite_reponse, date_limite_reponse_initiale
+     FROM contentieux
+     WHERE id = 999`,
+  ).get() as { date_limite_reponse: string | null; date_limite_reponse_initiale: string | null };
+  assert.deepEqual(migrated, {
+    date_limite_reponse: '2026-07-15',
+    date_limite_reponse_initiale: '2026-07-15',
+  });
+});
+
+test('initSchema reconstruit une table contentieux legacy pour ajouter le CHECK SQL sur montant_degreve', () => {
+  const fx = resetFixtures();
+
+  db.pragma('foreign_keys = OFF');
+  db.exec('BEGIN TRANSACTION');
+  try {
+    db.exec(`
+      CREATE TABLE contentieux_legacy (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        numero          TEXT NOT NULL UNIQUE,
+        assujetti_id    INTEGER NOT NULL,
+        titre_id        INTEGER,
+        type            TEXT NOT NULL CHECK (type IN ('gracieux','contentieux','moratoire','controle')),
+        montant_litige  REAL,
+        montant_degreve REAL,
+        date_ouverture  TEXT NOT NULL DEFAULT (date('now')),
+        date_limite_reponse TEXT,
+        date_limite_reponse_initiale TEXT,
+        delai_prolonge_justification TEXT,
+        delai_prolonge_par INTEGER,
+        delai_prolonge_at TEXT,
+        date_cloture    TEXT,
+        statut          TEXT NOT NULL DEFAULT 'ouvert' CHECK (statut IN ('ouvert','instruction','clos_maintenu','degrevement_partiel','degrevement_total','non_lieu')),
+        description     TEXT,
+        decision        TEXT,
+        FOREIGN KEY (assujetti_id) REFERENCES assujettis(id),
+        FOREIGN KEY (titre_id) REFERENCES titres(id),
+        FOREIGN KEY (delai_prolonge_par) REFERENCES users(id) ON DELETE SET NULL
+      );
+
+      INSERT INTO contentieux_legacy (
+        id, numero, assujetti_id, titre_id, type, montant_litige, montant_degreve, date_ouverture,
+        date_limite_reponse, date_limite_reponse_initiale, delai_prolonge_justification,
+        delai_prolonge_par, delai_prolonge_at, date_cloture, statut, description, decision
+      ) VALUES (
+        1001, 'CTX-LEGACY-CHECK-1', ${fx.assujettiId}, ${fx.titreId}, 'contentieux', 830, 120, '2026-01-15',
+        '2026-07-15', '2026-07-15', NULL, NULL, NULL, NULL, 'degrevement_partiel', 'Legacy sans CHECK SQL', 'Decision legacy'
+      );
+
+      DROP TABLE contentieux;
+      ALTER TABLE contentieux_legacy RENAME TO contentieux;
+    `);
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  } finally {
+    db.pragma('foreign_keys = ON');
+  }
+
+  initSchema();
+
+  const contentieuxSql = (
+    db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'contentieux'").get() as
+      | { sql: string }
+      | undefined
+  )?.sql;
+  assert.match(contentieuxSql ?? '', /montant_degreve\s+REAL\s+CHECK\s*\(\s*montant_degreve\s+IS\s+NULL\s+OR\s+montant_degreve\s*>?=\s*0\s*\)/i);
+
+  assert.throws(
+    () =>
+      db.prepare(
+        `INSERT INTO contentieux (
+          numero, assujetti_id, titre_id, type, montant_litige, montant_degreve, date_ouverture, statut, description
+        ) VALUES ('CTX-NEGATIVE-CHECK', ?, ?, 'contentieux', 830, -1, '2026-02-01', 'ouvert', 'Montant dégrevé négatif')`,
+      ).run(fx.assujettiId, fx.titreId),
+    /CHECK constraint failed/i,
+  );
+});
+
+test('POST /api/contentieux calcule automatiquement une échéance à 6 mois et expose le résumé d’alerte dans la liste', async () => {
+  const fx = resetFixtures();
+
+  const created = await request({
+    method: 'POST',
+    path: '/api/contentieux',
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      assujetti_id: fx.assujettiId,
+      titre_id: fx.titreId,
+      type: 'contentieux',
+      montant_litige: 830,
+      date_ouverture: '2026-01-31',
+      description: 'Réclamation avec échéance calculée.',
+    },
+  });
+  assert.equal(created.status, 201);
+  assert.equal((created.data as { date_limite_reponse: string }).date_limite_reponse, '2026-07-31');
+
+  const list = await request({
+    method: 'GET',
+    path: '/api/contentieux',
+    headers: makeAuthHeader(fx.gestionnaire),
+  });
+  assert.equal(list.status, 200);
+
+  const createdId = (created.data as { id: number }).id;
+  const row = (list.data as Array<{
+    id: number;
+    date_limite_reponse: string | null;
+    date_limite_reponse_initiale: string | null;
+    days_remaining: number | null;
+    overdue: boolean;
+    niveau_alerte: string | null;
+    extended: boolean;
+  }>).find((entry) => entry.id === createdId);
+  assert.ok(row);
+  assert.equal(row?.date_limite_reponse, '2026-07-31');
+  assert.equal(row?.date_limite_reponse_initiale, '2026-07-31');
+  assert.equal(row?.extended, false);
+
+  const expectedSummary = summarizeContentieuxDeadline(
+    {
+      date_limite_reponse: '2026-07-31',
+      date_limite_reponse_initiale: '2026-07-31',
+      delai_prolonge_justification: null,
+    },
+    new Date().toISOString().slice(0, 10),
+  );
+  assert.equal(row?.days_remaining, expectedSummary.days_remaining);
+  assert.equal(row?.overdue, expectedSummary.overdue);
+  assert.equal(row?.niveau_alerte, expectedSummary.niveau_alerte);
+});
+
+test('POST /api/contentieux/:id/prolonger-delai journalise la prolongation et met à jour le résumé dans la liste', async () => {
+  const fx = resetFixtures();
+
+  const openedAt = '2026-01-15';
+  const initialDeadline = computeContentieuxResponseDeadline(openedAt);
+  const created = await request({
+    method: 'POST',
+    path: '/api/contentieux',
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      assujetti_id: fx.assujettiId,
+      titre_id: fx.titreId,
+      type: 'contentieux',
+      montant_litige: 830,
+      date_ouverture: openedAt,
+      description: 'Dossier à prolonger.',
+    },
+  });
+  assert.equal(created.status, 201);
+  const contentieuxId = (created.data as { id: number }).id;
+
+  const extended = await request({
+    method: 'POST',
+    path: `/api/contentieux/${contentieuxId}/prolonger-delai`,
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      date_limite_reponse: '2026-08-22',
+      justification: 'Attente du mémoire en défense',
+    },
+  });
+  assert.equal(extended.status, 200);
+  assert.equal((extended.data as { date_limite_reponse: string }).date_limite_reponse, '2026-08-22');
+  assert.equal((extended.data as { date_limite_reponse_initiale: string }).date_limite_reponse_initiale, initialDeadline);
+
+  const timeline = await request({
+    method: 'GET',
+    path: `/api/contentieux/${contentieuxId}/timeline`,
+    headers: makeAuthHeader(fx.gestionnaire),
+  });
+  assert.equal(timeline.status, 200);
+  const relanceEvent = (timeline.data as Array<{ type: string; description: string }>).find((event) => event.type === 'relance');
+  assert.ok(relanceEvent);
+  assert.match(relanceEvent?.description ?? '', /Délai prolongé du 2026-07-15 au 2026-08-22/);
+  assert.match(relanceEvent?.description ?? '', /Attente du mémoire en défense/);
+
+  const auditRow = db.prepare(
+    `SELECT action, details
+     FROM audit_log
+     WHERE entite = 'contentieux' AND entite_id = ? AND action = 'extend-deadline'
+     ORDER BY id DESC
+     LIMIT 1`,
+  ).get(contentieuxId) as { action: string; details: string | null } | undefined;
+  assert.ok(auditRow);
+  assert.equal(auditRow?.action, 'extend-deadline');
+  assert.match(auditRow?.details ?? '', /2026-08-22/);
+
+  const list = await request({
+    method: 'GET',
+    path: '/api/contentieux',
+    headers: makeAuthHeader(fx.gestionnaire),
+  });
+  assert.equal(list.status, 200);
+  const row = (list.data as Array<{
+    id: number;
+    date_limite_reponse: string | null;
+    date_limite_reponse_initiale: string | null;
+    delai_prolonge_justification: string | null;
+    extended: boolean;
+  }>).find((entry) => entry.id === contentieuxId);
+  assert.ok(row);
+  assert.equal(row?.date_limite_reponse, '2026-08-22');
+  assert.equal(row?.date_limite_reponse_initiale, initialDeadline);
+  assert.equal(row?.delai_prolonge_justification, 'Attente du mémoire en défense');
+  assert.equal(row?.extended, true);
+});
+
+test('POST /api/contentieux alimente automatiquement la timeline d ouverture puis GET /:id/timeline retourne les événements chronologiques', async () => {
+  const fx = resetFixtures();
+
+  const created = await request({
+    method: 'POST',
+    path: '/api/contentieux',
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      assujetti_id: fx.assujettiId,
+      titre_id: fx.titreId,
+      type: 'contentieux',
+      montant_litige: 830,
+      description: 'Réclamation initiale sur le titre.',
+    },
+  });
+  assert.equal(created.status, 201);
+
+  const timeline = await request({
+    method: 'GET',
+    path: `/api/contentieux/${(created.data as { id: number }).id}/timeline`,
+    headers: makeAuthHeader(fx.gestionnaire),
+  });
+
+  assert.equal(timeline.status, 200);
+  assert.equal(Array.isArray(timeline.data), true);
+  assert.equal((timeline.data as Array<{ type: string }>).length, 1);
+  assert.equal((timeline.data as Array<{ type: string }>)[0].type, 'ouverture');
+});
+
+test('POST /api/contentieux/:id/evenements rejette une date calendrier invalide', async () => {
+  const fx = resetFixtures();
+
+  const created = await request({
+    method: 'POST',
+    path: '/api/contentieux',
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      assujetti_id: fx.assujettiId,
+      titre_id: fx.titreId,
+      type: 'contentieux',
+      montant_litige: 830,
+      description: 'Ouverture du dossier.',
+    },
+  });
+  assert.equal(created.status, 201);
+  const contentieuxId = (created.data as { id: number }).id;
+
+  const invalidDate = await request({
+    method: 'POST',
+    path: `/api/contentieux/${contentieuxId}/evenements`,
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      type: 'courrier',
+      date: '2026-02-30',
+      auteur: 'Service contentieux',
+      description: 'Courrier avec date invalide.',
+    },
+  });
+
+  assert.equal(invalidDate.status, 400);
+});
+
+test('POST /api/contentieux/:id/decider et POST /api/contentieux/:id/evenements enrichissent la timeline puis le PDF s exporte', async () => {
+  const fx = resetFixtures();
+
+  const created = await request({
+    method: 'POST',
+    path: '/api/contentieux',
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      assujetti_id: fx.assujettiId,
+      titre_id: fx.titreId,
+      type: 'contentieux',
+      montant_litige: 830,
+      description: 'Ouverture du dossier.',
+    },
+  });
+  assert.equal(created.status, 201);
+  const contentieuxId = (created.data as { id: number }).id;
+  const pieceJointeId = createPieceJointe({
+    entite: 'contentieux',
+    entiteId: contentieuxId,
+    uploadedBy: fx.gestionnaire.id,
+  });
+
+  const manual = await request({
+    method: 'POST',
+    path: `/api/contentieux/${contentieuxId}/evenements`,
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      type: 'courrier',
+      date: '2026-06-15',
+      auteur: 'Service contentieux',
+      description: 'Courrier recommandé reçu.',
+      piece_jointe_id: pieceJointeId,
+    },
+  });
+  assert.equal(manual.status, 201);
+
+  const decided = await request({
+    method: 'POST',
+    path: `/api/contentieux/${contentieuxId}/decider`,
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      statut: 'clos_maintenu',
+      decision: 'Le titre est maintenu après instruction.',
+    },
+  });
+  assert.equal(decided.status, 200);
+
+  const timeline = await request({
+    method: 'GET',
+    path: `/api/contentieux/${contentieuxId}/timeline`,
+    headers: makeAuthHeader(fx.gestionnaire),
+  });
+  assert.equal(timeline.status, 200);
+  assert.deepEqual(
+    (timeline.data as Array<{ type: string }>).map((event) => event.type),
+    ['ouverture', 'statut', 'decision', 'courrier'],
+  );
+
+  const pdf = await requestBinary({
+    method: 'GET',
+    path: `/api/contentieux/${contentieuxId}/timeline/pdf`,
+    headers: makeAuthHeader(fx.gestionnaire),
+  });
+  assert.equal(pdf.status, 200);
+  assert.match(pdf.headers.contentType, /application\/pdf/);
+  assert.match(pdf.headers.disposition, /timeline-contentieux-/);
+  assert.equal(pdf.buffer.subarray(0, 4).toString('utf8'), '%PDF');
+});
+
+test('POST /api/contentieux/:id/decider conserve la date réelle de décision même si la timeline contient un événement futur', async () => {
+  const fx = resetFixtures();
+
+  const created = await request({
+    method: 'POST',
+    path: '/api/contentieux',
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      assujetti_id: fx.assujettiId,
+      titre_id: fx.titreId,
+      type: 'contentieux',
+      montant_litige: 830,
+      description: 'Ouverture du dossier.',
+    },
+  });
+  assert.equal(created.status, 201);
+  const contentieuxId = (created.data as { id: number }).id;
+
+  const futureEvent = await request({
+    method: 'POST',
+    path: `/api/contentieux/${contentieuxId}/evenements`,
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      type: 'courrier',
+      date: '2099-12-31',
+      auteur: 'Avocat',
+      description: 'Audience planifiée très en avance.',
+    },
+  });
+  assert.equal(futureEvent.status, 201);
+
+  const decided = await request({
+    method: 'POST',
+    path: `/api/contentieux/${contentieuxId}/decider`,
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      statut: 'clos_maintenu',
+      decision: 'Décision rendue à la date du jour.',
+    },
+  });
+  assert.equal(decided.status, 200);
+
+  const timeline = await request({
+    method: 'GET',
+    path: `/api/contentieux/${contentieuxId}/timeline`,
+    headers: makeAuthHeader(fx.gestionnaire),
+  });
+  assert.equal(timeline.status, 200);
+
+  const decisionEvents = (timeline.data as Array<{ type: string; date: string }>).filter((event) =>
+    event.type === 'statut' || event.type === 'decision',
+  );
+  assert.equal(decisionEvents.length, 2);
+  assert.deepEqual(
+    decisionEvents.map((event) => event.date),
+    [new Date().toISOString().slice(0, 10), new Date().toISOString().slice(0, 10)],
+  );
+});
+
+test('POST /api/contentieux/:id/decider valide et persiste le montant dégrevé attendu pour la synthèse financière', async () => {
+  const fx = resetFixtures();
+
+  const created = await request({
+    method: 'POST',
+    path: '/api/contentieux',
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      assujetti_id: fx.assujettiId,
+      titre_id: fx.titreId,
+      type: 'contentieux',
+      montant_litige: 830,
+      description: 'Ouverture du dossier.',
+    },
+  });
+  assert.equal(created.status, 201);
+  const contentieuxId = (created.data as { id: number }).id;
+
+  const missingPartialAmount = await request({
+    method: 'POST',
+    path: `/api/contentieux/${contentieuxId}/decider`,
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      statut: 'degrevement_partiel',
+      decision: 'Remise partielle sans montant.',
+    },
+  });
+  assert.equal(missingPartialAmount.status, 400);
+  assert.match(missingPartialAmount.text, /montant dégrevé est obligatoire/i);
+
+  const excessiveAmount = await request({
+    method: 'POST',
+    path: `/api/contentieux/${contentieuxId}/decider`,
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      statut: 'degrevement_partiel',
+      decision: 'Remise partielle trop élevée.',
+      montant_degreve: 900,
+    },
+  });
+  assert.equal(excessiveAmount.status, 400);
+  assert.match(excessiveAmount.text, /ne peut pas dépasser le montant en litige/i);
+
+  const partialDecision = await request({
+    method: 'POST',
+    path: `/api/contentieux/${contentieuxId}/decider`,
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      statut: 'degrevement_partiel',
+      decision: 'Remise partielle accordée.',
+      montant_degreve: 210,
+    },
+  });
+  assert.equal(partialDecision.status, 200);
+
+  const storedPartial = db.prepare('SELECT statut, montant_degreve FROM contentieux WHERE id = ?').get(contentieuxId) as {
+    statut: string;
+    montant_degreve: number | null;
+  };
+  assert.equal(storedPartial.statut, 'degrevement_partiel');
+  assert.equal(storedPartial.montant_degreve, 210);
+
+  const totalDecision = await request({
+    method: 'POST',
+    path: `/api/contentieux/${contentieuxId}/decider`,
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      statut: 'degrevement_total',
+      decision: 'Annulation totale.',
+      montant_degreve: 210,
+    },
+  });
+  assert.equal(totalDecision.status, 200);
+
+  const storedTotal = db.prepare('SELECT statut, montant_litige, montant_degreve FROM contentieux WHERE id = ?').get(contentieuxId) as {
+    statut: string;
+    montant_litige: number | null;
+    montant_degreve: number | null;
+  };
+  assert.equal(storedTotal.statut, 'degrevement_total');
+  assert.equal(storedTotal.montant_degreve, storedTotal.montant_litige);
+  assert.equal(storedTotal.montant_degreve, 830);
+});
+
+test('POST /api/contentieux/:id/evenements refuse une pièce jointe qui appartient à une autre entité ou est inaccessible', async () => {
+  const fx = resetFixtures();
+
+  const created = await request({
+    method: 'POST',
+    path: '/api/contentieux',
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      assujetti_id: fx.assujettiId,
+      titre_id: fx.titreId,
+      type: 'contentieux',
+      montant_litige: 830,
+      description: 'Ouverture du dossier.',
+    },
+  });
+  assert.equal(created.status, 201);
+  const contentieuxId = (created.data as { id: number }).id;
+
+  const titreAttachmentId = createPieceJointe({
+    entite: 'titre',
+    entiteId: fx.titreId,
+    uploadedBy: fx.gestionnaire.id,
+    nom: 'titre.pdf',
+  });
+  const otherContentieuxId = Number(
+    db.prepare(
+      `INSERT INTO contentieux (numero, assujetti_id, titre_id, type, montant_litige, description, date_ouverture)
+       VALUES ('CTX-OTHER-1', ?, ?, 'contentieux', 100, 'Autre dossier', '2026-01-01')`,
+    ).run(fx.assujettiId, fx.titreId).lastInsertRowid,
+  );
+  const foreignAttachmentId = createPieceJointe({
+    entite: 'contentieux',
+    entiteId: otherContentieuxId,
+    uploadedBy: fx.gestionnaire.id,
+    nom: 'foreign.pdf',
+  });
+
+  const wrongEntity = await request({
+    method: 'POST',
+    path: `/api/contentieux/${contentieuxId}/evenements`,
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      type: 'courrier',
+      date: '2026-06-15',
+      description: 'Tentative de liaison interdite.',
+      piece_jointe_id: titreAttachmentId,
+    },
+  });
+  assert.equal(wrongEntity.status, 400);
+
+  const wrongContentieux = await request({
+    method: 'POST',
+    path: `/api/contentieux/${contentieuxId}/evenements`,
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      type: 'courrier',
+      date: '2026-06-15',
+      description: 'Tentative de liaison d un autre dossier.',
+      piece_jointe_id: foreignAttachmentId,
+    },
+  });
+  assert.equal(wrongContentieux.status, 400);
+
+  const sameContentieuxAttachmentId = createPieceJointe({
+    entite: 'contentieux',
+    entiteId: contentieuxId,
+    uploadedBy: fx.gestionnaire.id,
+    nom: 'same-contentieux.pdf',
+  });
+
+  const financierAttempt = await request({
+    method: 'POST',
+    path: `/api/contentieux/${contentieuxId}/evenements`,
+    headers: makeAuthHeader(fx.financier),
+    body: {
+      type: 'courrier',
+      date: '2026-06-15',
+      description: 'Tentative par financier sans accès à la PJ contentieux.',
+      piece_jointe_id: sameContentieuxAttachmentId,
+    },
+  });
+  assert.equal(financierAttempt.status, 403);
+});
+
+test('GET /api/contentieux/:id/timeline masque les métadonnées de pièce jointe pour un financier', async () => {
+  const fx = resetFixtures();
+
+  const created = await request({
+    method: 'POST',
+    path: '/api/contentieux',
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      assujetti_id: fx.assujettiId,
+      titre_id: fx.titreId,
+      type: 'contentieux',
+      montant_litige: 830,
+      description: 'Ouverture du dossier.',
+    },
+  });
+  assert.equal(created.status, 201);
+  const contentieuxId = (created.data as { id: number }).id;
+  const pieceJointeId = createPieceJointe({
+    entite: 'contentieux',
+    entiteId: contentieuxId,
+    uploadedBy: fx.gestionnaire.id,
+    nom: 'secret-contentieux.pdf',
+  });
+
+  const manual = await request({
+    method: 'POST',
+    path: `/api/contentieux/${contentieuxId}/evenements`,
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      type: 'courrier',
+      date: '2026-06-15',
+      auteur: 'Service contentieux',
+      description: 'Courrier avec pièce.',
+      piece_jointe_id: pieceJointeId,
+    },
+  });
+  assert.equal(manual.status, 201);
+
+  const timeline = await request({
+    method: 'GET',
+    path: `/api/contentieux/${contentieuxId}/timeline`,
+    headers: makeAuthHeader(fx.financier),
+  });
+  assert.equal(timeline.status, 200);
+  const eventWithAttachment = (
+    timeline.data as Array<{
+      type: string;
+      piece_jointe_id: number | null;
+      piece_jointe_nom?: string | null;
+      piece_jointe_entite?: string | null;
+      piece_jointe_entite_id?: number | null;
+    }>
+  ).find(
+    (event) => event.type === 'courrier',
+  );
+  assert.equal(eventWithAttachment?.piece_jointe_id ?? null, null);
+  assert.equal(eventWithAttachment?.piece_jointe_nom ?? null, null);
+  assert.equal(eventWithAttachment?.piece_jointe_entite ?? null, null);
+  assert.equal(eventWithAttachment?.piece_jointe_entite_id ?? null, null);
+});
+
+test('GET /api/contentieux/:id/timeline/pdf masque aussi les métadonnées de pièce jointe pour un financier', async () => {
+  const fx = resetFixtures();
+
+  const created = await request({
+    method: 'POST',
+    path: '/api/contentieux',
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      assujetti_id: fx.assujettiId,
+      titre_id: fx.titreId,
+      type: 'contentieux',
+      montant_litige: 830,
+      description: 'Ouverture du dossier.',
+    },
+  });
+  assert.equal(created.status, 201);
+  const contentieuxId = (created.data as { id: number }).id;
+  const pieceJointeId = createPieceJointe({
+    entite: 'contentieux',
+    entiteId: contentieuxId,
+    uploadedBy: fx.gestionnaire.id,
+    nom: 'secret-contentieux.pdf',
+  });
+
+  const manual = await request({
+    method: 'POST',
+    path: `/api/contentieux/${contentieuxId}/evenements`,
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      type: 'courrier',
+      date: '2026-06-15',
+      auteur: 'Service contentieux',
+      description: 'Courrier avec pièce.',
+      piece_jointe_id: pieceJointeId,
+    },
+  });
+  assert.equal(manual.status, 201);
+
+  const pdf = await requestBinary({
+    method: 'GET',
+    path: `/api/contentieux/${contentieuxId}/timeline/pdf`,
+    headers: makeAuthHeader(fx.financier),
+  });
+  assert.equal(pdf.status, 200);
+  assert.match(pdf.headers.contentType, /application\/pdf/);
+
+  const extractedText = extractPdfText(pdf.buffer);
+  assert.match(extractedText, /Courrier avec pièce\./);
+  assert.equal(extractedText.includes('secret-contentieux.pdf'), false);
+});
+
+test('GET /api/contentieux couvre les branches contribuable sans assujetti, accès refusé et identifiants invalides', async () => {
+  const fx = resetFixtures();
+
+  const otherAssujettiId = Number(
+    db.prepare(
+      `INSERT INTO assujettis (identifiant_tlpe, raison_sociale, email, statut)
+       VALUES ('TLPE-CTX-002', 'Beta Contentieux', 'beta-contentieux@example.test', 'actif')`,
+    ).run().lastInsertRowid,
+  );
+  const unattachedContribuableId = Number(
+    db.prepare(
+      `INSERT INTO users (email, password_hash, nom, prenom, role, assujetti_id, actif)
+       VALUES ('sans-assujetti-contentieux@tlpe.local', ?, 'Sans', 'Assujetti', 'contribuable', NULL, 1)`,
+    ).run(hashPassword('x')).lastInsertRowid,
+  );
+
+  const unattachedContribuable = {
+    id: unattachedContribuableId,
+    email: 'sans-assujetti-contentieux@tlpe.local',
+    role: 'contribuable' as const,
+    nom: 'Sans',
+    prenom: 'Assujetti',
+    assujetti_id: null,
+  };
+
+  const emptyList = await request({
+    method: 'GET',
+    path: '/api/contentieux',
+    headers: makeAuthHeader(unattachedContribuable),
+  });
+  assert.equal(emptyList.status, 200);
+  assert.deepEqual(emptyList.data, []);
+
+  const foreignCreate = await request({
+    method: 'POST',
+    path: '/api/contentieux',
+    headers: makeAuthHeader(fx.contribuable),
+    body: {
+      assujetti_id: otherAssujettiId,
+      titre_id: fx.titreId,
+      type: 'contentieux',
+      description: 'Tentative étrangère.',
+    },
+  });
+  assert.equal(foreignCreate.status, 403);
+
+  const created = await request({
+    method: 'POST',
+    path: '/api/contentieux',
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      assujetti_id: fx.assujettiId,
+      titre_id: fx.titreId,
+      type: 'contentieux',
+      description: 'Dossier pour tests d’accès.',
+    },
+  });
+  assert.equal(created.status, 201);
+  const contentieuxId = (created.data as { id: number }).id;
+
+  const invalidId = await request({
+    method: 'GET',
+    path: '/api/contentieux/abc/timeline',
+    headers: makeAuthHeader(fx.gestionnaire),
+  });
+  assert.equal(invalidId.status, 400);
+
+  const missing = await request({
+    method: 'GET',
+    path: '/api/contentieux/999999/timeline',
+    headers: makeAuthHeader(fx.gestionnaire),
+  });
+  assert.equal(missing.status, 404);
+
+  const foreignContribuableId = Number(
+    db.prepare(
+      `INSERT INTO users (email, password_hash, nom, prenom, role, assujetti_id, actif)
+       VALUES ('contribuable-etranger-contentieux@tlpe.local', ?, 'Etranger', 'Contentieux', 'contribuable', ?, 1)`,
+    ).run(hashPassword('x'), otherAssujettiId).lastInsertRowid,
+  );
+  const foreignContribuable = {
+    id: foreignContribuableId,
+    email: 'contribuable-etranger-contentieux@tlpe.local',
+    role: 'contribuable' as const,
+    nom: 'Etranger',
+    prenom: 'Contentieux',
+    assujetti_id: otherAssujettiId,
+  };
+
+  const forbidden = await request({
+    method: 'GET',
+    path: `/api/contentieux/${contentieuxId}/timeline`,
+    headers: makeAuthHeader(foreignContribuable),
+  });
+  assert.equal(forbidden.status, 403);
+});
+
+test('POST /api/contentieux/:id/prolonger-delai rejette les échéances absentes ou non postérieures', async () => {
+  const fx = resetFixtures();
+
+  const withoutDeadlineId = Number(
+    db.prepare(
+      `INSERT INTO contentieux (
+        numero, assujetti_id, titre_id, type, montant_litige, montant_degreve, description,
+        date_ouverture, date_limite_reponse, date_limite_reponse_initiale, statut
+      ) VALUES ('CTX-NO-DEADLINE', ?, ?, 'contentieux', 830, NULL, 'Legacy sans échéance', '2026-01-10', NULL, NULL, 'ouvert')`,
+    ).run(fx.assujettiId, fx.titreId).lastInsertRowid,
+  );
+
+  const noDeadline = await request({
+    method: 'POST',
+    path: `/api/contentieux/${withoutDeadlineId}/prolonger-delai`,
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      date_limite_reponse: '2026-08-15',
+      justification: 'Tentative sur dossier legacy',
+    },
+  });
+  assert.equal(noDeadline.status, 400);
+  assert.match(String((noDeadline.data as { error: string }).error), /Aucune échéance existante/i);
+
+  const created = await request({
+    method: 'POST',
+    path: '/api/contentieux',
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      assujetti_id: fx.assujettiId,
+      titre_id: fx.titreId,
+      type: 'contentieux',
+      date_ouverture: '2026-01-15',
+      description: 'Dossier avec échéance normale.',
+    },
+  });
+  assert.equal(created.status, 201);
+  const contentieuxId = (created.data as { id: number }).id;
+
+  const sameDeadline = await request({
+    method: 'POST',
+    path: `/api/contentieux/${contentieuxId}/prolonger-delai`,
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      date_limite_reponse: '2026-07-15',
+      justification: 'Date inchangée',
+    },
+  });
+  assert.equal(sameDeadline.status, 400);
+  assert.match(String((sameDeadline.data as { error: string }).error), /doit être postérieure/i);
+});
+
+test('POST /api/contentieux/:id/decider couvre la branche instruction sans décision et le dégrèvement total sans montant litigieux', async () => {
+  const fx = resetFixtures();
+
+  const instructionCreated = await request({
+    method: 'POST',
+    path: '/api/contentieux',
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      assujetti_id: fx.assujettiId,
+      titre_id: fx.titreId,
+      type: 'contentieux',
+      montant_litige: 830,
+      description: 'Dossier remis en instruction.',
+    },
+  });
+  assert.equal(instructionCreated.status, 201);
+  const instructionId = (instructionCreated.data as { id: number }).id;
+
+  const instructionDecision = await request({
+    method: 'POST',
+    path: `/api/contentieux/${instructionId}/decider`,
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      statut: 'instruction',
+    },
+  });
+  assert.equal(instructionDecision.status, 200);
+
+  const storedInstruction = db.prepare(
+    `SELECT statut, decision, date_cloture FROM contentieux WHERE id = ?`,
+  ).get(instructionId) as { statut: string; decision: string | null; date_cloture: string | null };
+  assert.equal(storedInstruction.statut, 'instruction');
+  assert.equal(storedInstruction.decision, null);
+  assert.equal(storedInstruction.date_cloture, null);
+
+  const instructionTimeline = db.prepare(
+    `SELECT type, description FROM evenements_contentieux WHERE contentieux_id = ? ORDER BY id ASC`,
+  ).all(instructionId) as Array<{ type: string; description: string }>;
+  assert.equal(instructionTimeline.filter((event) => event.type === 'decision').length, 0);
+  assert.equal(instructionTimeline.some((event) => event.type === 'statut'), true);
+
+  const nullLitigeId = Number(
+    db.prepare(
+      `INSERT INTO contentieux (
+        numero, assujetti_id, titre_id, type, montant_litige, montant_degreve, description,
+        date_ouverture, date_limite_reponse, date_limite_reponse_initiale, statut
+      ) VALUES ('CTX-NULL-LITIGE', ?, ?, 'contentieux', NULL, NULL, 'Dossier sans montant', '2026-02-01', '2026-08-01', '2026-08-01', 'ouvert')`,
+    ).run(fx.assujettiId, fx.titreId).lastInsertRowid,
+  );
+
+  const totalWithoutLitige = await request({
+    method: 'POST',
+    path: `/api/contentieux/${nullLitigeId}/decider`,
+    headers: makeAuthHeader(fx.gestionnaire),
+    body: {
+      statut: 'degrevement_total',
+      decision: 'Annulation sans montant source.',
+    },
+  });
+  assert.equal(totalWithoutLitige.status, 200);
+
+  const storedTotal = db.prepare(
+    `SELECT statut, montant_litige, montant_degreve FROM contentieux WHERE id = ?`,
+  ).get(nullLitigeId) as { statut: string; montant_litige: number | null; montant_degreve: number | null };
+  assert.equal(storedTotal.statut, 'degrevement_total');
+  assert.equal(storedTotal.montant_litige, null);
+  assert.equal(storedTotal.montant_degreve, null);
+});

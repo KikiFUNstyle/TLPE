@@ -34,7 +34,7 @@ Monorepo npm workspaces : `server/` (Express + better-sqlite3) et `client/` (Rea
 ### Machines à états (à respecter pour toute mutation)
 
 - `declarations.statut` : `brouillon → soumise → validee` (ou `rejetee` / `en_instruction`). Une déclaration `soumise` ou `validee` n'est plus modifiable (lignes figées). La soumission calcule un `hash_soumission` SHA-256 du snapshot des lignes (accusé réception, §5.2). La validation déclenche `calculerTLPE` sur chaque ligne et archive le détail dans `lignes_declaration` (bareme_id, tarif_applique, coefficient_zone, prorata, montant_ligne).
-- `titres.statut` : `emis → paye_partiel → paye` ou `impaye → mise_en_demeure → admis_en_non_valeur`. Le cumul `montant_paye` est recalculé à partir de la table `paiements`.
+- `titres.statut` : `emis → paye_partiel → paye` ou `impaye → mise_en_demeure → transmis_comptable → admis_en_non_valeur`. Le cumul `montant_paye` est recalculé à partir de la table `paiements`.
 - Un titre est émis à partir d'une déclaration `validee` (contrainte `UNIQUE (declaration_id)` dans `titres`).
 
 ### Moteur de calcul (specs §6)

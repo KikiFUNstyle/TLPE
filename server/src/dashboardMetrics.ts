@@ -14,7 +14,7 @@ function computeRate(received: number, expected: number): number {
   return received / expected;
 }
 
-export function getDashboardMetrics() {
+export function getDashboardMetrics(nowDateIso = new Date().toISOString().slice(0, 10)) {
   const currentYear = new Date().getFullYear();
   const campagne = db
     .prepare(
@@ -75,6 +75,24 @@ export function getDashboardMetrics() {
   const montantLitige = (
     db.prepare("SELECT COALESCE(SUM(montant_litige),0) AS s FROM contentieux WHERE statut IN ('ouvert','instruction')").get() as { s: number }
   ).s;
+  const contentieuxAlertesTotal = (
+    db.prepare(
+      `SELECT COUNT(*) AS c
+       FROM contentieux
+       WHERE statut IN ('ouvert','instruction')
+         AND date_limite_reponse IS NOT NULL
+         AND julianday(date_limite_reponse) - julianday(?) <= 30`,
+    ).get(nowDateIso) as { c: number }
+  ).c;
+  const contentieuxAlertesOverdue = (
+    db.prepare(
+      `SELECT COUNT(*) AS c
+       FROM contentieux
+       WHERE statut IN ('ouvert','instruction')
+         AND date_limite_reponse IS NOT NULL
+         AND date_limite_reponse < ?`,
+    ).get(nowDateIso) as { c: number }
+  ).c;
 
   const repartitionCategories = db
     .prepare(
@@ -198,6 +216,8 @@ export function getDashboardMetrics() {
       taux_declaration: tauxDeclaration,
       evolution_taux_vs_nm1: tauxDeclarationNm1 > 0 ? tauxDeclaration - tauxDeclarationNm1 : null,
       contentieux_ouverts: contentieuxOuverts,
+      contentieux_alertes_total: contentieuxAlertesTotal,
+      contentieux_alertes_overdue: contentieuxAlertesOverdue,
     },
     repartition_categories: repartitionCategories,
     derniers_titres: derniersTitres,

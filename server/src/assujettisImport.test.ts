@@ -22,6 +22,7 @@ function resetTables() {
   db.exec('DELETE FROM titres');
   db.exec('DELETE FROM lignes_declaration');
   db.exec('DELETE FROM declarations');
+  db.exec('DELETE FROM controles');
   db.exec('DELETE FROM dispositifs');
   db.exec('DELETE FROM assujettis');
   db.exec('DELETE FROM audit_log');
@@ -80,6 +81,22 @@ test('decodeAssujettisImportFile - decode CSV et XLSX', () => {
   assert.equal(xlsxRows[0].raison_sociale, 'Beta');
 });
 
+test('decodeAssujettisImportFile - rejecte les payloads base64 invalides pour XLSX', () => {
+  resetTables();
+
+  assert.throws(
+    () => decodeAssujettisImportFile('import.xlsx', 'not-base64'),
+    /Invalid base64 payload/,
+  );
+});
+
+test('decodeAssujettisImportFile - decode un CSV base64 invalide en aperçu vide pour compatibilité historique', () => {
+  resetTables();
+
+  const rows = decodeAssujettisImportFile('import.csv', 'not-base64');
+  assert.deepEqual(rows, []);
+});
+
 test('validateImportRows - detecte anomalies et valide lignes correctes', () => {
   resetTables();
 
@@ -111,6 +128,101 @@ test('validateImportRows - detecte anomalies et valide lignes correctes', () => 
   assert.ok(result.anomalies.some((a) => a.field === 'raison_sociale'));
   assert.ok(result.anomalies.some((a) => a.field === 'siret'));
   assert.ok(result.anomalies.some((a) => a.field === 'email'));
+});
+
+test('validateImportRows - detecte les doublons, l’absence d’identifiant exploitable et les conflits de correspondance', () => {
+  resetTables();
+
+  db.prepare(
+    `INSERT INTO assujettis (identifiant_tlpe, raison_sociale, siret, statut)
+     VALUES ('TLPE-2026-02000', 'Alpha existant', '73282932000074', 'actif')`,
+  ).run();
+  db.prepare(
+    `INSERT INTO assujettis (identifiant_tlpe, raison_sociale, siret, statut)
+     VALUES ('TLPE-2026-02001', 'Beta existant', '55210055400005', 'actif')`,
+  ).run();
+
+  const rows: RawImportRow[] = [
+    {
+      line: 2,
+      identifiant_tlpe: 'TLPE-2026-03000',
+      raison_sociale: 'Gamma',
+      siret: '34921495400001',
+      portail_actif: 'oui',
+      statut: 'actif',
+    },
+    {
+      line: 3,
+      identifiant_tlpe: 'TLPE-2026-03000',
+      raison_sociale: 'Gamma doublon',
+      siret: '34921495400025',
+      portail_actif: 'oui',
+      statut: 'actif',
+    },
+    {
+      line: 4,
+      raison_sociale: 'Sans identifiant',
+      siret: '',
+      portail_actif: 'non',
+      statut: 'inactif',
+    },
+    {
+      line: 5,
+      identifiant_tlpe: 'TLPE-2026-02000',
+      raison_sociale: 'Conflit correspondance',
+      siret: '55210055400005',
+      portail_actif: 'oui',
+      statut: 'contentieux',
+    },
+  ];
+
+  const result = validateImportRows(rows);
+  assert.equal(result.total, 4);
+  assert.equal(result.validRows.length, 1);
+  assert.ok(
+    result.anomalies.some((a) => a.line === 3 && a.field === 'identifiant_tlpe' && /Doublon dans le fichier/.test(a.message)),
+  );
+  assert.ok(
+    result.anomalies.some(
+      (a) => a.line === 4 && a.field === 'identifiant_tlpe/siret' && /Identifiant TLPE ou SIRET obligatoire/.test(a.message),
+    ),
+  );
+  assert.ok(
+    result.anomalies.some(
+      (a) => a.line === 5 && a.field === 'identifiant_tlpe/siret' && /assujettis differents/.test(a.message),
+    ),
+  );
+});
+
+test('validateImportRows - applique les valeurs par défaut et détecte aussi les doublons de SIRET', () => {
+  resetTables();
+
+  const rows: RawImportRow[] = [
+    {
+      line: 2,
+      identifiant_tlpe: 'TLPE-2026-04000',
+      raison_sociale: 'Delta',
+      siret: '73282932000074',
+      portail_actif: '',
+      statut: '',
+      adresse_pays: '',
+    },
+    {
+      line: 3,
+      identifiant_tlpe: 'TLPE-2026-04001',
+      raison_sociale: 'Delta doublon',
+      siret: '73282932000074',
+      portail_actif: 'non',
+      statut: 'actif',
+    },
+  ];
+
+  const result = validateImportRows(rows);
+  assert.equal(result.validRows.length, 1);
+  assert.equal(result.validRows[0].portail_actif, 0);
+  assert.equal(result.validRows[0].statut, 'actif');
+  assert.equal(result.validRows[0].adresse_pays, 'France');
+  assert.ok(result.anomalies.some((a) => a.line === 3 && a.field === 'siret' && /Doublon dans le fichier/.test(a.message)));
 });
 
 test('executeAssujettisImport - cree et met a jour avec audit', () => {
@@ -183,4 +295,82 @@ test('executeAssujettisImport - cree et met a jour avec audit', () => {
 
   const audit = db.prepare('SELECT COUNT(*) AS c FROM audit_log WHERE entite = ? AND action = ?').get('assujetti', 'import') as { c: number };
   assert.equal(audit.c, 2);
+});
+
+test('executeAssujettisImport - génère un identifiant TLPE automatique et met à jour via le SIRET', () => {
+  resetTables();
+  const adminId = createAdminUser();
+
+  const createResult = executeAssujettisImport(
+    [
+      {
+        line: 2,
+        identifiant_tlpe: null,
+        raison_sociale: 'Sans identifiant manuel',
+        siret: '55210055400005',
+        forme_juridique: null,
+        adresse_rue: null,
+        adresse_cp: null,
+        adresse_ville: null,
+        adresse_pays: 'France',
+        contact_nom: null,
+        contact_prenom: null,
+        contact_fonction: null,
+        email: null,
+        telephone: null,
+        portail_actif: 0,
+        statut: 'actif',
+        notes: null,
+      },
+    ],
+    adminId,
+  );
+
+  assert.deepEqual(createResult, { total: 1, created: 1, updated: 0, rejected: 0 });
+
+  const createdRow = db.prepare('SELECT id, identifiant_tlpe, raison_sociale FROM assujettis WHERE siret = ?').get('55210055400005') as {
+    id: number;
+    identifiant_tlpe: string;
+    raison_sociale: string;
+  };
+  assert.match(createdRow.identifiant_tlpe, /^TLPE-\d{4}-\d{5}$/);
+  assert.equal(createdRow.raison_sociale, 'Sans identifiant manuel');
+
+  const updateResult = executeAssujettisImport(
+    [
+      {
+        line: 3,
+        identifiant_tlpe: null,
+        raison_sociale: 'Sans identifiant manuel - MAJ',
+        siret: '55210055400005',
+        forme_juridique: 'SARL',
+        adresse_rue: '3 rue des Imports',
+        adresse_cp: '33000',
+        adresse_ville: 'Bordeaux',
+        adresse_pays: 'France',
+        contact_nom: 'Martin',
+        contact_prenom: 'Jeanne',
+        contact_fonction: 'Gerante',
+        email: 'delta@example.fr',
+        telephone: '0102030405',
+        portail_actif: 1,
+        statut: 'contentieux',
+        notes: 'Maj via siret',
+      },
+    ],
+    adminId,
+  );
+
+  assert.deepEqual(updateResult, { total: 1, created: 0, updated: 1, rejected: 0 });
+
+  const updatedRow = db.prepare('SELECT identifiant_tlpe, raison_sociale, statut, portail_actif FROM assujettis WHERE siret = ?').get('55210055400005') as {
+    identifiant_tlpe: string;
+    raison_sociale: string;
+    statut: string;
+    portail_actif: number;
+  };
+  assert.equal(updatedRow.identifiant_tlpe, createdRow.identifiant_tlpe);
+  assert.equal(updatedRow.raison_sociale, 'Sans identifiant manuel - MAJ');
+  assert.equal(updatedRow.statut, 'contentieux');
+  assert.equal(updatedRow.portail_actif, 1);
 });

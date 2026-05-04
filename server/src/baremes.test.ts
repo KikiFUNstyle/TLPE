@@ -15,6 +15,7 @@ function resetTables() {
   db.exec('DELETE FROM baremes');
   db.exec('DELETE FROM bareme_activation');
   db.exec('DELETE FROM audit_log');
+  db.exec('DELETE FROM controles');
   db.exec('DELETE FROM users');
 }
 

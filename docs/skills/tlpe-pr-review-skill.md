@@ -19,6 +19,9 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
 - Échec de validation = erreur 4xx (pas 500).
 - Pour tout téléchargement de fichier, interdire les contrôles de type `startsWith(...)` seuls: vérifier l'enracinement avec `path.relative(root, absolutePath)` et rejeter si `..` ou chemin absolu.
 - Pour tout stream de fichier (`createReadStream`), imposer un handler d'erreur explicite qui journalise et termine proprement la réponse.
+- Pour toute US sécurité/chiffrement au repos, vérifier explicitement l'inventaire des champs sensibles réellement présents dans le schéma et documenter aussi les absences (ex: NIR non implémenté) pour éviter un faux sentiment de couverture.
+- Si un service de chiffrement prévoit un fallback de développement, exiger qu'il soit explicitement interdit en production (`NODE_ENV=production`) avec test ou garde runtime.
+- Si une rotation de clé est annoncée comme livrée, exiger un point d'entrée batch opérable (script CLI/documentation) et une option `--dry-run` ou équivalent pour audit préalable.
 
 ### 3) DB & audit
 - Toute mutation métier sensible appelle `logAudit()`.
@@ -29,6 +32,8 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
 - Les actions admin ne sont visibles qu'aux admins.
 - Les erreurs API sont affichées de façon exploitable pour l'utilisateur.
 - Le flux UX principal est testé manuellement (liste, import, activation, rafraîchissement).
+- Pour tout nouvel élément d’action ajouté dans un header/toolbar (lien, bouton, CTA), vérifier que les styles communs sont factorisés avec les contrôles voisins existants afin d’éviter une divergence visuelle et des hover states incohérents.
+- Pour toute issue explicitement marquée hors périmètre MVP (ex. mobile natif, FranceConnect+), vérifier d'abord `README.md` et `CLAUDE.md`, documenter les prérequis/dépendances réels dans un livrable traçable, et ne jamais présenter une maquette ou un contournement web comme une livraison complète de l'US.
 
 ### 5) Campagnes, jobs & notifications (appris sur US3.4/US3.5)
 - Si une feature ajoute un job planifié (scheduler/cron), vérifier **idempotence** et absence de doublon d'envoi (même campagne + assujetti + niveau/template).
@@ -36,6 +41,7 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
 - Vérifier la cohérence **schéma + migrations runtime + API** quand de nouvelles colonnes sont introduites.
 - Vérifier qu'une action de clôture n'introduit pas d'effet de bord silencieux (payload de job, audit associé, date d'exécution attendue).
 - Vérifier la traçabilité complète: `notifications_email`, `campagne_jobs`, `audit_log`.
+- Pour toute US SMTP/notifications, vérifier que la README documente les variables runtime réelles (`TLPE_EMAIL_DELIVERY_MODE`, `TLPE_SMTP_*`, modes `mailhog|log-only`) et que le smoke test couvre un démarrage avec worker email actif.
 
 ### 6) Règles spécifiques mises en demeure J+1 (US3.5)
 - Le déclenchement doit être basé sur `date_cloture + 1` (et non `date_limite_declaration`).
@@ -52,11 +58,44 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
 - Pour tout parseur MT940/format bancaire, vérifier que les références métier sont préservées même sans séparateur `//` et que le code type (`NTRF`, `NMSC`, etc.) n'est pas restitué comme référence client.
 - Pour toute liste UI de doublons/aperçus importés, vérifier une clé React réellement unique et stable (`transaction_id` seul est insuffisant si la vue affiche plusieurs doublons du même identifiant).
 - Pour toute US avec document généré (PDF, accusé, courrier), ajouter un test API qui valide la présence des métadonnées de restitution (`token/hash/download_url`) et un test service qui vérifie la persistance + réutilisation idempotente.
+- Pour tout test d'export binaire (XLSX/PDF/XML) via `fetch`, lire la réponse en `arrayBuffer()` puis parser le `Buffer` brut ; ne pas reconstruire le binaire depuis `response.text()` sous peine de corrompre l'archive et de masquer un faux échec de test.
+- Pour toute assertion de sécurité sur un PDF généré, ne jamais se contenter d'un `buffer.includes(...)` sur le binaire brut : vérifier la donnée avant rendu ou décompresser les flux PDF compressés pour éviter un faux positif.
+- Pour toute US de mise en demeure sur titres, vérifier explicitement en review :
+  - route manuelle sécurisée (`POST /api/titres/:id/mise-en-demeure`) + route batch sécurisée (`POST /api/titres/mises-en-demeure/batch`),
+- Pour toute route batch métier qui peut ignorer des entrées invalides ou non rattachées (`redressement`, `rectification`, exports groupés, etc.), vérifier qu'un résultat vide ne renvoie jamais `201`/succès silencieux : exiger une réponse explicite de type `409/4xx` avec `created.length === 0` et un test de non-régression sans effet de bord.
+  - numérotation unique et stable via table dédiée (`titre_mises_en_demeure`) avec réutilisation idempotente si un PDF existe déjà pour le titre,
+  - séquence de numérotation résistante à la concurrence (pas de `COUNT(*) + 1`) et migration runtime/schéma dédiée si un compteur persistant est introduit,
+  - archivage du PDF dans `pieces_jointes` avec entité `titre`, `download_url` renvoyé par l'API et traçabilité `audit_log` dédiée,
+  - téléchargement réellement autorisé pour tous les rôles producteurs du document (`admin|financier`) avec test bout-en-bout du `download_url`,
+  - en cas de soft delete de la pièce jointe, ne jamais renvoyer un `download_url` obsolète : régénérer ou refuser explicitement avec couverture de test,
+  - batch atomique côté validation d'entrée/résolution des titres (pas de résultats partiels silencieux si un élément est introuvable),
+  - blocage métier sur les titres soldés, tests couverture happy path + batch + refus 409,
+  - présence d'un déclencheur UI explicite côté page Titres (unitaire + lot) réservé aux rôles `admin|financier`.
+- Pour tout service d’intégration externe mis en cache (SIRENE/BAN/API partenaire), vérifier en review et en tests : cache valide, fallback sur cache expiré, timeout explicite, réponse HTTP non-OK, payload vide/malformé, et propagation contrôlée des erreurs réseau inattendues.
+- Pour tout document métier généré (accusé, PDF, courrier), vérifier en review et en tests : lookup introuvable, idempotence, mode dégradé d’envoi (ex. SMTP absent), tolérance de formats de date métier attendus, et pagination/multi-pages quand le volume de lignes augmente fortement.
 - Pour tout export binaire métier (PDF/XLSX bordereau, titre, rapport), vérifier en review:
   - contrôle d'accès explicite par rôle,
   - filtrage métier exact des données exportées,
   - présence d'un horodatage + hash du contenu restitué,
-  - écriture d'une trace `audit_log` dédiée à l'export.
+  - écriture d'une trace `audit_log` dédiée à l'export,
+  - si l'US exige un archivage d'export (`rapports_exports`, pièce jointe, stockage disque/S3), vérifier aussi la persistance métier associée (`filename`, `storage_path`, `content_hash`, compte/totaux`) avec test dédié,
+  - en cas d'échec de persistance SQL après écriture du binaire archivé, vérifier le nettoyage immédiat du fichier temporaire/stocké pour éviter les archives orphelines,
+  - si l'US mentionne un déclencheur utilisateur (bouton, sélecteur année, action toolbar), vérifier que le wiring UI existe réellement dans la page cible et pas seulement des helpers/tests isolés,
+  - pour tout rendu tabulaire PDF multi-colonnes, calcul de hauteur de ligne basé sur la cellule la plus haute (pas seulement la dernière colonne dessinée) afin d'éviter les chevauchements de lignes,
+  - pour toute pagination de tableau PDF, décider le saut de page à partir de la hauteur de la prochaine ligne + espace de séparation/footer (pas uniquement sur le `doc.y` courant), avec test de non-régression sur une ligne haute proche du bas de page,
+  - pour toute ventilation/agrégation métier par assujetti, grouper sur une clé stable technique (`assujetti_id`) et non sur un libellé affiché (`raison_sociale`) afin d'éviter les collisions d'homonymes,
+  - pour toute carte choroplèthe / légende par seuils, vérifier que le dernier libellé de classe utilise bien la borne inférieure réelle de la tranche haute (ex. `> 800`, pas `> 1000`), avec test UI dédié,
+  - pour toute extraction SQL réutilisée à la fois par un rapport tabulaire et une carte géographique, vérifier que les colonnes lourdes (ex. `geometry`) restent opt-in et ne sont pas chargées pour les exports non cartographiques, avec test de non-régression sur la requête SQL,
+  - pour toute agrégation géographique multi-lignes, vérifier que la géométrie d'une zone est parsée/normalisée une seule fois par zone agrégée puis réutilisée pour les lignes suivantes, avec test ciblé prouvant qu'une ligne dupliquée plus tardive ne peut pas re-casser l'agrégat.
+  - pour toute restitution cartographique basée sur une géométrie de zone stockée, refuser explicitement les géométries invalides/incomplètes côté API (4xx/5xx selon source) au lieu d'ignorer silencieusement des lignes et sous-déclarer les totaux,
+  - pour tout test d'export/archivage dépendant du stockage de fichiers, forcer un mode local hermétique (`TLPE_UPLOAD_STORAGE=local`) dans le contexte de test pour éviter une dépendance implicite à S3 ou au réseau.
+  - pour tout export issu d'un payload déjà agrégé, vérifier qu'aucune seconde requête brute identique n'est relancée uniquement pour recalculer un compteur dérivable (`titresCount`, `rows.length`, etc.) : réutiliser la donnée préparée et ajouter un test de non-régression si besoin,
+  - pour toute page pilotée par un filtre texte/année déclenchant un chargement automatique, vérifier que l'UI n'envoie pas de requête sur saisie partielle (`2`, `20`, `202`) : attendre un filtre complet/valide avant auto-fetch et couvrir ce garde-fou par un test helper.
+  - pour toute action d'export UI dépendante de filtres asynchrones, désactiver explicitement l'export tant que les données affichées ne correspondent pas encore aux filtres actifs (rechargement en cours, réponse obsolète, carte stale), avec test helper dédié si possible.
+  - pour toute carte métier exportable en PNG côté navigateur, vérifier un test helper sur la rasterisation SVG→canvas→blob (succès + nom de fichier) afin d'éviter un bouton UI branché sans export effectif.
+
+  - pour toute synthèse financière contentieuse, vérifier que les montants dérivés nécessaires au reporting (ex. `montant_degreve`) sont portés de bout en bout : schéma SQL + migration runtime legacy + mutation métier qui alimente la donnée (`POST /api/contentieux/:id/decider`) + restitution UI/export/tests, sinon la synthèse PDF/XLSX sous-estime silencieusement l'exposition réelle.
+
 - Pour tout export XML métier (PESV2, pain.008, flux DGFiP), vérifier en review:
   - sélection métier exclusive et explicite (campagne **ou** période, jamais les deux),
   - validation XSD automatisée dans les tests et au runtime avant restitution,
@@ -79,21 +118,57 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
   - distinction explicite entre erreurs de validation utilisateur/parsing attendu (4xx avec message exploitable) et erreurs inattendues de persistance/runtime (5xx générique sans fuite de détails internes),
   - présence d'un test de non-régression couvrant au moins un cas 4xx métier et un cas 5xx interne masqué,
   - journalisation serveur des erreurs inattendues avant réponse 5xx.
+- Pour toute route destructive `DELETE` sur une entité encore référencée par des FKs métier, vérifier en review:
+  - conversion explicite des erreurs `FOREIGN KEY constraint failed` en réponse métier 409/4xx exploitable (jamais 500 brut),
+  - présence d'un test de non-régression couvrant la tentative de suppression encore référencée puis la suppression réussie après nettoyage métier.
+- Pour toute route d'export personnalisé / report builder (prévisualisation, export CSV/XLSX, sauvegarde de modèle), vérifier en review:
+  - distinction stricte entre erreurs de configuration utilisateur (colonne inconnue, valeur numérique/booléenne invalide, filtre/tri incompatible) en 4xx et pannes internes SQLite/runtime en 5xx générique,
+  - absence de fuite des messages internes (`disk I/O error`, stack, SQL) côté réponse API,
+  - présence d'au moins un test backend de non-régression qui force une panne interne et vérifie le masquage en 500,
+  - sanitation CSV contre l'injection de formules tableur (`=`, `+`, `-`, `@`) avant écriture du fichier, avec test dédié sur une valeur métier commençant par un préfixe dangereux,
+  - côté UI, réinitialisation d'entité basée sur les métadonnées réellement renvoyées par l'API (pas sur des defaults dupliqués susceptibles de diverger),
+  - en cas d'échec de chargement initial des métadonnées, ne jamais laisser l'écran bloqué sur un faux état `Chargement...` permanent : afficher l'erreur ou un fallback explicite.
 - Pour toute nouvelle table métier SQLite, vérifier en review:
   - migration runtime idempotente pour les bases legacy,
   - éviter `ALTER TABLE ... ADD COLUMN ... DEFAULT (datetime('now'))` ou toute autre expression non constante: reconstruire la table si une valeur dérivée/fonctionnelle est nécessaire,
   - ajout/reconstruction des `CHECK`/`UNIQUE` au runtime pour les bases legacy (pas seulement dans `schema.sql`),
+  - pour tout nouveau champ monétaire ou quantitatif borné (`montant_degreve`, quote-part, compteurs métier, etc.), exiger aussi une contrainte SQL explicite (`>= 0`, plage bornée, unicité métier) dans `schema.sql` **et** dans la reconstruction runtime legacy ; une validation API seule n'est jamais suffisante,
+  - ne pas ajouter d'index explicite qui duplique un index implicite déjà créé par une contrainte `UNIQUE` ou `PRIMARY KEY` identique,
   - nettoyage explicite des nouvelles tables dans les fixtures de tests qui purgent `campagnes`/tables parentes,
-  - ordre de purge compatible FK dans les fixtures (supprimer d'abord les tables enfants, ex. `contentieux` avant `titres`),
+  - ordre de purge compatible FK dans les fixtures (supprimer d'abord les tables enfants, ex. `evenements_contentieux` puis `contentieux`, puis `titres`),
   - non-régression sur une base locale préexistante (pas seulement sur une base de test vierge).
+- Pour toute US de sauvegarde / restauration chiffrée, vérifier explicitement :
+  - snapshot SQLite cohérent (API `backup()` ou équivalent) plutôt qu'une simple copie brute du fichier `.db` quand WAL est actif,
+  - manifest de sauvegarde embarquant au minimum les chemins restaurables + hash SHA-256 par fichier,
+  - chiffrement hybride correctement séparé (clé de session aléatoire + chiffrement asymétrique de la clé, jamais la clé privée embarquée côté job de backup),
+  - rétention testée avec déduplication des buckets daily/weekly/monthly pour éviter de conserver plusieurs backups du même jour quand le bucket daily a déjà réservé la période,
+  - drill de restauration capable de valider `PRAGMA integrity_check` sur la base restaurée et de nettoyer le répertoire temporaire ensuite,
+  - si l'US promet un stockage S3-compatible, couvrir aussi le fallback/local mode pour les tests hermétiques sans réseau,
+  - alerte d'échec branchée dans le flux runtime (webhook/mail/etc.) sans masquer l'erreur initiale.
+- Pour toute US de timeline / chronologie métier (contentieux, workflow, notifications), vérifier explicitement:
+  - alimentation automatique des événements système (création, changement de statut, décision),
+  - les événements système utilisent leur **date métier réelle** (ex. décision/statut = date du jour ou date explicitement fournie), sans se décaler artificiellement sur la date d'un événement futur déjà saisi dans la timeline,
+  - ordre chronologique stable quand des événements manuels antérieurs ou futurs sont saisis après coup (tri par date métier, pas seulement par date de création),
+  - export documentaire (PDF) cohérent avec la timeline affichée et journalisé dans `audit_log`,
+  - pour toute décision `degrevement_total`, ignorer/écraser toute valeur partielle fournie par le client et persister automatiquement `montant_degreve = montant_litige`, avec test de non-régression pour éviter un mismatch statut/montant,
+  - UI sans prompt navigateur bloquant si une saisie métier structurée est attendue,
+  - pour tout chargement asynchrone UI par ligne/dossier, vérifier qu'un retour tardif d'une requête précédente ne réinitialise pas l'état de chargement du dossier actuellement ouvert (loading state clé par id, ou nettoyage conditionnel),
+  - champs `input[type=date]` préremplis avec une date locale (pas `toISOString().slice(0, 10)` brut, sensible à l'UTC),
+  - validation calendrier stricte côté API pour toute date métier saisie manuellement (`YYYY-MM-DD` réel, pas seulement regex permissive type `2026-02-30`),
+  - si un événement référence une `piece_jointe_id`, vérifier que la pièce jointe appartient bien à la même entité métier (ici le même `contentieux`) avant persistance,
+  - ne jamais exposer dans l'API/PDF des métadonnées de pièce jointe (`piece_jointe_id`, nom, entité liée, `entite_id`) à un rôle qui ne pourrait pas télécharger effectivement cette pièce via `piecesJointesRouter`.
 - Commandes minimales à exécuter:
-  - `npm test`
-  - `npm run build`
+- `npm test`
+- `npm run test:all`
+- `npm run build`
+- `npm run dev` puis smoke test backend (`/api/health`) et frontend (URL locale réelle, y compris port alternatif si 4000/5173 occupés)
 
 ### 8) Hygiène dépôt & artefacts runtime (appris sur US3.6)
-- Vérifier que les artefacts générés en test/dev (`server/data/receipts/*`, `server/data/mises_en_demeure/*`) ne polluent pas le diff Git.
+- Vérifier que les artefacts générés en test/dev (`server/data/receipts/*`, `server/data/mises_en_demeure/*`, `server/data/uploads/rapports/*`) ne polluent pas le diff Git.
 - Maintenir `.gitignore` aligné avec les nouveaux répertoires de sorties runtime avant push.
 - En review, confirmer qu'aucun fichier binaire/généré n'est commité par inadvertance.
+- Pour toute US de documentation statique (MkDocs/Docusaurus), vérifier aussi que le répertoire de build (`site/`, `build/`, etc.) reste ignoré et n'apparaît pas dans le diff après génération locale/PDF.
+- Si une logique UI est extraite en helper pur + composant (`help.ts` + `HelpLink.tsx`, mapping de routes, etc.), vérifier qu'aucun ancien fichier de transition dupliqué ne reste dans le dépôt après refactor et qu'un test RTL couvre l'intégration réelle du composant branché.
 
 ### 9) KPI Dashboard déclaratif (appris sur US3.7)
 - Vérifier que `declarations_recues` ne compte que `soumise|validee|rejetee` (jamais `brouillon`).
@@ -127,6 +202,90 @@ Faire une review rapide mais rigoureuse, orientée risques métier (fiscalité T
 - Vérifier que les cas métier d'exception restent en attente avec workflow explicite et testé (`partiel`, `excedentaire`, `erreur_reference`, `errone`) sans solder abusivement le titre.
 - Vérifier que le journal des rapprochements expose bien `mode` (`auto|manuel`), `resultat`, `numero_titre`, `user_display` et `created_at`, avec au moins un test backend couvrant auto + manuel.
 - Vérifier qu'un rapprochement manuel crée un paiement `modalite=virement`, met à jour `montant_paye/statut` du titre, trace `audit_log`, et rejette proprement les lignes déjà rapprochées ou non encaissables.
+
+### 14) Recouvrement des impayés & escalade post-échéance (appris sur US5.7)
+- Vérifier que l'escalade post-échéance déclenche **exactement** à J+10 / J+30 / J+60 sur `date_echeance`, sans relance répétée hors jalon.
+- Vérifier une idempotence technique et métier (contrainte DB ou garde explicite) empêchant les doublons pour un même `titre` + `niveau`.
+- Vérifier les exclusions métier bloquantes : aucun déclenchement sur les titres soldés, en `contentieux`, ou sous `moratoire` accordé / en instruction.
+- Vérifier qu'une action J+30 génère une mise en demeure traçable (PDF ou pièce jointe persistée), met à jour le statut du titre de façon cohérente et journalise l'action dans `audit_log`.
+- Vérifier qu'une action J+60 expose une preuve exploitable de transmission / préparation comptable (`download_url`, canal, horodatage) et qu'elle reste consultable dans l'historique du titre.
+- Vérifier qu'un endpoint/API d'historique de recouvrement respecte les droits d'accès du contribuable (pas d'accès inter-assujetti) et qu'un test couvre cette restitution.
+- Vérifier que le scheduler quotidien exécute aussi ce workflow et qu'un smoke test de démarrage confirme que l'application démarre toujours après intégration du job.
+
+### 15) Titre exécutoire & transmission comptable public (appris sur US5.9)
+- Vérifier la cohérence **machine à états backend + UI** quand un nouveau statut titre est introduit (`transmis_comptable`, `admis_en_non_valeur`) : schéma SQL, migration runtime, filtres de liste, badges/libellés et actions visibles.
+- Vérifier que `POST /api/titres/:id/rendre-executoire` est réservé à `admin|financier`, refuse tout statut hors `mise_en_demeure`, persiste un export immuable dédié (`titres_executoires`) avec hash, mention de visa/signature, auteur et horodatage.
+- Vérifier qu'un téléchargement binaire métier déclenché par POST conserve le `Content-Disposition` backend côté UI et qu'un test couvre explicitement cette restitution.
+- Vérifier que le flux XML complémentaire est validé XSD au runtime **et** que le schéma reste accessible après build (`dist/` ou fallback `src/`), avec réponse client générique sur erreur interne et logs serveur détaillés.
+- Vérifier qu'une admission en non-valeur ne soit possible qu'après `transmis_comptable`, qu'elle crée un événement distinct de retour comptable dans l'historique, et qu'un commentaire métier soit restitué côté UI.
+- Vérifier que le bouton/accès `Historique` reste visible pour les statuts terminaux de recouvrement (`transmis_comptable`, `admis_en_non_valeur`) afin d'éviter de masquer la traçabilité après action utilisateur.
+- Vérifier l'idempotence métier/technique de la transmission comptable et du retour négatif (contrainte DB ou garde explicite) pour éviter les doublons de flux ou d'actions de recouvrement.
+
+### 16) Délais légaux contentieux & alertes (appris sur US6.2)
+- Vérifier que `POST /api/contentieux` calcule automatiquement `date_limite_reponse` depuis `date_ouverture` (+6 mois, clamp calendrier) et expose le résumé d'échéance (`days_remaining`, `niveau_alerte`, `overdue`, `extended`) dans `GET /api/contentieux`.
+- Vérifier la cohérence schéma SQL + migration runtime + types UI pour les nouveaux champs `date_limite_reponse`, `date_limite_reponse_initiale`, `delai_prolonge_*` ainsi que pour la table `contentieux_alerts`.
+- Vérifier qu'une migration runtime backfill aussi les dossiers legacy déjà ouverts quand un nouveau champ d'échéance est introduit (pas seulement les nouvelles créations), avec test dédié sur base préexistante.
+- Vérifier que `POST /api/contentieux/:id/prolonger-delai` est protégé, refuse toute date <= échéance courante, exige une justification métier, écrit un `audit_log` et ajoute un événement timeline explicite.
+- Vérifier l'idempotence du job quotidien d'alertes contentieux (unicité par `contentieux_id + niveau_alerte + date_echeance`) et la traçabilité complète dans `contentieux_alerts`, `notifications_email` et `audit_log`.
+- Vérifier que les emails d'alerte contentieux ciblent bien un gestionnaire si disponible, sinon un fallback explicite, avec statuts `pending|envoye|echec` sans doublons silencieux.
+- Vérifier que les helpers de dates métier partagés rejettent les dates calendrier impossibles (`2026-02-30`, mois 13, etc.), pas seulement les routes HTTP.
+- Vérifier que les fixtures de tests purgent explicitement toute nouvelle table enfant (`contentieux_alerts`, etc.) même quand les FK sont temporairement désactivées.
+- Vérifier la restitution UX: badge d'échéance lisible, surlignage rouge des dossiers en dépassement, KPI dashboard distincts pour `<= J-30` et `dépassement`, couverture de tests front + back.
+
+### 17) Pièces jointes contentieux catégorisées (appris sur US6.3)
+- Vérifier la cohérence schéma SQL + migration runtime + API quand `pieces_jointes` reçoit un nouveau champ métier (`type_piece`) : présence de la colonne, de la contrainte `CHECK`, et reprise idempotente des bases legacy.
+- Vérifier que les catégories métier contentieux sont **bornées à l’entité `contentieux` elle-même** dans la contrainte SQL/runtime (`type_piece IS NULL OR (entite='contentieux' AND ...)`) pour éviter d’autoriser `courrier-admin|decision|jugement` sur d’autres entités.
+- Vérifier que toute nouvelle suite de tests backend ajoutée pour la feature est bien branchée dans le script `npm test` du workspace concerné (pas seulement présente sur disque).
+- Vérifier que `GET /api/contentieux/:id/pieces-jointes` restitue bien les métadonnées utiles (`type_piece`, libellé, auteur, date, `download_url`) sans exposer plus que les droits du rôle courant.
+- Vérifier que le contribuable est restreint à `courrier-contribuable` à l’upload, reste en lecture seule sur les pièces administration, et qu’une suppression `DELETE /api/pieces-jointes/:id` sur entité `contentieux` est explicitement refusée pour ce rôle.
+- Vérifier la couverture UI minimale : liste des pièces, aperçu PDF/image, téléchargement, et états de chargement stables quand on change de dossier rapidement.
+- Vérifier qu'un changement de pièce sélectionnée invalide immédiatement l’aperçu courant (reset de l’URL/blob et de l’état d’erreur) pour éviter d’afficher le document précédemment prévisualisé.
+- Vérifier que la documentation fonctionnelle/README mentionne l’US livrée, ses smoke tests et les nouvelles catégories métier de pièces jointes.
+- Pour toute US de contrôle terrain / formulaire mobile navigateur, vérifier explicitement :
+  - route métier dédiée protégée par `authMiddleware` + `requireRole('admin','gestionnaire','controleur')` et audit `logAudit()` sur la création du constat,
+  - possibilité de rattacher le constat à un dispositif existant **ou** de créer une fiche dispositif depuis le constat, avec test backend pour les deux chemins,
+  - support des photos via `pieces_jointes.entite='controle'`, y compris migration runtime idempotente pour les bases legacy,
+  - restitution utilisateur exploitable des erreurs Zod côté API/UI (premier message clair, pas seulement un objet sérialisé `[object Object]`),
+  - date par défaut des formulaires `input[type=date]` calculée en local browser (pas `toISOString().slice(0,10)` brut, sensible à l’UTC),
+  - si un mode hors-ligne navigateur est annoncé, vérifier IndexedDB + synchronisation au retour réseau + présence d’un smoke test de démarrage/service worker, sans confondre cela avec une application mobile native hors périmètre MVP,
+  - le service worker ne doit mettre en cache que des réponses GET same-origin réussies et pertinentes pour le shell statique (pas les documents HTML de navigation ni des réponses en erreur/transitoires),
+  - le service worker ne doit renvoyer `index.html` qu’aux requêtes de navigation ; un asset statique manquant/offline ne doit pas recevoir du HTML en fallback,
+  - l’état `en ligne / hors ligne` affiché dans l’UI doit être réactif (`useState` + listeners `online`/`offline`), pas une simple lecture ponctuelle de `navigator.onLine` dans le rendu,
+  - la synchronisation des brouillons hors-ligne doit être protégée contre les doubles déclenchements concurrents (verrou/ref explicite côté UI ou idempotence équivalente) pour éviter les doublons de constats au retour réseau,
+  - après création serveur réussie d’un constat hors-ligne, le brouillon IndexedDB doit être retiré avant l’upload des photos ; un échec d’upload ne doit jamais re-poster le même constat au prochain retry,
+  - le sélecteur de fichiers UI pour `entite='controle'` doit rester aligné avec la validation backend (photos `jpeg/png` uniquement, jamais `application/pdf`),
+  - les uploads de pièces jointes `entite='controle'` doivent être limités aux photos terrain (`image/jpeg|image/png`), même si d’autres entités métier autorisent aussi les PDF,
+  - la création d’un dispositif depuis un constat terrain doit convertir tout échec FK SQLite (`assujetti/type/zone` introuvable) en réponse 4xx métier exploitable, jamais en 500 brut,
+  - la création du dispositif, l’insertion du contrôle, la mise à jour de statut et les audits associés doivent être enveloppés dans une transaction SQLite unique pour éviter tout write partiel si une étape aval échoue,
+  - pour toute US de rapport de contrôle / rectification / redressement, refuser explicitement les constats non `cloture` avant export PDF/XLSX, génération de déclaration d’office/demande contribuable ou ouverture de contentieux, avec test 409 de non-régression.
+  - toute numérotation métier créée en lot depuis ces actions (`DEC-*`, `CTX-*`) doit être réservée via une table de séquence/persistance dédiée plutôt qu’un `COUNT(*) + 1`, avec backfill legacy et couverture de test.
+- Pour toute US de consultation du `audit_log`, vérifier explicitement :
+  - route backend réservée à `admin` avec `authMiddleware` + `requireRole('admin')`, validation Zod stricte des filtres et rejet 4xx des plages/calendriers invalides,
+  - pagination stable triée par `created_at DESC, id DESC` et présence d’un index dédié (`created_at` ou équivalent) pour éviter un scan intégral sur un journal volumineux,
+  - recherche plein texte réellement branchée sur `details` **et** sur les métadonnées utiles d’enquête (action, entité, utilisateur/email), avec test dédié,
+  - export CSV protégé contre l’injection de formules tableur et journalisé via une trace `audit_log` dédiée (`export-audit-log`),
+  - côté UI, ne pas se contenter d’helpers/tests isolés : vérifier la page réelle, le lien de navigation, le garde de rôle admin-only, le message explicite d’immutabilité/lecture seule et le wiring du téléchargement CSV.
+
+### 18) Double authentification TOTP portail contribuable (appris sur US9.1)
+- Vérifier qu'une US 2FA n'est pas considérée livrée si seuls les endpoints backend existent : exiger aussi un **point d'entrée UI réel** (menu/sidebar + route dédiée) vers l'écran paramètres du compte.
+- Pour toute US CI/sécurité type OWASP ZAP, vérifier explicitement en review :
+  - workflow dédié versionné sous `.github/workflows/security.yml` (ou nom équivalent clair) déclenché au minimum sur `pull_request` et `push` vers `main`,
+  - build complet de l'application avant scan puis démarrage réel en mode production avec smoke test bloquant (`/api/health`) avant exécution du scanner,
+  - publication des rapports ZAP HTML + JSON en artefacts GitHub Actions,
+  - seuils évalués explicitement après scan : `High|Medium` => alerte visible, blocage du déploiement prod sur `main` si `High` persiste, sans rendre les PRs inutilement rouges pour de simples `Medium`,
+  - fichier de faux positifs / exclusions versionné (`.zap/rules.tsv`) avec justification textuelle, jamais vide de sens implicite,
+  - arrêt propre du processus applicatif lancé pour le scan même en cas d'échec (`if: always()`).
+- Vérifier que l'écran frontend expose bien tout le parcours métier demandé : génération du QR code, secret manuel de secours, activation par code TOTP, affichage des 10 codes de récupération et désactivation confirmée par code.
+- Vérifier qu'au moins un test frontend couvre le wiring UI principal (présence de la route/entrée de navigation et rendu du panneau 2FA) ; des helpers/test unitaires isolés côté auth ne suffisent pas.
+- Vérifier que la route de login gère un état intermédiaire `requires_two_factor` typé explicitement côté TypeScript pour éviter les régressions de build (`union` discriminée / type guard) quand le backend peut renvoyer soit un JWT, soit un challenge 2FA.
+- Vérifier que les messages d'erreur/confirmation 2FA sont exploitables côté utilisateur (activation, désactivation, fallback presse-papiers indisponible) et qu'aucune action sensible ne dépend uniquement d'une copie automatique dans le clipboard.
+
+### 19) Couverture de tests & CI (appris sur US10.5)
+- Vérifier qu'une US "coverage" n'est pas considérée livrée tant que la **commande réellement annoncée** (`npm run test:coverage`, `vitest --coverage`, etc.) passe effectivement en local/CI avec les seuils configurés ; un simple ajout de tests ou d'un seuil théorique ne suffit pas.
+- Vérifier qu'une config Vitest `coverageThreshold` ne cible pas implicitement un sous-ensemble trompeur du code (ex. une seule glob `*.rtl.test.tsx` ou un include trop étroit) sans justification explicite dans la doc/PR.
+- Vérifier qu'un workflow CI dédié publie bien les artefacts de couverture attendus même en cas d'échec des seuils, afin de diagnostiquer les zones non couvertes au lieu de perdre le rapport.
+- Pour toute PR orientée "hausse de couverture", vérifier que les nouveaux tests ciblent **les hotspots réellement montrés par `coverage-summary.json` / `lcov.info`** (branches manquantes, fichiers les plus bas) et pas seulement des cas faciles dans des zones déjà vertes.
+- Pour toute route d’export/rapport encore peu couverte, chercher explicitement des branches de repli et états vides : libellés de catégories/statuts rares, agrégats `sans zone`, valeurs fallback (`SIRET`/adresse/dispositifs absents), et export PDF/XLSX d’un jeu vide ou sans alerte ; exiger des tests dédiés si ces branches restent rouges.
 
 ## Format de sortie review
 

@@ -11,6 +11,8 @@ basée sur les articles L2333-6 à L2333-16 du CGCT.
 
 ## Modules livrés (MVP)
 
+> 📘 **Documentation utilisateur** : un site MkDocs est désormais prévu dans `docs/` avec publication GitHub Pages, export PDF et bouton `Aide` contextualisé dans l’application.
+
 | Module | Spec | Statut |
 |---|---|---|
 | Référentiels (barème, zones, types + import GeoJSON des zones + exonerations/abattements + campagnes déclaratives annuelles) | §3 / §5.1 | OK |
@@ -24,28 +26,33 @@ basée sur les articles L2333-6 à L2333-16 du CGCT.
 | Quote-part dispositifs numériques partagés (0-100%, contrôle somme ≤ 100%, impact calcul + PDF titre) | §6.2 (US4.1) | OK + tests |
 | Accusé de réception PDF horodaté avec hash SHA-256 + QR de vérification + téléchargement sur détail déclaration | §5.2 / US3.6 | OK + tests |
 | Hash SHA-256 de soumission (accusé) | §5.2 | OK |
-| Titres de recettes + PDF (ordonnancement) + bordereau récapitulatif PDF/Excel horodaté avec hash SHA-256 | §7.1 / US5.1 | OK + tests |
+| Titres de recettes + PDF (ordonnancement) + bordereau récapitulatif PDF/Excel horodaté avec hash SHA-256 + rôle TLPE PDF/Excel archivé + état de recouvrement (page + PDF/Excel archivés) + comparatif pluriannuel 3 ans glissants (page + PDF/Excel archivés) + suivi des relances et mises en demeure (page + PDF/Excel archivés) + synthèse des contentieux en cours (page + PDF/Excel archivés) + mises en demeure PDF unitaire/batch archivées | §7.1 / §10.2 / US5.1 / US8.1 / US8.2 / US8.5 / US8.3 / US8.4 / US5.8 | OK + tests |
+| Escalade automatique des impayés (J+10 / J+30 / J+60) + historique par titre | §7.4 / US5.7 | OK + tests |
 | Mandats SEPA + export pain.008.001.02 avec validation IBAN/BIC, séquencement FRST/RCUR et validation XSD locale | §7.2 / US5.4 | OK + tests |
+| Chiffrement AES-256-GCM au repos des secrets 2FA, IBAN SEPA et pièces jointes + rotation batch de clé | §12.2 / US10.2 | OK + tests |
 | Import de relevés bancaires (CSV paramétrable / OFX / MT940), dédoublonnage par transaction, page Rapprochement réservée admin/financier | §7.3 / US5.5 | OK + tests |
 | Paiements (5 modalités) + recouvrement | §7.2 | OK |
-| Contentieux / réclamations | §8 | OK |
-| Tableau de bord exécutif + KPI déclaratifs temps réel (US3.7: attendus/soumises/validées/rejetées, drilldown zone/type, évolution journalière, auto-refresh 5 min) | §10.1 / §5.4 | OK |
+| Contentieux / réclamations + timeline + alertes de délais légaux + pièces jointes contentieux catégorisées avec aperçu (US6.1/US6.2/US6.3) | §8 | OK + tests |
+| Tableau de bord exécutif + KPI déclaratifs temps réel (US3.7: attendus/soumises/validées/rejetées, drilldown zone/type, évolution journalière, auto-refresh 5 min) + alertes contentieux J-30/J-7/dépassement | §10.1 / §5.4 | OK |
 | Authentification + RBAC (5 rôles) | §2 | OK |
 | Simulateur | §6.3 | OK |
-| Audit log (traçabilité) | §12.2 | OK |
+| Audit log (traçabilité) | §12.2 | OK + tests |
 | Portail contribuable (accès restreint à sa fiche) | §11 | OK |
 | Carte des dispositifs (Leaflet + filtres + export GeoJSON) | §4.2 / §9.2 / §10.2 | OK |
+| Contrôles terrain (web responsive, géoloc navigateur, photos, rattachement/ création dispositif, file hors-ligne navigateur) | §9.1 / §9.2 / US7.1 | OK + tests |
+| Rapport de contrôle automatique (PDF/Excel, delta de taxe, rectification d’office/demande contribuable, ouverture de redressement) | §9.3 / US7.3 | OK + tests |
 
 ### Hors périmètre du MVP (prévu phases ultérieures)
 
 - Application mobile de contrôle terrain (§9.2)
+  - cadrage et prérequis documentés dans `docs/mobile-native-roadmap.md` (issue #31)
 - Intégrations externes complètes : FranceConnect+, PayFip, PESV2 (§13.1)
   (un export PESV2 XML local avec validation XSD est implémenté dans US5.2, sans intégration réseau DGFiP/Hélios)
   (le géocodage BAN de base pour l'autocomplete d'adresse est implémenté dans US2.4)
 - Import SIG / Shapefile natif (§4.3)
 - Signature électronique (§13.2)
 - Conformité RGAA 4.1 complète (§11.3)
-- Rapports PDF avancés autres que le titre de recettes, le bordereau récapitulatif des titres (§10.2)
+- Rapports PDF avancés autres que le titre de recettes, le bordereau récapitulatif des titres (§10.2), **à l’exception du rapport de contrôle automatique US7.3, du rôle TLPE US8.1, de l’état de recouvrement US8.2, du comparatif pluriannuel US8.5, du suivi des relances US8.3 et de la synthèse des contentieux US8.4 désormais implémentés**
 
 ## Démarrage
 
@@ -61,16 +68,84 @@ rm -f server/data/tlpe.db && npm run seed
 
 # tests du moteur de calcul + import assujettis
 npm test
+
+# couverture backend (c8)
+npm run test:coverage:server
+
+# couverture frontend critique ciblée (auth / 2FA via Vitest + RTL)
+npm run test:coverage:client
+
+# agrégation couverture (backend complet + frontend ciblé)
+npm run test:coverage
 ```
 
 Ouvrir ensuite http://localhost:5173.
+
+## Stratégie de couverture de tests (US10.5)
+
+### Backend
+
+- Les tests backend restent exécutés via `tsx --test` dans le workspace `server`.
+- Les parcours HTTP sont couverts par **Supertest** dans des fichiers dédiés (par ex. `server/src/auth.supertest.test.ts`, `server/src/routes.coverage.supertest.test.ts`).
+- La mesure de couverture backend se fait avec **c8** via `npm run test:coverage:server`.
+- En CI, le workflow `.github/workflows/test-coverage.yml` publie les artefacts générés dans `coverage/server`.
+
+### Frontend
+
+- Les composants critiques côté front utilisent **Vitest + React Testing Library**.
+- La configuration est centralisée dans `client/vite.config.ts` et le bootstrap RTL dans `client/src/test/setup.ts`.
+- La mesure de couverture frontend se fait via `npm run test:coverage:client`, avec rapports écrits dans `coverage/client`.
+- **Portée actuelle explicite** : ce rapport Vitest ne mesure aujourd'hui que les parcours RTL couverts sur `client/src/pages/Login.tsx` et `client/src/pages/AccountSettings.tsx`.
+- Il s'agit donc d'une **couverture ciblée des flux d'authentification / 2FA**, et **pas** d'un indicateur global de couverture de tout le frontend.
+- En conséquence, `npm run test:coverage` agrège une couverture backend large avec cette couverture frontend ciblée ; il ne faut pas présenter cette commande comme un pourcentage monorepo homogène sur l'ensemble du client.
+
+### Mocks DB / fixtures backend
+
+- Les tests de routes réutilisent `initSchema()` puis purgent explicitement les tables dépendantes avant de reseeder les données minimales.
+- Le pattern recommandé est :
+  1. `initSchema()`
+  2. suppression des tables enfants puis parentes
+  3. seed minimal (`users`, `assujettis`, `zones`, `types_dispositifs`, données métier utiles au scénario)
+  4. requêtes Supertest avec en-tête `Authorization: Bearer <token>`
+- Pour les scénarios sensibles aux contraintes SQLite, créer d'abord les lignes référencées (ex. `users` avant `audit_log`, `dispositifs` avant `lignes_declaration`).
+- Pour les tests purement métier/services, préférer des fixtures minimales et hermétiques ; éviter de dépendre de données déjà présentes dans `server/data/`.
+
+
+### Ce qu'il faut tester en priorité
+
+- **Routes backend** : auth, déclarations, dispositifs, campagnes, référentiels, uploads et exports.
+- **Services backend** : calcul métier, crypto, backup, génération de reçus et intégrations critiques.
+- **Frontend critique** : authentification, 2FA, écrans déclenchant des exports, workflows d'upload et composants affichant des états d'erreur métier.
+
+### CI couverture
+
+- Workflow : `.github/workflows/test-coverage.yml`
+- Étapes : installation, build, couverture backend, couverture frontend ciblée, publication des artefacts, publication d'un résumé GitHub Actions
+- Les rapports sont téléversés même en cas d'échec (`if: always()`) pour faciliter le diagnostic des seuils non atteints.
+- Le résumé GitHub Actions rappelle explicitement que la couverture frontend publiée est limitée au flux `Login` / `AccountSettings` (authentification + 2FA) et affiche, quand disponibles, les pourcentages extraits des `coverage-summary.json`.
 
 ## Vérification de lancement appli (obligatoire TLPE loop)
 
 - `npm run dev` : démarrage backend + frontend sans erreur fatale
 - Smoke test backend : `GET /api/health` → `{"status":"ok"...}`
+- Smoke test documentation utilisateur (US10.6) :
+  - `node --test docs/docs.test.mjs` valide la présence de `mkdocs.yml`, des pages `docs/installation.md`, `docs/agents.md`, `docs/financier.md`, `docs/controleur.md`, `docs/contribuable.md`, `docs/administrateur.md` et de l’activation du plugin `pdf-export`
+  - le bouton `Aide` en en-tête redirige vers la documentation contextualisée selon la route courante (`client/src/help.ts` + `client/src/helpLink.tsx`)
+  - `.github/workflows/docs.yml` publie automatiquement la documentation sur GitHub Pages depuis `main`
 - Smoke test pièces jointes : login + création dispositif + upload PDF + download + soft delete + vérif 404 post-delete (script Node)
 - Smoke test cartographie : accès `/carte`, tuiles OSM + points affichés, export GeoJSON téléchargeable
+- Smoke test US7.1 :
+  - la page `Contrôles terrain` est visible uniquement pour `admin|gestionnaire|controleur`
+  - `POST /api/controles` crée un constat soit rattaché à un dispositif existant, soit avec création de fiche dispositif
+  - `POST /api/pieces-jointes` accepte `entite=controle` pour téléverser les photos du constat
+  - le bouton GPS remplit latitude/longitude via `navigator.geolocation`
+  - hors ligne, le constat est stocké dans IndexedDB puis synchronisé au retour réseau par la page web (le service worker couvre le shell PWA/offline)
+- Smoke test US7.3 :
+  - la carte/liste `Contrôles terrain` permet la sélection multiple de constats clôturés pour générer un rapport PDF ou Excel
+  - `POST /api/controles/report` refuse les constats non clôturés, renvoie un fichier horodaté avec hash SHA-256 et écrit `audit_log` (`action=export-rapport-controle`)
+  - `POST /api/controles/proposer-rectification` crée une déclaration d’office (`en_instruction`) ou une demande contribuable (`brouillon`) à partir des écarts contrôlés
+  - `POST /api/controles/lancer-redressement` ouvre automatiquement un contentieux `type=controle` avec échéance de réponse calculée et événement timeline initial
+  - les actions de rapport/rectification/redressement sont visibles uniquement pour `admin|gestionnaire` et conservent le nom de fichier backend côté téléchargement navigateur
 - Smoke test US3.3 :
   - soumission KO si doublon adresse+type, surface <= 0, type manquant, date de pose > date de dépose
   - soumission OK avec `alerte_gestionnaire=true` quand la variation de surface N vs N-1 dépasse 30 %
@@ -87,10 +162,29 @@ Ouvrir ensuite http://localhost:5173.
 - Smoke test US3.7:
   - `GET /api/dashboard` expose `operationnel.declarations_soumises|validees|rejetees`, `drilldown.by_zone`, `drilldown.by_type_assujetti`, `evolution_journaliere`
   - le dashboard affiche le taux de déclaration, l'évolution vs N-1, le drilldown par zone/type et le graphe d'évolution journalière
-- Smoke test US5.1:
-  - la page `Titres` affiche les boutons `Bordereau PDF` / `Bordereau Excel` uniquement pour `admin|financier` quand une année est sélectionnée
+- Smoke test US5.1 / US8.1 / US8.2 / US8.3 / US8.4 / US8.5:
+  - la page `Titres` affiche les boutons `Bordereau PDF` / `Bordereau Excel` et `Rôle TLPE PDF` / `Rôle TLPE Excel` uniquement pour `admin|financier` quand une année est sélectionnée
+  - la page `Titres` propose désormais `Générer mise en demeure` sur chaque titre impayé et un lot `mises en demeure` (max 100 titres filtrés) pour produire/archiver les PDF recommandés en `pieces_jointes`
+  - la page `État de recouvrement` est visible uniquement pour `admin|financier`, permet de filtrer par année/zone/catégorie/statut de paiement et bascule la ventilation `assujetti|zone|categorie`
   - `GET /api/titres/bordereau?annee=YYYY&format=pdf|xlsx` retourne les titres filtrés de l'exercice, le total, l'horodatage et un hash SHA-256
   - un export du bordereau écrit une trace `audit_log` (`action=export-bordereau`)
+  - `GET /api/rapports/role?annee=YYYY&format=pdf|xlsx` retourne la liste exhaustive des titres émis avec total, horodatage, hash SHA-256, signature ordonnateur et archivage en `rapports_exports`
+  - un export du rôle écrit une trace `audit_log` (`action=export-role-tlpe`)
+  - `GET /api/rapports/recouvrement?annee=YYYY&format=json|pdf|xlsx` (ajouter uniquement les filtres optionnels réellement renseignés parmi `zone`, `categorie`, `statut_paiement`, `ventilation`) retourne l'agrégation `montant_emis|montant_recouvre|reste_a_recouvrer|taux_recouvrement`, le graphique/tableau selon la ventilation et archive les exports PDF/Excel dans `rapports_exports`
+  - la page `Carte des recettes` est visible uniquement pour `admin|financier`, permet de choisir l'année, l'échelle de couleur (`montant_recouvre|taux_recouvrement|reste_a_recouvrer`), de sélectionner une zone et d'exporter la carte en PNG ou PDF
+  - `GET /api/rapports/recettes-geographiques?annee=YYYY&color_scale=montant_recouvre|taux_recouvrement|reste_a_recouvrer&format=json|pdf` retourne la ventilation choroplèthe par zone (géométrie, assujettis, titres, totaux), archive les exports PDF dans `rapports_exports` et trace `audit_log` (`action=export-recettes-geographiques`)
+  - la page `Comparatif pluriannuel` est visible uniquement pour `admin|financier`, permet de choisir une année de référence et affiche le comparatif N/N-1/N-2 (montants émis, recouvrés, assujettis, dispositifs), les évolutions en % et les ventilations zone/catégorie
+  - `GET /api/rapports/comparatif?annee=YYYY&format=json|pdf|xlsx` retourne la synthèse sur 3 ans glissants, les évolutions `vs_n1|vs_n2`, les ventilations par zone/catégorie et archive les exports PDF/Excel dans `rapports_exports`
+  - la page `Exports personnalisés` est visible pour `admin|gestionnaire|financier`, permet de choisir une entité (`assujettis|dispositifs|declarations|titres|paiements|contentieux`), de sélectionner les colonnes, d’ajouter des filtres et un tri, de prévisualiser les 50 premières lignes, d’exporter en CSV/Excel et de sauvegarder des modèles personnels
+  - la page `Journal d’audit` est visible uniquement pour `admin`, rappelle le caractère immuable du journal (lecture seule), expose les colonnes `timestamp|utilisateur|action|entité|détails|IP`, des filtres `utilisateur|entité|action|plage de dates`, une recherche plein texte dans `details` et un export CSV pour analyse forensic
+  - `GET /api/exports-personnalises/meta` expose les entités/colonnes/opérateurs disponibles, `POST /api/exports-personnalises/preview` retourne l’aperçu filtré, `POST /api/exports-personnalises/export?format=csv|xlsx` restitue le fichier demandé et `POST|GET /api/exports-personnalises/templates` gère les modèles sauvegardés dans `exports_sauvegardes`
+  - `GET /api/audit-log?page=&page_size=&user_id=&entite=&action=&q=&date_debut=&date_fin=&format=json|csv` est réservé à `admin`, restitue les entrées paginées triées par `created_at DESC`, expose les valeurs de filtre disponibles et journalise les exports CSV via `audit_log` (`action=export-audit-log`)
+  - `GET /api/rapports/contentieux?date_reference=YYYY-MM-DD&format=json|pdf|xlsx` retourne la synthèse par type (`nombre_dossiers`, `montant_litige`, `montant_degreve`, `anciennete_moyenne_jours`), un graphique de répartition et les alertes délais ≤ J-30 / dépassées, puis archive les exports PDF/Excel dans `rapports_exports`
+  - la page `Contentieux` affiche, pour `admin|financier`, un bloc de synthèse avec KPI, camembert par type et exports PDF/Excel horodatés en conservant le nom de fichier backend
+  - en cas d'échec SQL lors de l'archivage d'un export de recouvrement ou de synthèse contentieux, le fichier binaire temporairement écrit est supprimé avant réponse 500 pour éviter les archives orphelines
+  - un export de recouvrement écrit une trace `audit_log` (`action=export-etat-recouvrement`) avec `hash`, `titres_count` et `archive_path`
+  - un export de comparatif écrit une trace `audit_log` (`action=export-comparatif-pluriannuel`) avec `hash`, `titres_count` et `archive_path`
+  - un export de synthèse contentieux écrit une trace `audit_log` (`action=export-synthese-contentieux`) avec `hash`, `dossiers_count`, `alerts_total` et `archive_path`
 - Smoke test US5.4:
   - la fiche assujetti affiche les mandats SEPA existants et un formulaire de création (RUM, IBAN, BIC, date de signature)
   - `POST /api/assujettis/:id/mandats-sepa` refuse les IBAN/BIC invalides, masque l'IBAN restitué et trace `create-mandat-sepa` dans `audit_log`
@@ -105,6 +199,56 @@ Ouvrir ensuite http://localhost:5173.
   - `POST /api/rapprochement/auto` matche un numéro de titre détecté dans la référence ou le libellé, crée un paiement `modalite=virement`, met à jour le statut du titre (`paye|paye_partiel`) et journalise le résultat (`rapproche|partiel|excedentaire|erreur_reference`)
   - les lignes excédentaires ou en erreur de référence restent en attente avec un workflow distinct et une correspondance manuelle possible via `POST /api/rapprochement/manual`
   - `GET /api/rapprochement` liste les relevés importés, les lignes non rapprochées enrichies par workflow et le journal des rapprochements (`auto|manuel`, qui/quand)
+- Smoke test US5.7:
+  - le scheduler quotidien exécute les relances de campagne **et** l'escalade des impayés
+  - `runEscaladeImpayes()` ne traite que les titres non soldés exactement à J+10, J+30 ou J+60 après échéance
+  - aucun déclenchement sur les titres avec `contentieux` ouvert ou `moratoire` accordé / en instruction
+  - J+30 génère un PDF de mise en demeure dans `server/data/mises_en_demeure/impayes/` et passe le titre au statut `mise_en_demeure`
+  - J+60 journalise une transmission au comptable public et l'historique est visible depuis la page `Titres`
+- Smoke test US5.9:
+  - la page `Titres` expose l'action `Rendre exécutoire` uniquement pour `admin|financier` sur les titres en `mise_en_demeure`
+  - `POST /api/titres/:id/rendre-executoire` télécharge un XML PESV2 complément validé XSD, passe le titre à `transmis_comptable` et trace `rendre-executoire` dans `audit_log`
+  - `GET /api/titres/:id/executoire/xml` restitue le flux persistant avec ACL contribuable stricte
+  - `POST /api/titres/:id/admettre-non-valeur` n'est autorisé que pour les titres `transmis_comptable`, journalise le retour comptable et bascule le statut vers `admis_en_non_valeur`
+  - l'historique de recouvrement affiche la transmission comptable et le commentaire d'admission en non-valeur
+- Smoke test US6.2:
+  - `POST /api/contentieux` calcule automatiquement `date_limite_reponse = date_ouverture + 6 mois` ; le résumé d'alerte (`days_remaining`, `niveau_alerte`, `overdue`, `extended`) est visible dans `GET /api/contentieux`
+  - le scheduler quotidien exécute aussi `createContentieuxDeadlineAlerts()` avec idempotence par couple `(contentieux_id, niveau_alerte, date_echeance)`
+  - `contentieux_alerts` journalise les alertes J-30 / J-7 / dépassement et `notifications_email` trace l'email gestionnaire associé (`template_code=alerte_contentieux`)
+  - le dashboard affiche le volume d'alertes contentieux à <= J-30 et le nombre de dossiers en dépassement
+  - la liste `Contentieux` surligne en rouge les dossiers en dépassement et affiche le badge d'échéance/prolongation
+  - `POST /api/contentieux/:id/prolonger-delai` exige une date strictement postérieure et une justification, journalise l'audit et ajoute un événement timeline `relance`
+- Smoke test US6.3:
+  - `GET /api/contentieux/:id/pieces-jointes` restitue les métadonnées (`type_piece`, libellé, auteur, date, `download_url`) triées par date décroissante
+  - `POST /api/pieces-jointes` avec `entite=contentieux` persiste `type_piece` (`courrier-admin|courrier-contribuable|decision|jugement`) et journalise l'upload
+  - un `contribuable` ne peut téléverser qu'un `courrier-contribuable`, visualise les pièces du dossier en lecture seule et ne peut pas supprimer une pièce contentieux
+  - la page `Contentieux` propose la liste des pièces, l'aperçu PDF/image et le téléchargement direct depuis le détail du dossier
+
+## Audit log (US10.1)
+
+La user story **US10.1** livre désormais une interface d’investigation dédiée au journal d’audit :
+
+- page `client/src/pages/AuditLog.tsx` réservée au rôle `admin`, ajoutée au menu principal,
+- rappel explicite du caractère **immuable / lecture seule** du journal,
+- colonnes restituées : horodatage, utilisateur, action, entité, détails, IP,
+- filtres `utilisateur`, `entité`, `action`, `date_debut`, `date_fin`, `page_size`,
+- recherche plein texte `q` sur `details`, `action`, `entité`, email et nom utilisateur,
+- export CSV forensic avec nom de fichier cohérent et traçage `audit_log` (`action=export-audit-log`),
+- backend `GET /api/audit-log` paginé, trié par `created_at DESC, id DESC`, avec index `idx_audit_created_at` pour tenir la charge de consultation.
+
+Tests :
+- `npm run test --workspace=server`
+- `npm run test --workspace=client`
+- `npm run build`
+
+## Transmission comptable public / titre exécutoire (US5.9)
+
+- bouton **Rendre exécutoire** pour les rôles `admin|financier` sur les titres au statut `mise_en_demeure`,
+- génération d'un flux XML complémentaire persistant (`titres_executoires`) avec hash SHA-256, mention de visa ordonnateur et validation XSD locale via `xmllint`,
+- téléchargement ultérieur via `GET /api/titres/:id/executoire/xml`,
+- passage du titre au statut `transmis_comptable`, avec journalisation dans `recouvrement_actions` et `audit_log`,
+- gestion du retour négatif comptable par **admission en non-valeur**, statut `admis_en_non_valeur`, commentaire métier et restitution dans l'historique du titre.
+
 
 ## Mandats SEPA / export pain.008 (US5.4)
 
@@ -129,18 +273,20 @@ Exemple d'appel :
 ```bash
 curl -X POST http://localhost:4000/api/sepa/export-batch \
   -H 'Content-Type: application/json' \
-  -H 'Authorization: Bearer ***' \
+  -H 'Authorization: Bearer <token>' \
   -d '{"date_reference":"2026-08-31","date_prelevement":"2026-09-05"}' \
   -o pain.008-000001.xml
 ```
+
 
 ## API pièces jointes (US2.5)
 
 Routes backend (`/api/pieces-jointes`), authentifiées:
 
 - `POST /api/pieces-jointes` (multipart/form-data)
-  - champs requis: `entite` (`dispositif|declaration|contentieux`), `entite_id`, `fichier`
-  - MIME autorisés: `image/jpeg`, `image/png`, `application/pdf`
+  - champs requis: `entite` (`dispositif|declaration|contentieux|titre|controle`), `entite_id`, `fichier`
+  - MIME autorisés globaux: `image/jpeg`, `image/png`, `application/pdf`
+  - exception métier: `entite=controle` est réservé aux photos terrain (`image/jpeg|image/png` uniquement, jamais PDF)
   - limites: 10 Mo par fichier, 50 Mo cumulés par entité (hors pièces soft-delete)
 - `GET /api/pieces-jointes/:id`
   - télécharge le fichier (`Content-Disposition: attachment`)
@@ -156,6 +302,184 @@ Stockage:
 Audit:
 
 - `logAudit()` à chaque upload / download / soft delete (entité `piece_jointe`)
+
+## Pièces jointes contentieux (US6.3)
+
+Le détail d'un dossier contentieux permet désormais de centraliser les pièces jointes du dossier en réutilisant l'infrastructure US2.5 :
+
+- `POST /api/pieces-jointes` accepte `entite=contentieux`, `entite_id`, `fichier` et un `type_piece` optionnel parmi `courrier-admin|courrier-contribuable|decision|jugement`,
+- le backend persiste `pieces_jointes.type_piece` avec migration runtime idempotente pour les bases legacy,
+- `GET /api/contentieux/:id/pieces-jointes` renvoie la liste enrichie (`type_piece_label`, auteur, rôle auteur, date, `download_url`) triée par plus récent,
+- le contribuable ne peut téléverser que des `courrier-contribuable`, voit les pièces administration en lecture seule et ne peut pas supprimer une pièce attachée à un contentieux,
+- la page `client/src/pages/Contentieux.tsx` affiche la liste des pièces, un aperçu PDF/image et un téléversement contextualisé par rôle.
+
+Tests :
+
+- backend `src/contentieux.piecesJointes.test.ts` (ACL, audit, listing, blocage suppression contribuable, cloisonnement inter-assujetti)
+- frontend `src/pages/contentieuxAttachments.test.tsx` (options par rôle, aperçu, états de chargement)
+
+## Alertes de délais contentieux (US6.2)
+
+Le module **Contentieux** couvre désormais aussi les échéances légales d'instruction et leur restitution transverse :
+
+- calcul automatique de `date_limite_reponse` à l'ouverture d'un dossier (`date_ouverture + 6 mois`, avec clamp calendrier),
+- persistance des champs `date_limite_reponse`, `date_limite_reponse_initiale`, `delai_prolonge_justification`, `delai_prolonge_par`, `delai_prolonge_at`,
+- endpoint `POST /api/contentieux/:id/prolonger-delai` réservé à `admin|gestionnaire|financier`, avec validation stricte de la nouvelle échéance et justification obligatoire,
+- table `contentieux_alerts` + job quotidien `createContentieuxDeadlineAlerts()` pour générer les alertes J-30, J-7 et dépassement sans doublons,
+- traçabilité des emails gestionnaire dans `notifications_email` (`template_code=alerte_contentieux`) et des mutations dans `audit_log`,
+- restitution des alertes dans le dashboard (`contentieux_alertes_total`, `contentieux_alertes_overdue`) et dans la liste UI des contentieux (badge d'échéance + surlignage rouge en cas de dépassement).
+
+## Timeline contentieux (US6.1)
+
+Le module **Contentieux** embarque désormais une chronologie détaillée pour chaque dossier :
+
+- création automatique d'un événement `ouverture` lors de `POST /api/contentieux`,
+- ajout automatique d'un événement `statut` et, si une motivation est fournie, d'un événement `decision` lors de `POST /api/contentieux/:id/decider`,
+- ajout manuel d'un événement métier via `POST /api/contentieux/:id/evenements`,
+- consultation chronologique via `GET /api/contentieux/:id/timeline`,
+- export PDF de la timeline via `GET /api/contentieux/:id/timeline/pdf`.
+
+Schéma SQL ajouté :
+
+- table `evenements_contentieux` (`contentieux_id`, `type`, `date`, `auteur`, `description`, `piece_jointe_id`, `created_at`),
+- index `idx_evenements_contentieux_contentieux` pour le tri chronologique.
+
+UI :
+
+- la page `client/src/pages/Contentieux.tsx` permet d'ouvrir la timeline d'un dossier,
+- consultation des événements en ordre chronologique,
+- saisie d'un événement manuel (type/date/auteur/description/ID de pièce jointe optionnel),
+- mise à jour du statut/décision sans prompt navigateur,
+- téléchargement direct du PDF de timeline.
+
+Audit :
+
+- `logAudit()` sur création de dossier, ajout manuel d'événement, décision et export PDF de timeline.
+
+## Chiffrement AES-256-GCM au repos (US10.2)
+
+Le backend chiffre désormais au repos les données sensibles gérées applicativement via `server/src/services/crypto.ts` :
+
+- secrets TOTP (`users.two_factor_secret_encrypted`, `users.two_factor_pending_secret_encrypted`),
+- IBAN des mandats SEPA (`mandats_sepa.iban`),
+- pièces jointes et archives stockées via `saveFile()` (`pieces_jointes`, mises en demeure, exports de rapports),
+- avec compatibilité legacy en lecture (`decrypt*OrLegacy`) et rotation de version (`rotateEncryptedText`, `rotateEncryptedBuffer`).
+
+Configuration des clés :
+
+```bash
+# clé active unique (32 octets base64)
+export TLPE_DATA_KEY="<base64-32-bytes>"
+export TLPE_DATA_KEY_VERSION="2026-q2"
+
+# ou trousseau multi-versions pour rotation progressive
+export TLPE_DATA_KEYS="2026-q1:<base64-32-bytes>,2026-q2:<base64-32-bytes>"
+export TLPE_DATA_KEY_VERSION="2026-q2"
+```
+
+Notes d'exploitation :
+
+- en production, `TLPE_DATA_KEY` ou `TLPE_DATA_KEYS` est obligatoire ; le fallback de développement n'est accepté qu'hors production,
+- la clé doit être fournie par l'environnement d'exécution et idéalement externalisée vers un gestionnaire dédié (Vault/KMS) en production,
+- rotation batch disponible via `npm run crypto:rotate --workspace=server [-- --dry-run]`,
+- inventaire courant des champs sensibles : secrets TOTP, IBAN SEPA et fichiers binaires stockés ; aucun champ NIR dédié n'est présent dans le schéma applicatif actuel.
+
+## Sauvegardes quotidiennes chiffrées + test de restauration mensuel (US10.3)
+
+Le backend embarque désormais un pipeline de sauvegarde chiffrée piloté par `server/src/services/backup.ts` :
+
+- snapshot SQLite cohérent via l'API `better-sqlite3.backup()` (`db/tlpe.db`),
+- archivage des répertoires runtime sensibles `uploads/`, `receipts/` et `mises_en_demeure/`,
+- manifest JSON embarqué (`manifest.json`) avec hash SHA-256 de chaque fichier restaurable,
+- chiffrement hybride : archive `tar.gz` chiffrée en AES-256-GCM avec clé de session aléatoire, elle-même chiffrée par clé publique RSA-OAEP SHA-256,
+- stockage local ou S3-compatible selon `TLPE_BACKUP_STORAGE_MODE=local|s3`,
+- rotation de rétention 12 mois avec conservation quotidienne / hebdomadaire / mensuelle,
+- exercice mensuel de restauration via `restoreLatestBackup()` avec contrôle `PRAGMA integrity_check`,
+- webhook d'alerte optionnel en cas d'échec backup/restauration (`TLPE_BACKUP_ALERT_WEBHOOK_URL`).
+
+Scripts disponibles :
+
+```bash
+npm run backup:run --workspace=server
+npm run backup:restore-test --workspace=server
+./scripts/backup.sh
+./scripts/restore-test.sh
+```
+
+Variables d'environnement minimales :
+
+```bash
+export TLPE_BACKUP_PUBLIC_KEY="-----BEGIN PUBLIC KEY-----..."
+export TLPE_BACKUP_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----..." # requis pour restore-test
+export TLPE_BACKUP_STORAGE_MODE=local
+export TLPE_BACKUP_LOCAL_DIR=/var/backups/tlpe
+export TLPE_BACKUP_STORAGE_PREFIX=backups
+export TLPE_BACKUP_RETENTION_DAILY_DAYS=35
+export TLPE_BACKUP_RETENTION_WEEKLY_WEEKS=26
+export TLPE_BACKUP_RETENTION_MONTHLY_MONTHS=12
+export TLPE_BACKUP_ALERT_WEBHOOK_URL=https://hooks.example/tlpe-backup
+```
+
+Mode S3-compatible :
+
+```bash
+export TLPE_BACKUP_STORAGE_MODE=s3
+export TLPE_BACKUP_S3_BUCKET=tlpe-backups
+export TLPE_BACKUP_S3_REGION=eu-west-3
+export TLPE_BACKUP_S3_ENDPOINT=https://s3.example
+export TLPE_BACKUP_S3_FORCE_PATH_STYLE=true
+export TLPE_BACKUP_S3_ACCESS_KEY_ID=***
+export TLPE_BACKUP_S3_SECRET_ACCESS_KEY=***
+```
+
+Automatisation GitHub Actions :
+
+- `.github/workflows/backup-maintenance.yml`
+  - backup quotidien à `01:17 UTC`,
+  - drill de restauration mensuel le 1er du mois à `02:33 UTC`,
+  - mode manuel `workflow_dispatch` (`backup` ou `restore-test`).
+- `.github/workflows/security.yml`
+  - build systématique de l'application avant scan,
+  - démarrage de TLPE en mode production puis smoke test `GET /api/health`,
+  - scan OWASP ZAP baseline sur `http://127.0.0.1:4000`,
+  - publication des rapports `report_html.html`, `report_json.json` et `report_md.md` comme artefacts,
+  - alerte GitHub Actions si findings `High` ou `Medium`, blocage du pipeline `push` sur `main` uniquement si des findings `High` persistent,
+  - gestion centralisée des faux positifs / exclusions qualifiés dans `.zap/rules.tsv`.
+
+Procédure manuelle de restauration :
+
+1. Exporter `TLPE_BACKUP_PRIVATE_KEY` et la même configuration de stockage que la production.
+2. Lancer `npm run backup:restore-test --workspace=server` pour extraire la dernière archive dans un répertoire temporaire.
+3. Vérifier `integrity.ok=true` et inspecter `payload/db/tlpe.db`, `payload/uploads/`, `payload/receipts/`, `payload/mises_en_demeure/`.
+4. Stopper l'application cible, remplacer la base et les répertoires restaurés, puis redémarrer.
+5. Contrôler `GET /api/health` et les écrans métier clés.
+
+Tests couverts :
+
+- roundtrip texte + binaire AES-256-GCM,
+- rejet d'un payload corrompu (IV/tag),
+- rotation vers une nouvelle version de clé,
+- vérification que les pièces jointes et les IBAN persistés ne restent pas en clair.
+
+## Double authentification TOTP du portail contribuable (US9.1)
+
+Le portail contribuable propose désormais un écran **Paramètres du compte** accessible depuis le menu latéral pour gérer la double authentification :
+
+- préparation d'un secret TOTP côté backend via `POST /api/auth/2fa/setup`,
+- génération et affichage d'un QR code pour Google Authenticator / 1Password / Authy,
+- confirmation d'activation par code à 6 chiffres via `POST /api/auth/2fa/enable`,
+- génération de 10 codes de récupération à usage unique,
+- affichage du nombre de codes restants et désactivation confirmée par code via `POST /api/auth/2fa/disable`,
+- challenge intermédiaire à la connexion quand la 2FA est active (`POST /api/auth/login` puis `POST /api/auth/login/verify-2fa`).
+
+Points de vérification manuelle :
+
+- se connecter avec un compte contribuable,
+- ouvrir **Paramètres du compte**,
+- lancer la configuration 2FA et scanner le QR code,
+- confirmer l'activation avec un code TOTP valide,
+- vérifier qu'une reconnexion demande bien le code TOTP ou un code de récupération,
+- désactiver la 2FA avec un code valide.
 
 ## Paiement en ligne PayFip / Tipi (US5.3)
 
@@ -204,11 +528,13 @@ Le module Référentiels expose désormais une gestion des campagnes annuelles d
   - envoi automatique des invitations aux assujettis `actif` avec email renseigné
   - génération d'un lien d'activation unique (magic link) pour les assujettis sans compte portail
   - traçabilité de chaque envoi dans `notifications_email`
+  - en mode SMTP réel ou dev (`TLPE_SMTP_DEV_MODE=mailhog|log-only`), les invitations sont d'abord placées en file `pending` puis traitées par le worker asynchrone
 - relances automatiques US3.4 :
   - job quotidien (scheduler) qui déclenche les relances J-30 / J-15 / J-7 selon `date_limite_declaration`
   - relance uniquement pour les assujettis sans déclaration `soumise` / `validee`
   - J-15 inclut un lien direct vers le formulaire
   - J-7 peut générer un courrier PDF (si `relance_j7_courrier = 1`) stocké et référencé dans `notifications_email.piece_jointe_path`
+  - en mode SMTP réel ou dev, les relances suivent aussi la file `pending -> envoye|echec` avec compteur `tentatives`, `prochain_essai_at` et `provider_message_id`
 - clôture d'une campagne (statut `ouverte` -> `cloturee`), qui:
   - exécute la relance J-7 à la date limite (si applicable)
   - bascule les déclarations `brouillon` de l'année en `en_instruction`
@@ -235,7 +561,29 @@ Schéma SQL ajouté:
 - `campagne_jobs`
 - `mises_en_demeure`
 - `invitation_magic_links`
-- `notifications_email` (inclut désormais `relance_niveau`, `piece_jointe_path`)
+- `notifications_email` (inclut désormais `relance_niveau`, `piece_jointe_path`, `pieces_jointes_json`, `tentatives`, `prochain_essai_at`, `provider_message_id`)
+
+Configuration SMTP / worker email :
+
+```bash
+export TLPE_EMAIL_DELIVERY_MODE=disabled      # mock-success | mock-failure | disabled
+export TLPE_SMTP_DEV_MODE=mailhog             # mailhog | log-only (optionnel)
+export TLPE_SMTP_MAILHOG_URL=smtp://127.0.0.1:1025
+export TLPE_SMTP_HOST=smtp.example.fr
+export TLPE_SMTP_PORT=587
+export TLPE_SMTP_USER=tlpe
+export TLPE_SMTP_PASSWORD=***
+export TLPE_SMTP_FROM=no-reply@example.fr
+export TLPE_SMTP_SECURE=false
+export TLPE_SMTP_WORKER_INTERVAL_MS=30000
+export TLPE_SMTP_MAX_ATTEMPTS=3
+export TLPE_SMTP_BACKOFF_MS=60000
+```
+
+- `TLPE_EMAIL_DELIVERY_MODE=mock-success|mock-failure` force les modes de test synchrones.
+- Sans mode mock, les emails sont stockés en `pending` puis traités par le worker SMTP embarqué dans le scheduler quotidien.
+- `TLPE_SMTP_DEV_MODE=mailhog` envoie vers MailHog ; `log-only` journalise les emails sans connexion SMTP.
+- Un bounce / destinataire invalide marque l'assujetti en statut `email_invalide` pour éviter les réessais silencieux.
 
 Toute action (`create`, `open`, `close`) est tracée dans `audit_log`. Les relances automatiques et manuelles sont également tracées (`send-relance`).
 
