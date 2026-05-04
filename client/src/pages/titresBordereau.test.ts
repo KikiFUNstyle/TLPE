@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test, { afterEach, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildBordereauFilename, buildBordereauPath, canExportBordereau } from './titresBordereau';
 import {
@@ -8,6 +8,20 @@ import {
   extractFilenameFromDisposition,
   shouldSendJsonContentType,
 } from '../api';
+
+const originalLocalStorage = globalThis.localStorage;
+
+beforeEach(() => {
+  globalThis.localStorage = {
+    getItem: () => null,
+    setItem: () => undefined,
+    removeItem: () => undefined,
+  } as unknown as Storage;
+});
+
+afterEach(() => {
+  globalThis.localStorage = originalLocalStorage;
+});
 
 test('canExportBordereau exige une année filtrée et un rôle financier/admin', () => {
   assert.equal(canExportBordereau({ annee: '', canManage: true }), false);
