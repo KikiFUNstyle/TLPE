@@ -8,7 +8,7 @@ import {
   resolveEntityConfig,
   shouldShowExportsLoadingState,
   type ExportEntityKey,
-} from './exportsPersonnalises';
+} from './exportsPersonnalisesHelpers';
 
 test('defaultConfigForEntity initialise des colonnes par défaut par entité', () => {
   assert.deepEqual(defaultConfigForEntity('assujettis').colonnes, ['raison_sociale', 'siret', 'statut']);

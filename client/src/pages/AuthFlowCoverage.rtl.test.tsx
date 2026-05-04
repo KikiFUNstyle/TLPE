@@ -7,6 +7,28 @@ import Login from './Login';
 
 const fetchMock = vi.fn<typeof fetch>();
 const clipboardWriteText = vi.fn<() => Promise<void>>();
+const originalLocalStorage = globalThis.localStorage;
+
+function createLocalStorageMock() {
+  const store = new Map<string, string>();
+
+  return {
+    get length() {
+      return store.size;
+    },
+    clear: vi.fn(() => {
+      store.clear();
+    }),
+    getItem: vi.fn((key: string) => store.get(String(key)) ?? null),
+    key: vi.fn((index: number) => Array.from(store.keys())[index] ?? null),
+    removeItem: vi.fn((key: string) => {
+      store.delete(String(key));
+    }),
+    setItem: vi.fn((key: string, value: string) => {
+      store.set(String(key), String(value));
+    }),
+  } as Storage;
+}
 
 const contribUser: User = {
   id: 41,
@@ -65,11 +87,16 @@ describe('critical auth flows coverage (RTL)', () => {
       configurable: true,
       value: { writeText: clipboardWriteText },
     });
+    vi.stubGlobal('localStorage', createLocalStorageMock());
     localStorage.clear();
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      value: originalLocalStorage,
+    });
   });
 
   it('connecte un utilisateur avec ses identifiants puis redirige vers l’accueil', async () => {

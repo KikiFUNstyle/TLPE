@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { api, apiBlobWithMetadata } from '../api';
 import { useAuth } from '../auth';
-import { buildAuditLogExportFilename, buildAuditLogPath, canExportAuditLog, defaultAuditLogFilters, shouldApplyAuditLogRequestResult, type AuditLogFiltersForm } from './auditLog';
+import { buildAuditLogExportFilename, buildAuditLogPath, canExportAuditLog, defaultAuditLogFilters, shouldApplyAuditLogRequestResult, type AuditLogFiltersForm } from './auditLogHelpers';
 
 type AuditLogRow = {
   id: number;

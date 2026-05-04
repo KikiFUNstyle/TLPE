@@ -70,6 +70,13 @@ interface DashboardData {
   }>;
 }
 
+export function buildChartData(rows: DashboardData['evolution_journaliere']) {
+  return rows.map((row) => ({
+    ...row,
+    label: row.date.slice(5),
+  }));
+}
+
 export default function Dashboard() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -99,6 +106,12 @@ export default function Dashboard() {
     };
   }, []);
 
+  const chartData = useMemo(
+    () => buildChartData(data?.evolution_journaliere ?? []),
+    [data?.evolution_journaliere],
+  );
+  const chartEmpty = chartData.every((row) => row.cumul_soumissions === 0);
+
   if (err) return <div className="alert error">{err}</div>;
   if (!data) return <div>Chargement...</div>;
 
@@ -114,17 +127,6 @@ export default function Dashboard() {
       : `Evolution: ${(operationnel.evolution_taux_vs_nm1 * 100).toFixed(1)} pts vs N-1`;
 
   const drilldownRows = drilldownMode === 'zone' ? data.drilldown.by_zone : data.drilldown.by_type_assujetti;
-
-  const chartData = useMemo(
-    () =>
-      data.evolution_journaliere.map((row) => ({
-        ...row,
-        label: row.date.slice(5),
-      })),
-    [data.evolution_journaliere],
-  );
-
-  const chartEmpty = chartData.every((row) => row.cumul_soumissions === 0);
 
   return (
     <>

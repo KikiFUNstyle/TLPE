@@ -14,7 +14,7 @@ import {
   type ExportFilterOperator,
   type ExportOrder,
   type ExportTemplateConfig,
-} from './exportsPersonnalises';
+} from './exportsPersonnalisesHelpers';
 
 type ColumnDefinition = {
   key: string;

@@ -6,7 +6,7 @@ import {
   canExportAuditLog,
   defaultAuditLogFilters,
   shouldApplyAuditLogRequestResult,
-} from './auditLog';
+} from './auditLogHelpers';
 
 test('defaultAuditLogFilters initialise les filtres du journal d’audit', () => {
   assert.deepEqual(defaultAuditLogFilters(), {
