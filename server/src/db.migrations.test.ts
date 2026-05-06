@@ -556,3 +556,82 @@ test('initSchema rejette des titres legacy avec statut invalide et restaure fore
     assert.equal(fkState, 1);
   });
 });
+
+test('initSchema crée email_templates avec unicité sur code et colonnes de surcharge', async () => {
+  await withContext((ctx) => {
+    ctx.initSchema();
+    const userId = seedUser(ctx, { email: 'email-templates-admin@tlpe.local' });
+
+    const columns = ctx.db.prepare("PRAGMA table_info('email_templates')").all() as Array<{
+      name: string;
+      notnull: number;
+    }>;
+    const byName = new Map(columns.map((column) => [column.name, column]));
+
+    assert.equal(byName.get('code')?.name, 'code');
+    assert.equal(byName.get('code')?.notnull, 1);
+    assert.equal(byName.get('subject_template')?.name, 'subject_template');
+    assert.equal(byName.get('subject_template')?.notnull, 1);
+    assert.equal(byName.get('html_template')?.name, 'html_template');
+    assert.equal(byName.get('html_template')?.notnull, 1);
+    assert.equal(byName.get('text_template')?.name, 'text_template');
+    assert.equal(byName.get('text_template')?.notnull, 1);
+    assert.equal(byName.get('updated_by')?.name, 'updated_by');
+    assert.equal(byName.get('created_at')?.name, 'created_at');
+    assert.equal(byName.get('updated_at')?.name, 'updated_at');
+
+    const sql = getCreateTableSql(ctx, 'email_templates') ?? '';
+    assert.match(sql, /code\s+TEXT\s+NOT\s+NULL\s+UNIQUE/i);
+    assert.match(sql, /subject_template\s+TEXT\s+NOT\s+NULL/i);
+    assert.match(sql, /html_template\s+TEXT\s+NOT\s+NULL/i);
+    assert.match(sql, /text_template\s+TEXT\s+NOT\s+NULL/i);
+    assert.match(sql, /FOREIGN KEY \(updated_by\) REFERENCES users\(id\) ON DELETE SET NULL/i);
+
+    ctx.db.prepare(
+      `INSERT INTO email_templates (code, subject_template, html_template, text_template, updated_by)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).run(
+      'invitation_campagne',
+      'Sujet {{raison_sociale}}',
+      '<p>Bonjour {{raison_sociale}}</p>',
+      'Bonjour {{raison_sociale}}',
+      userId,
+    );
+
+    assert.throws(
+      () =>
+        ctx.db.prepare(
+          `INSERT INTO email_templates (code, subject_template, html_template, text_template, updated_by)
+           VALUES (?, ?, ?, ?, ?)`,
+        ).run(
+          'invitation_campagne',
+          'Sujet dupliqué',
+          '<p>Dupliqué</p>',
+          'Dupliqué',
+          userId,
+        ),
+      /UNIQUE constraint failed: email_templates.code/,
+    );
+
+    const row = ctx.db.prepare(
+      `SELECT code, subject_template, html_template, text_template, updated_by, created_at, updated_at
+       FROM email_templates
+       WHERE code = ?`,
+    ).get('invitation_campagne') as {
+      code: string;
+      subject_template: string;
+      html_template: string;
+      text_template: string;
+      updated_by: number | null;
+      created_at: string;
+      updated_at: string;
+    };
+    assert.equal(row.code, 'invitation_campagne');
+    assert.match(row.subject_template, /Sujet/);
+    assert.match(row.html_template, /<p>Bonjour/);
+    assert.match(row.text_template, /Bonjour/);
+    assert.equal(row.updated_by, userId);
+    assert.match(row.created_at, /^\d{4}-\d{2}-\d{2}/);
+    assert.match(row.updated_at, /^\d{4}-\d{2}-\d{2}/);
+  });
+});
