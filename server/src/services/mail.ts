@@ -13,6 +13,7 @@ export interface SendMailInput {
   to: string;
   subject: string;
   html: string;
+  text?: string;
   attachments?: MailAttachmentInput[];
 }
 
@@ -267,6 +268,7 @@ export function createMailService(input?: {
           to: sendInput.to,
           subject: sendInput.subject,
           html: sendInput.html,
+          text: sendInput.text,
           attachments: (sendInput.attachments ?? []).map((attachment) => ({
             filename: attachment.filename,
             contentType: attachment.contentType ?? undefined,
@@ -291,6 +293,7 @@ export function createMailService(input?: {
         to: sendInput.to,
         subject: sendInput.subject,
         html: sendInput.html,
+        text: sendInput.text,
         attachments: (sendInput.attachments ?? []).map((attachment) => ({
           filename: attachment.filename,
           contentType: attachment.contentType ?? undefined,

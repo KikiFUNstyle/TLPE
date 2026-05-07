@@ -759,6 +759,29 @@ export function initSchema() {
     db.exec('CREATE INDEX IF NOT EXISTS idx_notifications_email_retry ON notifications_email(statut, prochain_essai_at)');
   }
 
+  const hasEmailTemplates = (
+    db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'email_templates'").get() as
+      | { name: string }
+      | undefined
+  )?.name === 'email_templates';
+  if (!hasEmailTemplates) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS email_templates (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        code             TEXT NOT NULL UNIQUE,
+        subject_template TEXT NOT NULL,
+        html_template    TEXT NOT NULL,
+        text_template    TEXT NOT NULL,
+        description      TEXT,
+        updated_by       INTEGER,
+        created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at       TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL
+      );
+    `);
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS idx_email_templates_updated_by ON email_templates(updated_by)');
+
   // migration legacy -> ajoute alerte_gestionnaire sur declarations si table deja presente
   const hasDeclarations = (
     db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'declarations'").get() as
