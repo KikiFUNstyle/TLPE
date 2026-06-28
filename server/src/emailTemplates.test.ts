@@ -32,8 +32,12 @@ type EmailTemplatesTestContext = {
   db: typeof import('./db').db;
   initSchema: typeof import('./db').initSchema;
   listDefaultEmailTemplateCodes: typeof import('./emailTemplates').listDefaultEmailTemplateCodes;
+  listEmailTemplateDefinitions: typeof import('./emailTemplates').listEmailTemplateDefinitions;
+  getEmailTemplateDefinition: typeof import('./emailTemplates').getEmailTemplateDefinition;
   previewEmailTemplate: typeof import('./emailTemplates').previewEmailTemplate;
   renderEmailTemplate: typeof import('./emailTemplates').renderEmailTemplate;
+  upsertEmailTemplateOverride: typeof import('./emailTemplates').upsertEmailTemplateOverride;
+  resetEmailTemplateOverride: typeof import('./emailTemplates').resetEmailTemplateOverride;
   cleanup: () => void;
 };
 
@@ -61,8 +65,12 @@ function createEmailTemplatesTestContext(): EmailTemplatesTestContext {
     db: dbModule.db,
     initSchema: dbModule.initSchema,
     listDefaultEmailTemplateCodes: emailTemplatesModule.listDefaultEmailTemplateCodes,
+    listEmailTemplateDefinitions: emailTemplatesModule.listEmailTemplateDefinitions,
+    getEmailTemplateDefinition: emailTemplatesModule.getEmailTemplateDefinition,
     previewEmailTemplate: emailTemplatesModule.previewEmailTemplate,
     renderEmailTemplate: emailTemplatesModule.renderEmailTemplate,
+    upsertEmailTemplateOverride: emailTemplatesModule.upsertEmailTemplateOverride,
+    resetEmailTemplateOverride: emailTemplatesModule.resetEmailTemplateOverride,
     cleanup: () => {
       try {
         dbModule.db.close();
@@ -149,12 +157,91 @@ test('renderEmailTemplate uses database overrides before default files and escap
   });
 });
 
-test('renderEmailTemplate throws an explicit error when template code is unknown', async () => {
+test('renderEmailTemplate exposes template definitions, persists overrides and can reset them to defaults', async () => {
   await withEmailTemplatesTestContext((ctx) => {
     ctx.initSchema();
+
+    const initialDefinitions = ctx.listEmailTemplateDefinitions();
+    assert.equal(initialDefinitions.length, EXPECTED_TEMPLATE_CODES.length);
+    assert.deepEqual(initialDefinitions.map((definition) => definition.code), EXPECTED_TEMPLATE_CODES);
+
+    const defaultDefinition = ctx.getEmailTemplateDefinition('invitation_campagne');
+    assert.equal(defaultDefinition.source, 'default');
+    assert.equal(defaultDefinition.description, null);
+    assert.equal(defaultDefinition.updated_by, null);
+    assert.equal(defaultDefinition.updated_at, null);
+    assert.match(defaultDefinition.subject_template, /Campagne TLPE/);
+    assert.ok(defaultDefinition.available_variables.includes('raison_sociale'));
+    assert.ok(defaultDefinition.available_variables.includes('lien'));
+
+    const userId = Number(
+      ctx.db
+        .prepare(
+          `INSERT INTO users (email, password_hash, nom, prenom, role, actif)
+           VALUES ('email-templates-admin@tlpe.local', 'hash', 'Email', 'Admin', 'admin', 1)`,
+        )
+        .run().lastInsertRowid,
+    );
+
+    const updated = ctx.upsertEmailTemplateOverride({
+      templateCode: 'invitation_campagne',
+      subjectTemplate: 'Invitation personnalisée {{raison_sociale}}',
+      htmlTemplate: '<p>{{raison_sociale}}</p><p>{{lien}}</p>',
+      textTemplate: 'Texte {{raison_sociale}} -> {{lien}}',
+      description: 'Modèle mairie personnalisé',
+      updatedBy: userId,
+    });
+
+    assert.equal(updated.source, 'override');
+    assert.equal(updated.description, 'Modèle mairie personnalisé');
+    assert.equal(updated.updated_by, userId);
+    assert.ok(updated.updated_at);
+    assert.equal(updated.subject_template, 'Invitation personnalisée {{raison_sociale}}');
+
+    const rendered = ctx.renderEmailTemplate({
+      templateCode: 'invitation_campagne',
+      context: {
+        raison_sociale: 'Alpha & Co',
+        lien: 'https://portail.tlpe.test/invitation',
+      },
+    });
+    assert.equal(rendered.subject, 'Invitation personnalisée Alpha & Co');
+    assert.match(rendered.html, /Alpha &amp; Co/);
+    assert.equal(rendered.text, 'Texte Alpha & Co -> https://portail.tlpe.test/invitation');
+
+    const reset = ctx.resetEmailTemplateOverride('invitation_campagne');
+    assert.equal(reset.source, 'default');
+    assert.equal(reset.description, null);
+    assert.equal(reset.updated_by, null);
+    assert.equal(reset.updated_at, null);
+    assert.match(reset.subject_template, /Campagne TLPE/);
+  });
+});
+
+test('upsertEmailTemplateOverride validates template code and handlebars syntax before saving', async () => {
+  await withEmailTemplatesTestContext((ctx) => {
+    ctx.initSchema();
+
     assert.throws(
-      () => ctx.renderEmailTemplate({ templateCode: 'template_inexistant', context: {} }),
-      /Template email inconnu: template_inexistant/,
+      () =>
+        ctx.upsertEmailTemplateOverride({
+          templateCode: 'inconnu',
+          subjectTemplate: 'Sujet',
+          htmlTemplate: '<p>HTML</p>',
+          textTemplate: 'Texte',
+        }),
+      /Template email inconnu: inconnu/,
+    );
+
+    assert.throws(
+      () =>
+        ctx.upsertEmailTemplateOverride({
+          templateCode: 'invitation_campagne',
+          subjectTemplate: 'Sujet {{#if raison_sociale}}',
+          htmlTemplate: '<p>HTML</p>',
+          textTemplate: 'Texte',
+        }),
+      /Parse error on line 1:/,
     );
   });
 });

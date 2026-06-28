@@ -24,7 +24,10 @@ type TemplateSource = {
   subject: string;
   html: string;
   text: string;
+  description: string | null;
   source: 'default' | 'override';
+  updatedBy: number | null;
+  updatedAt: string | null;
 };
 
 export type EmailTemplateContext = Record<string, unknown>;
@@ -46,11 +49,35 @@ export interface PreviewEmailTemplateInput {
   context?: EmailTemplateContext;
 }
 
+export interface EmailTemplateDefinition {
+  code: EmailTemplateCode;
+  subject_template: string;
+  html_template: string;
+  text_template: string;
+  description: string | null;
+  source: 'default' | 'override';
+  updated_by: number | null;
+  updated_at: string | null;
+  available_variables: string[];
+}
+
 type EmailTemplateOverrideRow = {
   subject_template: string;
   html_template: string;
   text_template: string;
+  description: string | null;
+  updated_by: number | null;
+  updated_at: string | null;
 };
+
+export interface UpsertEmailTemplateOverrideInput {
+  templateCode: string;
+  subjectTemplate: string;
+  htmlTemplate: string;
+  textTemplate: string;
+  description?: string | null;
+  updatedBy?: number | null;
+}
 
 const HANDLEBARS_HTML = Handlebars.create();
 const HANDLEBARS_TEXT = Handlebars.create();
@@ -58,6 +85,13 @@ const HANDLEBARS_SUBJECT = Handlebars.create();
 
 function isKnownTemplateCode(templateCode: string): templateCode is EmailTemplateCode {
   return (DEFAULT_EMAIL_TEMPLATE_CODES as readonly string[]).includes(templateCode);
+}
+
+function assertKnownTemplateCode(templateCode: string): EmailTemplateCode {
+  if (!isKnownTemplateCode(templateCode)) {
+    throw new Error(`Template email inconnu: ${templateCode}`);
+  }
+  return templateCode;
 }
 
 function resolveTemplatesDirectory(currentDir = __dirname) {
@@ -85,14 +119,17 @@ function getDefaultTemplateSource(templateCode: EmailTemplateCode): TemplateSour
     subject: readDefaultTemplatePart(templateCode, 'subject'),
     html: readDefaultTemplatePart(templateCode, 'html'),
     text: readDefaultTemplatePart(templateCode, 'text'),
+    description: null,
     source: 'default',
+    updatedBy: null,
+    updatedAt: null,
   };
 }
 
 function getOverrideTemplateSource(templateCode: EmailTemplateCode): TemplateSource | null {
   const row = db
     .prepare(
-      `SELECT subject_template, html_template, text_template
+      `SELECT subject_template, html_template, text_template, description, updated_by, updated_at
        FROM email_templates
        WHERE code = ?
        LIMIT 1`,
@@ -105,7 +142,10 @@ function getOverrideTemplateSource(templateCode: EmailTemplateCode): TemplateSou
     subject: row.subject_template,
     html: row.html_template,
     text: row.text_template,
+    description: row.description ?? null,
     source: 'override',
+    updatedBy: row.updated_by ?? null,
+    updatedAt: row.updated_at ?? null,
   };
 }
 
@@ -129,10 +169,17 @@ function compileTemplate(source: string, context: EmailTemplateContext, part: Te
   });
 }
 
+function validateTemplateSource(subjectTemplate: string, htmlTemplate: string, textTemplate: string) {
+  HANDLEBARS_SUBJECT.parse(subjectTemplate);
+  HANDLEBARS_HTML.parse(htmlTemplate);
+  HANDLEBARS_TEXT.parse(textTemplate);
+}
+
 function getPreviewContext(templateCode: EmailTemplateCode): EmailTemplateContext {
   return {
     collectivite: 'Ville de Test',
     service: 'Service TLPE',
+    service_label: 'Service: Service TLPE',
     campagne_annee: 2026,
     annee: 2026,
     identifiant: 'TLPE-EXEMPLE-001',
@@ -161,16 +208,69 @@ function getPreviewContext(templateCode: EmailTemplateCode): EmailTemplateContex
   };
 }
 
+function getTemplateVariables(templateCode: EmailTemplateCode): string[] {
+  return Object.keys(getPreviewContext(templateCode)).sort();
+}
+
 export function listDefaultEmailTemplateCodes(): EmailTemplateCode[] {
   return [...DEFAULT_EMAIL_TEMPLATE_CODES];
 }
 
-export function renderEmailTemplate(input: RenderEmailTemplateInput): RenderedEmailTemplate {
-  if (!isKnownTemplateCode(input.templateCode)) {
-    throw new Error(`Template email inconnu: ${input.templateCode}`);
-  }
+export function getEmailTemplateDefinition(templateCode: string): EmailTemplateDefinition {
+  const knownTemplateCode = assertKnownTemplateCode(templateCode);
+  const source = resolveTemplateSource(knownTemplateCode);
+  return {
+    code: knownTemplateCode,
+    subject_template: source.subject,
+    html_template: source.html,
+    text_template: source.text,
+    description: source.description,
+    source: source.source,
+    updated_by: source.updatedBy,
+    updated_at: source.updatedAt,
+    available_variables: getTemplateVariables(knownTemplateCode),
+  };
+}
 
-  const source = resolveTemplateSource(input.templateCode);
+export function listEmailTemplateDefinitions(): EmailTemplateDefinition[] {
+  return listDefaultEmailTemplateCodes().map((code) => getEmailTemplateDefinition(code));
+}
+
+export function upsertEmailTemplateOverride(input: UpsertEmailTemplateOverrideInput): EmailTemplateDefinition {
+  const knownTemplateCode = assertKnownTemplateCode(input.templateCode);
+  validateTemplateSource(input.subjectTemplate, input.htmlTemplate, input.textTemplate);
+
+  db.prepare(
+    `INSERT INTO email_templates (code, subject_template, html_template, text_template, description, updated_by, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+     ON CONFLICT(code) DO UPDATE SET
+       subject_template = excluded.subject_template,
+       html_template = excluded.html_template,
+       text_template = excluded.text_template,
+       description = excluded.description,
+       updated_by = excluded.updated_by,
+       updated_at = datetime('now')`,
+  ).run(
+    knownTemplateCode,
+    input.subjectTemplate,
+    input.htmlTemplate,
+    input.textTemplate,
+    input.description ?? null,
+    input.updatedBy ?? null,
+  );
+
+  return getEmailTemplateDefinition(knownTemplateCode);
+}
+
+export function resetEmailTemplateOverride(templateCode: string): EmailTemplateDefinition {
+  const knownTemplateCode = assertKnownTemplateCode(templateCode);
+  db.prepare('DELETE FROM email_templates WHERE code = ?').run(knownTemplateCode);
+  return getEmailTemplateDefinition(knownTemplateCode);
+}
+
+export function renderEmailTemplate(input: RenderEmailTemplateInput): RenderedEmailTemplate {
+  const knownTemplateCode = assertKnownTemplateCode(input.templateCode);
+  const source = resolveTemplateSource(knownTemplateCode);
   return {
     subject: compileTemplate(source.subject, input.context, 'subject'),
     html: compileTemplate(source.html, input.context, 'html'),
@@ -180,14 +280,12 @@ export function renderEmailTemplate(input: RenderEmailTemplateInput): RenderedEm
 }
 
 export function previewEmailTemplate(input: PreviewEmailTemplateInput): RenderedEmailTemplate {
-  if (!isKnownTemplateCode(input.templateCode)) {
-    throw new Error(`Template email inconnu: ${input.templateCode}`);
-  }
+  const knownTemplateCode = assertKnownTemplateCode(input.templateCode);
 
   return renderEmailTemplate({
-    templateCode: input.templateCode,
+    templateCode: knownTemplateCode,
     context: {
-      ...getPreviewContext(input.templateCode),
+      ...getPreviewContext(knownTemplateCode),
       ...(input.context ?? {}),
     },
   });

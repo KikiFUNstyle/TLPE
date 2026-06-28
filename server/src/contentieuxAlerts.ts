@@ -1,4 +1,5 @@
 import { db, logAudit } from './db';
+import { renderEmailTemplate } from './emailTemplates';
 import { persistEmailNotification } from './services/mail';
 import {
   classifyContentieuxAlertLevel,
@@ -119,30 +120,43 @@ function deliverAlertEmail(email: string | null): {
   };
 }
 
-function buildAlertEmailSubject(numero: string, niveau: 'J-30' | 'J-7' | 'depasse') {
-  if (niveau === 'depasse') return `Alerte contentieux ${numero} en dépassement de délai`;
-  return `Alerte contentieux ${numero} - échéance ${niveau}`;
+function buildAlertEmailSubject(candidate: ContentieuxCandidate, niveau: 'J-30' | 'J-7' | 'depasse', dateEcheance: string) {
+  return renderEmailTemplate({
+    templateCode: 'alerte_contentieux',
+    context: {
+      numero_contentieux: candidate.numero,
+      raison_sociale: candidate.raison_sociale ?? 'Non renseigné',
+      statut_contentieux: candidate.statut,
+      date_echeance: dateEcheance,
+      niveau_alerte: niveau,
+      lien: `${process.env.TLPE_PORTAL_BASE_URL || 'http://localhost:5173'}/contentieux`,
+      portail_url: `${process.env.TLPE_PORTAL_BASE_URL || 'http://localhost:5173'}/contentieux`,
+      service: 'Service TLPE',
+      service_label: 'Service: Service TLPE',
+      days_remaining: 0,
+      delai_depasse_jours: 0,
+    },
+  }).subject;
 }
 
 function buildAlertEmailBody(candidate: ContentieuxCandidate, niveau: 'J-30' | 'J-7' | 'depasse', daysRemaining: number) {
-  const lines = [
-    `Dossier: ${candidate.numero}`,
-    `Assujetti: ${candidate.raison_sociale ?? 'Non renseigné'}`,
-    `Statut: ${candidate.statut}`,
-    `Date limite de réponse: ${candidate.date_limite_reponse}`,
-  ];
-
-  if (niveau === 'depasse') {
-    lines.push(`Le dossier est en dépassement depuis ${Math.abs(daysRemaining)} jour(s).`);
-  } else {
-    lines.push(`Le dossier atteindra son échéance dans ${daysRemaining} jour(s) (${niveau}).`);
-  }
-
-  if (candidate.delai_prolonge_justification) {
-    lines.push(`Justification de prolongation: ${candidate.delai_prolonge_justification}`);
-  }
-
-  return lines.join('\n');
+  return renderEmailTemplate({
+    templateCode: 'alerte_contentieux',
+    context: {
+      numero_contentieux: candidate.numero,
+      raison_sociale: candidate.raison_sociale ?? 'Non renseigné',
+      statut_contentieux: candidate.statut,
+      date_echeance: candidate.date_limite_reponse,
+      niveau_alerte: niveau,
+      lien: `${process.env.TLPE_PORTAL_BASE_URL || 'http://localhost:5173'}/contentieux`,
+      portail_url: `${process.env.TLPE_PORTAL_BASE_URL || 'http://localhost:5173'}/contentieux`,
+      service: 'Service TLPE',
+      service_label: 'Service: Service TLPE',
+      days_remaining: niveau === 'depasse' ? 0 : daysRemaining,
+      delai_depasse_jours: niveau === 'depasse' ? Math.abs(daysRemaining) : 0,
+      justification_prolongation: candidate.delai_prolonge_justification,
+    },
+  }).text;
 }
 
 export function createContentieuxDeadlineAlerts(input?: {
@@ -206,7 +220,7 @@ export function createContentieuxDeadlineAlerts(input?: {
 
       const emailTarget = managerRecipient?.email ?? row.email;
       const email = deliverAlertEmail(emailTarget);
-      const emailSubject = buildAlertEmailSubject(row.numero, summary.niveau_alerte);
+      const emailSubject = buildAlertEmailSubject(row, summary.niveau_alerte, summary.date_limite_reponse);
       const emailBody = buildAlertEmailBody(row, summary.niveau_alerte, summary.days_remaining);
       const notification = persistEmailNotification({
         campagneId: null,
@@ -249,7 +263,7 @@ export function createContentieuxDeadlineAlerts(input?: {
         entiteId: row.id,
         details: {
           niveau: summary.niveau_alerte,
-          subject: buildAlertEmailSubject(row.numero, summary.niveau_alerte),
+          subject: buildAlertEmailSubject(row, summary.niveau_alerte, summary.date_limite_reponse),
           body: buildAlertEmailBody(row, summary.niveau_alerte, summary.days_remaining),
           date_echeance: summary.date_limite_reponse,
           days_remaining: summary.days_remaining,

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { db, initSchema } from './db';
 import { createCampagne, openCampagne } from './campagnes';
+import { upsertEmailTemplateOverride } from './emailTemplates';
 import { sendInvitationsForCampagne } from './invitations';
 
 process.env.TLPE_EMAIL_DELIVERY_MODE = 'mock-success';
@@ -23,6 +24,7 @@ function resetTables() {
   db.exec('DELETE FROM dispositifs');
   db.exec('DELETE FROM campagnes');
   db.exec('DELETE FROM audit_log');
+  db.exec('DELETE FROM email_templates');
   db.exec('DELETE FROM users');
   db.exec('DELETE FROM assujettis');
 }
@@ -100,7 +102,7 @@ test('openCampagne envoie les invitations email et trace notifications_email', (
   assert.ok(notifications.every((n) => n.tentatives === 1));
   assert.ok(notifications.every((n) => /^mock-success-/.test(n.provider_message_id ?? '')));
   assert.ok(notifications.every((n) => n.objet.includes('Campagne TLPE 2032')));
-  assert.ok(notifications.every((n) => /date limite/i.test(n.corps)));
+  assert.ok(notifications.every((n) => /avant le/i.test(n.corps)));
 
   const avecCompte = notifications.find((n) => n.assujetti_id === aAvecCompte);
   const sansCompte = notifications.find((n) => n.assujetti_id === aSansCompte);
@@ -161,4 +163,53 @@ test('sendInvitationsForCampagne permet renvoi cible pour un assujetti', () => {
 
   const secondCount = (db.prepare('SELECT COUNT(*) AS c FROM notifications_email WHERE campagne_id = ?').get(campagneId) as { c: number }).c;
   assert.equal(secondCount, 2);
+});
+
+test('openCampagne rend les invitations via le template partagé et applique les overrides runtime', () => {
+  resetTables();
+  const adminId = seedAdmin();
+  const assujettiId = seedAssujetti({ code: 'TLPE-INV-OVERRIDE', email: 'override@example.fr' });
+
+  upsertEmailTemplateOverride({
+    templateCode: 'invitation_campagne',
+    subjectTemplate: 'Sujet mairie {{campagne_annee}} · {{raison_sociale}}',
+    htmlTemplate:
+      '<p>Invitation personnalisée {{campagne_annee}} pour <strong>{{raison_sociale}}</strong></p><p><a href="{{lien}}">{{lien}}</a></p><p>Service: {{service}}</p>',
+    textTemplate: 'Invitation personnalisée {{campagne_annee}} pour {{raison_sociale}} :: {{lien}} :: {{service}}',
+    updatedBy: adminId,
+  });
+
+  const campagneId = createCampagne({
+    annee: 2034,
+    date_ouverture: '2034-01-01',
+    date_limite_declaration: '2034-03-31',
+    date_cloture: '2034-04-15',
+    created_by: adminId,
+  });
+
+  openCampagne(campagneId, adminId);
+
+  const notification = db
+    .prepare(
+      `SELECT objet, corps, template_code, magic_link
+       FROM notifications_email
+       WHERE campagne_id = ? AND assujetti_id = ?
+       ORDER BY id DESC
+       LIMIT 1`,
+    )
+    .get(campagneId, assujettiId) as {
+    objet: string;
+    corps: string;
+    template_code: string;
+    magic_link: string | null;
+  } | undefined;
+
+  assert.ok(notification);
+  assert.equal(notification?.template_code, 'invitation_campagne');
+  assert.equal(notification?.objet, 'Sujet mairie 2034 · Assujetti TLPE-INV-OVERRIDE');
+  assert.match(notification?.corps ?? '', /Invitation personnalisée 2034/);
+  assert.match(notification?.corps ?? '', /Service TLPE/);
+  assert.match(notification?.corps ?? '', /invitation_token=\[redacted\]/);
+  assert.doesNotMatch(notification?.corps ?? '', /invitation_token=[a-f0-9]{32,}/);
+  assert.equal(notification?.magic_link?.includes('[redacted]') ?? false, true);
 });

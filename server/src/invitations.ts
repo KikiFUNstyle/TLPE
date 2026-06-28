@@ -1,5 +1,6 @@
 import * as crypto from 'node:crypto';
 import { db, logAudit } from './db';
+import { renderEmailTemplate } from './emailTemplates';
 import { isMockEmailDeliveryMode, persistEmailNotification, queueEmailNotification } from './services/mail';
 
 export type InvitationMode = 'auto' | 'manual';
@@ -191,22 +192,24 @@ function buildInvitationEmail(input: {
   magicLink: string | null;
 }) {
   const { campagne, assujetti, magicLink } = input;
-  const objet = `Campagne TLPE ${campagne.annee} - invitation a declarer`;
-  const lignes = [
-    `Bonjour ${assujetti.raison_sociale},`,
-    '',
-    `La campagne TLPE ${campagne.annee} est ouverte.`,
-    `Votre identifiant TLPE: ${assujetti.identifiant_tlpe}.`,
-    `Date limite de declaration: ${campagne.date_limite_declaration}.`,
-    `Lien portail: ${PORTAL_BASE_URL}/login`,
-  ];
+  const portalLink = `${PORTAL_BASE_URL}/login`;
+  const rendered = renderEmailTemplate({
+    templateCode: 'invitation_campagne',
+    context: {
+      campagne_annee: campagne.annee,
+      annee: campagne.annee,
+      date_limite_declaration: campagne.date_limite_declaration,
+      identifiant: assujetti.identifiant_tlpe,
+      identifiant_tlpe: assujetti.identifiant_tlpe,
+      raison_sociale: assujetti.raison_sociale,
+      lien: magicLink ?? portalLink,
+      portail_url: portalLink,
+      service: 'Service TLPE',
+      service_label: 'Service: Service TLPE',
+    },
+  });
 
-  if (magicLink) {
-    lignes.push(`Lien d'activation unique: ${magicLink}`);
-  }
-
-  lignes.push('', 'Cordialement,', 'Service TLPE');
-  return { objet, corps: lignes.join('\n') };
+  return { objet: rendered.subject, corps: rendered.text };
 }
 
 export function sendInvitationsForCampagne(args: SendInvitationArgs): SendInvitationResult {

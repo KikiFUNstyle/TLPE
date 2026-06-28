@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { db, initSchema } from './db';
 import { createContentieuxDeadlineAlerts, listContentieuxDeadlineAlerts } from './contentieuxAlerts';
 import { getDashboardMetrics } from './dashboardMetrics';
+import { upsertEmailTemplateOverride } from './emailTemplates';
 
 process.env.TLPE_EMAIL_DELIVERY_MODE = 'mock-success';
 
@@ -93,6 +94,16 @@ test('createContentieuxDeadlineAlerts génère les alertes J-30/J-7, journalise 
   const gestionnaireId = seedUser('gest-contentieux@example.test', 'gestionnaire');
   const assujettiId = seedAssujetti('TLPE-CTX-ALERT');
 
+  upsertEmailTemplateOverride({
+    templateCode: 'alerte_contentieux',
+    subjectTemplate: 'Alerte mairie {{numero_contentieux}} / {{niveau_alerte}}',
+    htmlTemplate:
+      '<p>Alerte personnalisée {{numero_contentieux}}</p><p>{{raison_sociale}}</p><p>{{statut_contentieux}}</p><p>{{date_echeance}}</p><p><a href="{{lien}}">{{lien}}</a></p>',
+    textTemplate:
+      'Alerte personnalisée {{numero_contentieux}} :: {{niveau_alerte}} :: {{raison_sociale}} :: {{statut_contentieux}} :: {{date_echeance}} :: {{lien}}',
+    updatedBy: gestionnaireId,
+  });
+
   const contentieuxId = Number(
     db
       .prepare(
@@ -174,6 +185,19 @@ test('createContentieuxDeadlineAlerts génère les alertes J-30/J-7, journalise 
   );
   assert.match(notifRows[0].provider_message_id ?? '', /^mock-success-/);
   assert.match(notifRows[1].provider_message_id ?? '', /^mock-success-/);
+
+  const notifBodies = db
+    .prepare(
+      `SELECT objet, corps
+       FROM notifications_email
+       WHERE assujetti_id = ? AND template_code = 'alerte_contentieux'
+       ORDER BY id`,
+    )
+    .all(assujettiId) as Array<{ objet: string; corps: string }>;
+  assert.equal(notifBodies[0]?.objet, 'Alerte mairie CTX-ALERT-1 / J-30');
+  assert.match(notifBodies[0]?.corps ?? '', /Alerte personnalisée CTX-ALERT-1/);
+  assert.match(notifBodies[0]?.corps ?? '', /2026-07-15/);
+  assert.match(notifBodies[1]?.corps ?? '', /Alerte personnalisée CTX-ALERT-1/);
 
   const auditCount = (db.prepare("SELECT COUNT(*) AS c FROM audit_log WHERE action = 'contentieux-deadline-alert'").get() as { c: number }).c;
   assert.equal(auditCount, 2);

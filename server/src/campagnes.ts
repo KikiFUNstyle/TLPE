@@ -1,7 +1,9 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { db, logAudit } from './db';
+import { renderEmailTemplate } from './emailTemplates';
 import { sendInvitationsForCampagne } from './invitations';
+import { persistEmailNotification } from './services/mail';
 
 export type CampagneStatut = 'brouillon' | 'ouverte' | 'cloturee';
 
@@ -260,43 +262,51 @@ function runMiseEnDemeureJPlus1(campagneId: number, userId: number, ip?: string 
       });
       generatedPdfs += 1;
 
-      const objet = `Mise en demeure TLPE ${campagne.annee} - declaration manquante`;
-      const corps = normalizeEmailBody([
-        `Bonjour ${assujetti.raison_sociale},`,
-        '',
-        `Votre declaration TLPE ${campagne.annee} n'a pas ete recue a la cloture de la campagne.`,
-        'Une declaration d\'office a ete ouverte au statut en_instruction.',
-        'Veuillez consulter la mise en demeure jointe et prendre contact avec le service TLPE.',
-        '',
-        `Reference declaration: ${decl.numero}`,
-        `Date d'emission: ${runDateIso}`,
-        '',
-        'Cordialement,',
-        'Service TLPE',
-      ]);
+      const portalLink = `${process.env.TLPE_PORTAL_BASE_URL || 'http://localhost:5173'}/login`;
+      const rendered = renderEmailTemplate({
+        templateCode: 'mise_en_demeure_auto',
+        context: {
+          campagne_annee: campagne.annee,
+          annee: campagne.annee,
+          identifiant: assujetti.identifiant_tlpe,
+          identifiant_tlpe: assujetti.identifiant_tlpe,
+          raison_sociale: assujetti.raison_sociale,
+          numero_declaration: decl.numero,
+          date_echeance: runDateIso,
+          date_emission: runDateIso,
+          lien: portalLink,
+          portail_url: portalLink,
+          service: 'Service TLPE',
+          service_label: 'Service: Service TLPE',
+        },
+      });
+      const objet = rendered.subject;
+      const corps = rendered.text;
 
       const emailDestinataire = assujetti.email && assujetti.email.trim().length > 0 ? assujetti.email.trim() : 'invalide@tlpe.local';
       const hasEmail = assujetti.email && assujetti.email.trim().length > 0;
       const statutNotif = hasEmail ? 'envoye' : 'echec';
       const erreurNotif = hasEmail ? null : 'Email manquant pour envoi de la mise en demeure';
 
-      db.prepare(
-        `INSERT INTO notifications_email (
-          campagne_id, assujetti_id, email_destinataire, objet, corps,
-          template_code, relance_niveau, piece_jointe_path, magic_link, mode, statut, erreur, sent_at, created_by
-        ) VALUES (?, ?, ?, ?, ?, 'mise_en_demeure_auto', NULL, ?, NULL, 'auto', ?, ?, ?, ?)`,
-      ).run(
-        campagne.id,
-        assujetti.id,
+      persistEmailNotification({
+        campagneId: campagne.id,
+        assujettiId: assujetti.id,
         emailDestinataire,
         objet,
         corps,
-        pdfRelativePath,
-        statutNotif,
-        erreurNotif,
-        hasEmail ? new Date().toISOString() : null,
-        userId,
-      );
+        templateCode: 'mise_en_demeure_auto',
+        pieceJointePath: pdfRelativePath,
+        mode: 'auto',
+        createdBy: userId,
+        status: statutNotif,
+        error: erreurNotif,
+        sentAt: hasEmail ? new Date().toISOString() : null,
+        attempts: hasEmail ? 1 : 0,
+        metadata: {
+          declaration_id: decl.id,
+          run_date: runDateIso,
+        },
+      });
       notifications += 1;
 
       if (hasEmail) {

@@ -3,28 +3,35 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { db, initSchema } from '../db';
+import { upsertEmailTemplateOverride } from '../emailTemplates';
 import { ensureDeclarationReceipt, getDeclarationReceiptByToken, getDeclarationReceiptRecord, createReceiptDownloadUrl, getReceiptDownloadPath } from './declarationReceipt';
 
 function resetFixtures() {
   initSchema();
-  db.exec('DELETE FROM declaration_receipts');
-  db.exec('DELETE FROM notifications_email');
-  db.exec('DELETE FROM invitation_magic_links');
-  db.exec('DELETE FROM campagne_jobs');
-  db.exec('DELETE FROM mises_en_demeure');
-  db.exec('DELETE FROM paiements');
-  db.exec('DELETE FROM titres');
-  db.exec('DELETE FROM pieces_jointes');
-  db.exec('DELETE FROM contentieux');
-  db.exec('DELETE FROM lignes_declaration');
-  db.exec('DELETE FROM declarations');
-  db.exec('DELETE FROM dispositifs');
-  db.exec('DELETE FROM campagnes');
-  db.exec('DELETE FROM audit_log');
-  db.exec('DELETE FROM users');
-  db.exec('DELETE FROM assujettis');
-  db.exec('DELETE FROM types_dispositifs');
-  db.exec('DELETE FROM zones');
+  db.pragma('foreign_keys = OFF');
+  try {
+    db.exec('DELETE FROM email_templates');
+    db.exec('DELETE FROM declaration_receipts');
+    db.exec('DELETE FROM notifications_email');
+    db.exec('DELETE FROM invitation_magic_links');
+    db.exec('DELETE FROM campagne_jobs');
+    db.exec('DELETE FROM mises_en_demeure');
+    db.exec('DELETE FROM paiements');
+    db.exec('DELETE FROM titres');
+    db.exec('DELETE FROM pieces_jointes');
+    db.exec('DELETE FROM contentieux');
+    db.exec('DELETE FROM lignes_declaration');
+    db.exec('DELETE FROM declarations');
+    db.exec('DELETE FROM dispositifs');
+    db.exec('DELETE FROM campagnes');
+    db.exec('DELETE FROM audit_log');
+    db.exec('DELETE FROM users');
+    db.exec('DELETE FROM assujettis');
+    db.exec('DELETE FROM types_dispositifs');
+    db.exec('DELETE FROM zones');
+  } finally {
+    db.pragma('foreign_keys = ON');
+  }
 
   const typeId = Number(
     db
@@ -83,6 +90,15 @@ function resetFixtures() {
 test('ensureDeclarationReceipt génère le PDF, persiste le token et expose la vérification publique', async () => {
   const fx = resetFixtures();
   process.env.TLPE_EMAIL_DELIVERY_MODE = 'mock-success';
+  upsertEmailTemplateOverride({
+    templateCode: 'accuse_reception_declaration',
+    subjectTemplate: 'AR mairie {{numero_declaration}}',
+    htmlTemplate:
+      '<p>Accusé personnalisé {{numero_declaration}}</p><p>{{raison_sociale}}</p><p>{{date_reception}}</p><p><a href="{{lien}}">{{lien}}</a></p><p>{{service}}</p>',
+    textTemplate:
+      'Accusé personnalisé {{numero_declaration}} :: {{raison_sociale}} :: {{date_reception}} :: {{lien}} :: {{service}}',
+    updatedBy: fx.userId,
+  });
 
   const receipt = await ensureDeclarationReceipt({
     declarationId: fx.declarationId,
@@ -118,6 +134,22 @@ test('ensureDeclarationReceipt génère le PDF, persiste le token et expose la v
   const absPdf = path.resolve(__dirname, '..', '..', 'data', receipt.pdfRelativePath);
   assert.ok(fs.existsSync(absPdf));
   assert.ok(fs.statSync(absPdf).size > 300);
+
+  const notification = db
+    .prepare(
+      `SELECT objet, corps, template_code, statut
+       FROM notifications_email
+       WHERE assujetti_id = ? AND template_code = 'accuse_reception_declaration'
+       ORDER BY id DESC
+       LIMIT 1`,
+    )
+    .get(fx.assujettiId) as { objet: string; corps: string; template_code: string; statut: string } | undefined;
+  assert.ok(notification);
+  assert.equal(notification?.template_code, 'accuse_reception_declaration');
+  assert.equal(notification?.statut, 'envoye');
+  assert.equal(notification?.objet, 'AR mairie DEC-2026-000999');
+  assert.match(notification?.corps ?? '', /Accusé personnalisé DEC-2026-000999/);
+  assert.match(notification?.corps ?? '', /Service TLPE/);
 
   const record = getDeclarationReceiptRecord(fx.declarationId);
   assert.ok(record);

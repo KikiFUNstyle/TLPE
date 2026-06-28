@@ -4,6 +4,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { db, initSchema } from './db';
 import { createCampagne, openCampagne } from './campagnes';
+import { upsertEmailTemplateOverride } from './emailTemplates';
 import { computeRunDateForNiveau, relanceNiveauFromDate, runRelancesDeclarations } from './relances';
 
 process.env.TLPE_EMAIL_DELIVERY_MODE = 'mock-success';
@@ -26,6 +27,7 @@ function resetTables() {
     db.exec('DELETE FROM mises_en_demeure');
     db.exec('DELETE FROM campagnes');
     db.exec('DELETE FROM audit_log');
+    db.exec('DELETE FROM email_templates');
     db.exec('DELETE FROM users');
     db.exec('DELETE FROM assujettis');
   } finally {
@@ -265,6 +267,59 @@ test('runRelancesDeclarations retourne niveau null hors J-30/J-15/J-7', () => {
       .get(campagneId) as { c: number }
   ).c;
   assert.equal(relanceNotifs, 0);
+});
+
+test('runRelancesDeclarations rend les emails via le template partagé et consomme les overrides runtime', () => {
+  resetTables();
+  const adminId = seedAdmin();
+  const annee = 2039;
+
+  seedAssujetti('TLPE-REL-OVERRIDE', 'override-relance@example.fr');
+  upsertEmailTemplateOverride({
+    templateCode: 'relance_declaration',
+    subjectTemplate: 'Relance mairie {{annee}} / {{niveau_relance}}',
+    htmlTemplate:
+      '<p>Relance personnalisée {{niveau_relance}} pour {{raison_sociale}}</p><p><a href="{{lien}}">{{lien}}</a></p><p>Service: {{service}}</p>',
+    textTemplate: 'Relance personnalisée {{niveau_relance}} pour {{raison_sociale}} :: {{lien}} :: {{service}}',
+    updatedBy: adminId,
+  });
+
+  const campagneId = createCampagne({
+    annee,
+    date_ouverture: '2039-01-01',
+    date_limite_declaration: '2039-03-31',
+    date_cloture: '2039-04-15',
+    relance_j7_courrier: false,
+    created_by: adminId,
+  });
+  openCampagne(campagneId, adminId);
+
+  const runDate = computeRunDateForNiveau('2039-03-31', 'J-15');
+  const result = runRelancesDeclarations({ runDateIso: runDate, userId: adminId });
+  assert.equal(result.sent, 1);
+
+  const notification = db
+    .prepare(
+      `SELECT objet, corps, template_code, relance_niveau
+       FROM notifications_email
+       WHERE campagne_id = ? AND template_code = 'relance_declaration'
+       ORDER BY id DESC
+       LIMIT 1`,
+    )
+    .get(campagneId) as {
+    objet: string;
+    corps: string;
+    template_code: string;
+    relance_niveau: string | null;
+  } | undefined;
+
+  assert.ok(notification);
+  assert.equal(notification?.template_code, 'relance_declaration');
+  assert.equal(notification?.relance_niveau, 'J-15');
+  assert.equal(notification?.objet, 'Relance mairie 2039 / J-15');
+  assert.match(notification?.corps ?? '', /Relance personnalisée J-15/);
+  assert.match(notification?.corps ?? '', /\/declarations/);
+  assert.match(notification?.corps ?? '', /Service TLPE/);
 });
 
 test('computeRunDateForNiveau calcule les dates correctes pour chaque niveau', () => {
