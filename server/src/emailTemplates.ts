@@ -169,10 +169,97 @@ function compileTemplate(source: string, context: EmailTemplateContext, part: Te
   });
 }
 
-function validateTemplateSource(subjectTemplate: string, htmlTemplate: string, textTemplate: string) {
+function validateTemplateSource(subjectTemplate: string, htmlTemplate: string, textTemplate: string, templateCode?: EmailTemplateCode) {
   HANDLEBARS_SUBJECT.parse(subjectTemplate);
   HANDLEBARS_HTML.parse(htmlTemplate);
   HANDLEBARS_TEXT.parse(textTemplate);
+
+  if (templateCode) {
+    const knownVariables = new Set(getTemplateVariables(templateCode));
+    const unknownVariables = new Set<string>();
+
+    for (const source of [subjectTemplate, htmlTemplate, textTemplate]) {
+      const ast = HANDLEBARS_SUBJECT.parse(source);
+      collectUnknownVariables(ast, knownVariables, unknownVariables);
+    }
+
+    if (unknownVariables.size > 0) {
+      const sorted = [...unknownVariables].sort();
+      throw new Error(
+        `Variables inconnues dans le template ${templateCode}: ${sorted.join(', ')}. ` +
+        `Variables disponibles: ${[...knownVariables].sort().join(', ')}`,
+      );
+    }
+  }
+}
+
+function collectUnknownVariables(
+  node: any,
+  knownVariables: Set<string>,
+  unknownVariables: Set<string>,
+) {
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      collectUnknownVariables(child, knownVariables, unknownVariables);
+    }
+    return;
+  }
+
+  if (!node || typeof node !== 'object') return;
+
+  if (node.type === 'PathExpression') {
+    const path = node.original;
+    // Skip built-in paths starting with @ (like @index, @key, @first, @last)
+    if (!path.startsWith('@') && !unknownVariables.has(path) && !knownVariables.has(path)) {
+      unknownVariables.add(path);
+    }
+    return;
+  }
+
+  if (node.type === 'MustacheStatement' || node.type === 'BlockStatement' || node.type === 'PartialStatement') {
+    const params = (node as any).params;
+    if (params) collectUnknownVariables(params, knownVariables, unknownVariables);
+    const hash = (node as any).hash;
+    if (hash?.pairs) {
+      for (const pair of hash.pairs) {
+        collectUnknownVariables(pair.value, knownVariables, unknownVariables);
+      }
+    }
+    const path = (node as any).path;
+    if (path) collectUnknownVariables(path, knownVariables, unknownVariables);
+    const program = (node as any).program;
+    if (program) collectUnknownVariables(program, knownVariables, unknownVariables);
+    const inverse = (node as any).inverse;
+    if (inverse) collectUnknownVariables(inverse, knownVariables, unknownVariables);
+    return;
+  }
+
+  if (node.type === 'SubExpression') {
+    const params = (node as any).params;
+    if (params) collectUnknownVariables(params, knownVariables, unknownVariables);
+    const hash = (node as any).hash;
+    if (hash?.pairs) {
+      for (const pair of hash.pairs) {
+        collectUnknownVariables(pair.value, knownVariables, unknownVariables);
+      }
+    }
+    return;
+  }
+
+  // Recurse into all object properties to find nested AST nodes
+  for (const key of Object.keys(node as object)) {
+    if (key === 'loc' || key === 'original' || key === 'sexpr' || key === 'escaped') continue;
+    const value = (node as any)[key];
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        if (item && typeof item === 'object' && 'type' in item) {
+          collectUnknownVariables(item, knownVariables, unknownVariables);
+        }
+      }
+    } else if (value && typeof value === 'object' && 'type' in value) {
+      collectUnknownVariables(value, knownVariables, unknownVariables);
+    }
+  }
 }
 
 function getPreviewContext(templateCode: EmailTemplateCode): EmailTemplateContext {
@@ -238,7 +325,7 @@ export function listEmailTemplateDefinitions(): EmailTemplateDefinition[] {
 
 export function upsertEmailTemplateOverride(input: UpsertEmailTemplateOverrideInput): EmailTemplateDefinition {
   const knownTemplateCode = assertKnownTemplateCode(input.templateCode);
-  validateTemplateSource(input.subjectTemplate, input.htmlTemplate, input.textTemplate);
+  validateTemplateSource(input.subjectTemplate, input.htmlTemplate, input.textTemplate, knownTemplateCode);
 
   db.prepare(
     `INSERT INTO email_templates (code, subject_template, html_template, text_template, description, updated_by, updated_at)

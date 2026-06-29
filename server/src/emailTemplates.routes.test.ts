@@ -17,7 +17,7 @@ type EmailTemplatesRoutesTestContext = {
   cleanup: () => void;
 };
 
-const TEST_MODULES = ['./db', './auth', './routes/emailTemplates'] as const;
+const TEST_MODULES = ['./db', './auth', './emailTemplates', './routes/emailTemplates'] as const;
 
 function clearModuleCache() {
   for (const modulePath of TEST_MODULES) {

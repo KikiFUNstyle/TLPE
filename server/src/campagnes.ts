@@ -262,7 +262,8 @@ function runMiseEnDemeureJPlus1(campagneId: number, userId: number, ip?: string 
       });
       generatedPdfs += 1;
 
-      const portalLink = `${process.env.TLPE_PORTAL_BASE_URL || 'http://localhost:5173'}/login`;
+      const portalBaseUrl = (process.env.TLPE_PORTAL_BASE_URL || 'http://localhost:5173').replace(/\/$/, '');
+      const portalLink = `${portalBaseUrl}/login`;
       const rendered = renderEmailTemplate({
         templateCode: 'mise_en_demeure_auto',
         context: {

@@ -32,6 +32,12 @@ function handleEmailTemplateError(res: Response, error: unknown) {
     if (error.message.startsWith('Template email inconnu:')) {
       return res.status(404).json({ error: error.message });
     }
+    if (
+      error.message.startsWith('Fichier de template email introuvable:') ||
+      error.message.startsWith('Répertoire des templates email introuvable.')
+    ) {
+      return res.status(500).json({ error: 'Erreur interne de configuration des templates' });
+    }
     return res.status(400).json({ error: error.message });
   }
   return res.status(500).json({ error: 'Erreur interne' });

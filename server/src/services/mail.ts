@@ -41,6 +41,7 @@ export interface QueuedEmailNotificationInput {
   emailDestinataire: string;
   objet: string;
   corps: string;
+  corpsTexte?: string;
   attachments?: MailAttachmentInput[];
   templateCode: string;
   relanceNiveau?: 'J-30' | 'J-15' | 'J-7' | 'depasse' | null;
@@ -103,6 +104,7 @@ type NotificationRow = {
   email_destinataire: string;
   objet: string;
   corps: string;
+  corps_texte: string | null;
   template_code: string;
   relance_niveau: 'J-30' | 'J-15' | 'J-7' | 'depasse' | null;
   pieces_jointes_json: string | null;
@@ -310,15 +312,16 @@ export function queueEmailNotification(input: QueuedEmailNotificationInput): num
   const result = db.prepare(
     `INSERT INTO notifications_email (
       campagne_id, assujetti_id, email_destinataire, objet, corps,
-      template_code, relance_niveau, piece_jointe_path, pieces_jointes_json, magic_link,
+      corps_texte, template_code, relance_niveau, piece_jointe_path, pieces_jointes_json, magic_link,
       mode, statut, tentatives, created_by
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?)`,
   ).run(
     input.campagneId,
     input.assujettiId,
     input.emailDestinataire,
     input.objet,
     input.corps,
+    input.corpsTexte ?? null,
     input.templateCode,
     input.relanceNiveau ?? null,
     input.pieceJointePath ?? null,
@@ -359,15 +362,16 @@ export function persistEmailNotification(input: QueuedEmailNotificationInput & {
   const result = db.prepare(
     `INSERT INTO notifications_email (
       campagne_id, assujetti_id, email_destinataire, objet, corps,
-      template_code, relance_niveau, piece_jointe_path, pieces_jointes_json, magic_link,
+      corps_texte, template_code, relance_niveau, piece_jointe_path, pieces_jointes_json, magic_link,
       mode, statut, tentatives, erreur, sent_at, provider_message_id, created_by
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     input.campagneId,
     input.assujettiId,
     input.emailDestinataire,
     input.objet,
     input.corps,
+    input.corpsTexte ?? null,
     input.templateCode,
     input.relanceNiveau ?? null,
     input.pieceJointePath ?? null,
@@ -426,7 +430,7 @@ export function markAssujettiEmailInvalide(assujettiId: number) {
 function listDueNotifications(nowIso: string) {
   return db.prepare(
     `SELECT id, campagne_id, assujetti_id, email_destinataire, objet, corps,
-            template_code, relance_niveau, pieces_jointes_json, mode,
+            corps_texte, template_code, relance_niveau, pieces_jointes_json, mode,
             tentatives, created_by
      FROM notifications_email
      WHERE statut = 'pending'
@@ -454,6 +458,7 @@ export async function runPendingEmailNotificationsWorker(
         to: notification.email_destinataire,
         subject: notification.objet,
         html: notification.corps,
+        text: notification.corps_texte ?? undefined,
         attachments: deserializeAttachments(notification.pieces_jointes_json),
       });
 

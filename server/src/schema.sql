@@ -213,6 +213,7 @@ CREATE TABLE IF NOT EXISTS notifications_email (
   email_destinataire  TEXT NOT NULL,
   objet               TEXT NOT NULL,
   corps               TEXT NOT NULL,
+  corps_texte         TEXT,
   template_code       TEXT NOT NULL DEFAULT 'invitation_campagne',
   relance_niveau      TEXT CHECK (relance_niveau IN ('J-30','J-15','J-7','depasse')),
   piece_jointe_path   TEXT,

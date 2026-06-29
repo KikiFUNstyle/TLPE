@@ -214,6 +214,7 @@ function maybeSendReceiptEmail(params: {
   verificationToken: string;
   receiptAbsolutePath: string;
   createdBy: number | null;
+  submittedAtIsoUtc?: string;
 }): { status: 'pending' | 'envoye' | 'echec'; error: string | null; sentAt: string | null } {
   const mode = process.env.TLPE_EMAIL_DELIVERY_MODE ?? 'disabled';
   if (!params.assujettiEmail || params.assujettiEmail.trim() === '') {
@@ -232,7 +233,9 @@ function maybeSendReceiptEmail(params: {
       raison_sociale: params.assujettiRaisonSociale,
       identifiant: params.assujettiIdentifiantTlpe,
       identifiant_tlpe: params.assujettiIdentifiantTlpe,
-      date_reception: new Date().toISOString().slice(0, 10),
+      date_reception: params.submittedAtIsoUtc
+        ? params.submittedAtIsoUtc.slice(0, 10)
+        : new Date().toISOString().slice(0, 10),
       lien: verificationUrl,
       portail_url: verificationUrl,
       service: 'Service TLPE',
@@ -240,6 +243,8 @@ function maybeSendReceiptEmail(params: {
       payload_hash: params.payloadHash,
     },
   });
+
+  const sentAt = mode === 'mock-success' ? new Date().toISOString() : null;
 
   persistEmailNotification({
     campagneId: null,
@@ -253,7 +258,7 @@ function maybeSendReceiptEmail(params: {
     createdBy: params.createdBy,
     status: mode === 'mock-success' ? 'envoye' : mode === 'mock-failure' ? 'echec' : 'pending',
     error: mode === 'mock-failure' ? "Echec d'envoi (mode mock-failure)" : mode === 'disabled' ? 'Envoi différé: service SMTP non configuré' : null,
-    sentAt: mode === 'mock-success' ? new Date().toISOString() : null,
+    sentAt,
     attempts: mode === 'mock-success' || mode === 'mock-failure' ? 1 : 0,
     metadata: {
       declaration_id: params.declarationId,
@@ -263,7 +268,7 @@ function maybeSendReceiptEmail(params: {
   });
 
   if (mode === 'mock-success') {
-    return { status: 'envoye', error: null, sentAt: new Date().toISOString() };
+    return { status: 'envoye', error: null, sentAt };
   }
 
   if (mode === 'mock-failure') {
@@ -345,6 +350,7 @@ export async function ensureDeclarationReceipt(input: {
     verificationToken,
     receiptAbsolutePath: absolutePath,
     createdBy: input.generatedBy,
+    submittedAtIsoUtc: input.submittedAtIsoUtc,
   });
 
   db.prepare(
