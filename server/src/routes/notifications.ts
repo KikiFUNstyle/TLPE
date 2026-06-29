@@ -165,7 +165,7 @@ function selectRows(filters: NotificationsFilters, withPagination: boolean) {
 }
 
 function sanitizeCsvFormulaInjection(value: string): string {
-  return /^[=+\-@]/.test(value) ? `'${value}` : value;
+  return /^\s*[=+\-@]/.test(value) ? `'${value}` : value;
 }
 
 function csvEscape(value: string | number | null): string {

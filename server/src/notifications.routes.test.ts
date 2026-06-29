@@ -30,7 +30,11 @@ function clearModuleCache() {
 }
 
 function createContext(): NotificationsRoutesTestContext {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tlpe-notifications-routes-test-'));
+  const tempDir = path.join(
+    os.tmpdir(),
+    `tlpe-notifications-routes-test-${process.pid}-${Math.random().toString(36).slice(2, 10)}`,
+  );
+  fs.mkdirSync(tempDir, { recursive: true });
   const dbPath = path.join(tempDir, 'tlpe.db');
   const previousDbPath = process.env.TLPE_DB_PATH;
   process.env.TLPE_DB_PATH = dbPath;
@@ -57,6 +61,11 @@ function createContext(): NotificationsRoutesTestContext {
         delete process.env.TLPE_DB_PATH;
       } else {
         process.env.TLPE_DB_PATH = previousDbPath;
+      }
+      try {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      } catch {
+        // ignore cleanup errors
       }
     },
   };

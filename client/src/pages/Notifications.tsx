@@ -67,6 +67,7 @@ export default function Notifications() {
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [resending, setResending] = useState<number | null>(null);
+  const [refreshCounter, setRefreshCounter] = useState(0);
   const requestIdRef = useRef(0);
 
   const fetchUrl = useMemo(
@@ -95,7 +96,7 @@ export default function Notifications() {
       });
 
     return () => { cancelled = true; };
-  }, [fetchUrl]);
+  }, [fetchUrl, refreshCounter]);
 
   function handleSearch(event: FormEvent) {
     event.preventDefault();
@@ -135,6 +136,7 @@ export default function Notifications() {
     try {
       await api(`/api/notifications/${id}/resend`, { method: 'POST' });
       setPage(1);
+      setRefreshCounter((c) => c + 1);
     } catch (err: unknown) {
       console.error('Erreur renvoi notification:', err);
       alert("Erreur lors du renvoi de la notification");

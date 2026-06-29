@@ -58,8 +58,8 @@ export function defaultNotificationsFilters(): NotificationsFiltersForm {
   };
 }
 
-export function canExportNotifications(_params: { canManage: boolean }) {
-  return true;
+export function canExportNotifications(params: { canManage: boolean }) {
+  return params.canManage;
 }
 
 export function buildNotificationsPath(
