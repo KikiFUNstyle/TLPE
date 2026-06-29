@@ -14,6 +14,7 @@ import { geocodingRouter } from './routes/geocoding';
 import { referentielsRouter } from './routes/referentiels';
 import { simulateurRouter } from './routes/simulateur';
 import { assujettisRouter } from './routes/assujettis';
+import { emailTemplatesRouter } from './routes/emailTemplates';
 
 function createApp() {
   const app = express();
@@ -26,6 +27,7 @@ function createApp() {
   app.use('/api/referentiels', referentielsRouter);
   app.use('/api/simulateur', simulateurRouter);
   app.use('/api/assujettis', assujettisRouter);
+  app.use('/api/email-templates', emailTemplatesRouter);
   return app;
 }
 

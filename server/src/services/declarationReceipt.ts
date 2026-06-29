@@ -5,6 +5,8 @@ import * as PDFKit from 'pdfkit';
 const PDFDocument = (PDFKit as unknown as { default?: typeof PDFKit; new (...args: any[]): any }).default ?? (PDFKit as unknown as any);
 import QRCode from 'qrcode';
 import { db } from '../db';
+import { renderEmailTemplate } from '../emailTemplates';
+import { persistEmailNotification } from './mail';
 
 interface DeclarationReceiptPayload {
   declarationId: number;
@@ -203,28 +205,74 @@ function buildDownloadUrl(relativePath: string): string {
 
 function maybeSendReceiptEmail(params: {
   declarationId: number;
+  assujettiId: number;
+  assujettiRaisonSociale: string;
+  assujettiIdentifiantTlpe: string;
   assujettiEmail: string | null;
   numeroDeclaration: string;
   payloadHash: string;
   verificationToken: string;
   receiptAbsolutePath: string;
+  createdBy: number | null;
+  submittedAtIsoUtc?: string;
 }): { status: 'pending' | 'envoye' | 'echec'; error: string | null; sentAt: string | null } {
   const mode = process.env.TLPE_EMAIL_DELIVERY_MODE ?? 'disabled';
   if (!params.assujettiEmail || params.assujettiEmail.trim() === '') {
     return { status: 'echec', error: 'Email assujetti manquant', sentAt: null };
   }
 
+  if (!fs.existsSync(params.receiptAbsolutePath)) {
+    return { status: 'echec', error: 'Pièce jointe introuvable', sentAt: null };
+  }
+
+  const verificationUrl = buildVerificationUrl(params.verificationToken);
+  const rendered = renderEmailTemplate({
+    templateCode: 'accuse_reception_declaration',
+    context: {
+      numero_declaration: params.numeroDeclaration,
+      raison_sociale: params.assujettiRaisonSociale,
+      identifiant: params.assujettiIdentifiantTlpe,
+      identifiant_tlpe: params.assujettiIdentifiantTlpe,
+      date_reception: params.submittedAtIsoUtc
+        ? params.submittedAtIsoUtc.slice(0, 10)
+        : new Date().toISOString().slice(0, 10),
+      lien: verificationUrl,
+      portail_url: verificationUrl,
+      service: 'Service TLPE',
+      service_label: 'Service: Service TLPE',
+      payload_hash: params.payloadHash,
+    },
+  });
+
+  const sentAt = mode === 'mock-success' ? new Date().toISOString() : null;
+
+  persistEmailNotification({
+    campagneId: null,
+    assujettiId: params.assujettiId,
+    emailDestinataire: params.assujettiEmail.trim(),
+    objet: rendered.subject,
+    corps: rendered.text,
+    templateCode: 'accuse_reception_declaration',
+    pieceJointePath: normalizeStoredPath(path.relative(path.resolve(__dirname, '..', '..', 'data'), params.receiptAbsolutePath)),
+    mode: 'auto',
+    createdBy: params.createdBy,
+    status: mode === 'mock-success' ? 'envoye' : mode === 'mock-failure' ? 'echec' : 'pending',
+    error: mode === 'mock-failure' ? "Echec d'envoi (mode mock-failure)" : mode === 'disabled' ? 'Envoi différé: service SMTP non configuré' : null,
+    sentAt,
+    attempts: mode === 'mock-success' || mode === 'mock-failure' ? 1 : 0,
+    metadata: {
+      declaration_id: params.declarationId,
+      verification_token: params.verificationToken,
+      payload_hash: params.payloadHash,
+    },
+  });
+
   if (mode === 'mock-success') {
-    return { status: 'envoye', error: null, sentAt: new Date().toISOString() };
+    return { status: 'envoye', error: null, sentAt };
   }
 
   if (mode === 'mock-failure') {
     return { status: 'echec', error: "Echec d'envoi (mode mock-failure)", sentAt: null };
-  }
-
-  // MVP: SMTP réel livré en US11.x. On enregistre l'attachement prêt pour envoi différé.
-  if (!fs.existsSync(params.receiptAbsolutePath)) {
-    return { status: 'echec', error: 'Pièce jointe introuvable', sentAt: null };
   }
 
   return {
@@ -293,11 +341,16 @@ export async function ensureDeclarationReceipt(input: {
 
   const emailResult = maybeSendReceiptEmail({
     declarationId: input.declarationId,
+    assujettiId: input.assujetti.id,
+    assujettiRaisonSociale: input.assujetti.raisonSociale,
+    assujettiIdentifiantTlpe: input.assujetti.identifiantTlpe,
     assujettiEmail: input.assujetti.email,
     numeroDeclaration: input.numeroDeclaration,
     payloadHash: input.payloadHash,
     verificationToken,
     receiptAbsolutePath: absolutePath,
+    createdBy: input.generatedBy,
+    submittedAtIsoUtc: input.submittedAtIsoUtc,
   });
 
   db.prepare(

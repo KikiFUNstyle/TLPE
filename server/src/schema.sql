@@ -213,6 +213,7 @@ CREATE TABLE IF NOT EXISTS notifications_email (
   email_destinataire  TEXT NOT NULL,
   objet               TEXT NOT NULL,
   corps               TEXT NOT NULL,
+  corps_texte         TEXT,
   template_code       TEXT NOT NULL DEFAULT 'invitation_campagne',
   relance_niveau      TEXT CHECK (relance_niveau IN ('J-30','J-15','J-7','depasse')),
   piece_jointe_path   TEXT,
@@ -233,6 +234,20 @@ CREATE TABLE IF NOT EXISTS notifications_email (
 );
 CREATE INDEX IF NOT EXISTS idx_notifications_email_campagne ON notifications_email(campagne_id, assujetti_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_email_statut ON notifications_email(statut, sent_at);
+
+CREATE TABLE IF NOT EXISTS email_templates (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  code             TEXT NOT NULL UNIQUE,
+  subject_template TEXT NOT NULL,
+  html_template    TEXT NOT NULL,
+  text_template    TEXT NOT NULL,
+  description      TEXT,
+  updated_by       INTEGER,
+  created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at       TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_email_templates_updated_by ON email_templates(updated_by);
 
 -- =====================================================================
 -- Mises en demeure declenchees a la cloture de campagne (US3.5)

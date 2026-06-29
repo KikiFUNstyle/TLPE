@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { db, logAudit } from './db';
+import { renderEmailTemplate } from './emailTemplates';
 import { isMockEmailDeliveryMode, persistEmailNotification, queueEmailNotification } from './services/mail';
 
 export type RelanceNiveau = 'J-30' | 'J-15' | 'J-7';
@@ -114,28 +115,39 @@ function hasNotificationAlreadySent(campagneId: number, assujettiId: number, niv
 }
 
 function buildObjet(annee: number, niveau: RelanceNiveau): string {
-  return `Relance declaration TLPE ${annee} (${niveau})`;
+  return renderEmailTemplate({
+    templateCode: 'relance_declaration',
+    context: {
+      annee,
+      niveau_relance: niveau,
+      date_limite_declaration: '',
+      lien: `${PORTAL_BASE_URL}/login`,
+      portail_url: `${PORTAL_BASE_URL}/login`,
+      raison_sociale: '',
+      service: 'Service TLPE',
+      service_label: 'Service: Service TLPE',
+    },
+  }).subject;
 }
 
 function buildCorps(campagne: ActiveCampagne, assujetti: AssujettiRelancable, niveau: RelanceNiveau): string {
-  const lines: string[] = [
-    `Bonjour ${assujetti.raison_sociale},`,
-    '',
-    `Nous vous rappelons que votre declaration TLPE ${campagne.annee} doit etre soumise avant le ${campagne.date_limite_declaration}.`,
-  ];
-
-  if (niveau === 'J-15') {
-    lines.push(`Acces direct au formulaire: ${PORTAL_BASE_URL}/declarations`);
-  } else {
-    lines.push(`Acces au portail: ${PORTAL_BASE_URL}/login`);
-  }
-
-  if (niveau === 'J-7') {
-    lines.push('A 7 jours de la date limite, cette relance est prioritaire.');
-  }
-
-  lines.push('', 'Cordialement,', 'Service TLPE');
-  return lines.join('\n');
+  const lien = niveau === 'J-15' ? `${PORTAL_BASE_URL}/declarations` : `${PORTAL_BASE_URL}/login`;
+  return renderEmailTemplate({
+    templateCode: 'relance_declaration',
+    context: {
+      campagne_annee: campagne.annee,
+      annee: campagne.annee,
+      date_limite_declaration: campagne.date_limite_declaration,
+      identifiant: assujetti.identifiant_tlpe,
+      identifiant_tlpe: assujetti.identifiant_tlpe,
+      raison_sociale: assujetti.raison_sociale,
+      niveau_relance: niveau,
+      lien,
+      portail_url: `${PORTAL_BASE_URL}/login`,
+      service: 'Service TLPE',
+      service_label: 'Service: Service TLPE',
+    },
+  }).text;
 }
 
 function ensureRelancesDir(campagneId: number): string {

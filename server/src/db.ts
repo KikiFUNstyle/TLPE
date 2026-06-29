@@ -758,6 +758,49 @@ export function initSchema() {
   if (notificationsEmailColumns.some((column) => column.name === 'prochain_essai_at')) {
     db.exec('CREATE INDEX IF NOT EXISTS idx_notifications_email_retry ON notifications_email(statut, prochain_essai_at)');
   }
+  if (!notificationsEmailColumns.some((column) => column.name === 'corps_texte')) {
+    db.exec("ALTER TABLE notifications_email ADD COLUMN corps_texte TEXT");
+  }
+
+  const hasEmailTemplates = (
+    db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'email_templates'").get() as
+      | { name: string }
+      | undefined
+  )?.name === 'email_templates';
+  if (!hasEmailTemplates) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS email_templates (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        code             TEXT NOT NULL UNIQUE,
+        subject_template TEXT NOT NULL,
+        html_template    TEXT NOT NULL,
+        text_template    TEXT NOT NULL,
+        description      TEXT,
+        updated_by       INTEGER,
+        created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at       TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL
+      );
+    `);
+  } else {
+    // migration: add missing columns if table already exists from partial schema
+    const emailTemplateColumns = db.prepare("PRAGMA table_info('email_templates')").all() as Array<{ name: string }>;
+    const emailTemplateColNames = emailTemplateColumns.map(col => col.name);
+    if (!emailTemplateColNames.includes('description')) {
+      db.exec("ALTER TABLE email_templates ADD COLUMN description TEXT");
+    }
+    if (!emailTemplateColNames.includes('updated_by')) {
+      db.exec("ALTER TABLE email_templates ADD COLUMN updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL");
+    }
+    if (!emailTemplateColNames.includes('created_at')) {
+      // SQLite ALTER TABLE ADD COLUMN requires a constant default, not an expression
+      db.exec("ALTER TABLE email_templates ADD COLUMN created_at TEXT NOT NULL DEFAULT ''");
+    }
+    if (!emailTemplateColNames.includes('updated_at')) {
+      db.exec("ALTER TABLE email_templates ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''");
+    }
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS idx_email_templates_updated_by ON email_templates(updated_by)');
 
   // migration legacy -> ajoute alerte_gestionnaire sur declarations si table deja presente
   const hasDeclarations = (
