@@ -636,7 +636,7 @@ test('POST /api/contentieux/:id/decider et POST /api/contentieux/:id/evenements 
   assert.equal(timeline.status, 200);
   assert.deepEqual(
     (timeline.data as Array<{ type: string }>).map((event) => event.type),
-    ['ouverture', 'statut', 'decision', 'courrier'],
+    ['courrier', 'ouverture', 'statut', 'decision'],
   );
 
   const pdf = await requestBinary({
