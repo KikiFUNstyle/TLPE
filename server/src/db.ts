@@ -793,10 +793,11 @@ export function initSchema() {
       db.exec("ALTER TABLE email_templates ADD COLUMN updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL");
     }
     if (!emailTemplateColNames.includes('created_at')) {
-      db.exec("ALTER TABLE email_templates ADD COLUMN created_at TEXT NOT NULL DEFAULT (datetime('now'))");
+      // SQLite ALTER TABLE ADD COLUMN requires a constant default, not an expression
+      db.exec("ALTER TABLE email_templates ADD COLUMN created_at TEXT NOT NULL DEFAULT ''");
     }
     if (!emailTemplateColNames.includes('updated_at')) {
-      db.exec("ALTER TABLE email_templates ADD COLUMN updated_at TEXT NOT NULL DEFAULT (datetime('now'))");
+      db.exec("ALTER TABLE email_templates ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''");
     }
   }
   db.exec('CREATE INDEX IF NOT EXISTS idx_email_templates_updated_by ON email_templates(updated_by)');

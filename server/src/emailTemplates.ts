@@ -83,6 +83,11 @@ const HANDLEBARS_HTML = Handlebars.create();
 const HANDLEBARS_TEXT = Handlebars.create();
 const HANDLEBARS_SUBJECT = Handlebars.create();
 
+/** Built-in Handlebars helper names that are not context variables. */
+const HANDLEBARS_BUILTIN_HELPERS = new Set([
+  'if', 'unless', 'each', 'with', 'log', 'lookup',
+]);
+
 function isKnownTemplateCode(templateCode: string): templateCode is EmailTemplateCode {
   return (DEFAULT_EMAIL_TEMPLATE_CODES as readonly string[]).includes(templateCode);
 }
@@ -174,6 +179,17 @@ function validateTemplateSource(subjectTemplate: string, htmlTemplate: string, t
   HANDLEBARS_HTML.parse(htmlTemplate);
   HANDLEBARS_TEXT.parse(textTemplate);
 
+  // Reject unescaped triple-stache {{{var}}} expressions in HTML templates
+  // as they bypass Handlebars HTML escaping and create injection risk
+  const unescapedExpressions = collectUnescapedExpressions(htmlTemplate);
+  if (unescapedExpressions.length > 0) {
+    throw new Error(
+      `Expressions non échappées ({{{...}}}) détectées dans le template HTML ${templateCode ?? '(sans code)'} : ` +
+      unescapedExpressions.join(', ') +
+      '. Utilisez {{var}} avec échappement automatique plutôt que {{{var}}} pour prévenir les injections XSS.',
+    );
+  }
+
   if (templateCode) {
     const knownVariables = new Set(getTemplateVariables(templateCode));
     const unknownVariables = new Set<string>();
@@ -193,6 +209,38 @@ function validateTemplateSource(subjectTemplate: string, htmlTemplate: string, t
   }
 }
 
+/**
+ * Walk the Handlebars AST and find unescaped MustacheStatement nodes
+ * (triple-stache {{{var}}} or {{& var}}) in the provided template source.
+ */
+function collectUnescapedExpressions(source: string): string[] {
+  const unescaped: string[] = [];
+  function walk(node: any): void {
+    if (!node || typeof node !== 'object') return;
+    if (node.type === 'MustacheStatement' && node.escaped === false) {
+      if (node.path && node.path.original) {
+        unescaped.push(node.path.original);
+      } else {
+        unescaped.push('(anonymous)');
+      }
+      return;
+    }
+    for (const key of Object.keys(node)) {
+      if (key === 'loc') continue;
+      const value = node[key];
+      if (Array.isArray(value)) {
+        for (const item of value) {
+          if (item && typeof item === 'object') walk(item);
+        }
+      } else if (value && typeof value === 'object') {
+        walk(value);
+      }
+    }
+  }
+  walk(HANDLEBARS_HTML.parse(source));
+  return unescaped;
+}
+
 function collectUnknownVariables(
   node: any,
   knownVariables: Set<string>,
@@ -210,7 +258,13 @@ function collectUnknownVariables(
   if (node.type === 'PathExpression') {
     const path = node.original;
     // Skip built-in paths starting with @ (like @index, @key, @first, @last)
-    if (!path.startsWith('@') && !unknownVariables.has(path) && !knownVariables.has(path)) {
+    // Skip built-in helpers (if, each, unless, with, log, lookup)
+    // Skip special reference 'this'
+    // Skip parent-scope references starting with ../
+    if (path.startsWith('@') || HANDLEBARS_BUILTIN_HELPERS.has(path) || path === 'this' || path.startsWith('../')) {
+      return;
+    }
+    if (!unknownVariables.has(path) && !knownVariables.has(path)) {
       unknownVariables.add(path);
     }
     return;
