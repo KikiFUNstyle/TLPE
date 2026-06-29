@@ -24,6 +24,7 @@ import { rapportsRouter } from './routes/rapports';
 import { exportsPersonnalisesRouter } from './routes/exportsPersonnalises';
 import { auditLogRouter } from './routes/auditLog';
 import { emailTemplatesRouter } from './routes/emailTemplates';
+import { notificationsRouter } from './routes/notifications';
 
 const PORT = Number(process.env.PORT || 4000);
 
@@ -66,6 +67,7 @@ app.use('/api/rapports', rapportsRouter);
 app.use('/api/exports-personnalises', exportsPersonnalisesRouter);
 app.use('/api/audit-log', auditLogRouter);
 app.use('/api/email-templates', emailTemplatesRouter);
+app.use('/api/notifications', notificationsRouter);
 
 // Fichiers statiques du front en prod
 const clientDist = path.resolve(__dirname, '..', '..', 'client', 'dist');
