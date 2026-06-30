@@ -11,6 +11,7 @@ const requiredPages = [
   'docs/index.md',
   'docs/installation.md',
   'docs/mobile-native-roadmap.md',
+  'docs/deployment-roadmap.md',
   'docs/agents.md',
   'docs/financier.md',
   'docs/controleur.md',
@@ -28,6 +29,7 @@ test('la documentation utilisateur MkDocs référence les sections attendues, ac
   assert.match(config, /theme:\s*[\s\S]*name:\s*material/i);
   assert.match(config, /pdf-export/i);
   assert.match(config, /Feuille de route mobile native/i);
+  assert.match(config, /Déploiement infrastructure/i);
   assert.match(config, /Agents/i);
   assert.match(config, /Financier/i);
   assert.match(config, /Contrôleur/i);
