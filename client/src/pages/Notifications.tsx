@@ -119,11 +119,11 @@ export default function Notifications() {
   async function handleExportCsv() {
     setExporting(true);
     try {
-      const url = buildNotificationsPath(filters, { format: 'csv' });
+      const url = buildNotificationsPath(committedFilters, { format: 'csv' });
       const { blob, filename } = await apiBlobWithMetadata(url);
       const link = document.createElement('a');
       link.href = URL.createObjectURL(blob);
-      link.download = filename ?? buildNotificationsExportFilename(filters);
+      link.download = filename ?? buildNotificationsExportFilename(committedFilters);
       link.click();
       URL.revokeObjectURL(link.href);
     } catch (err: unknown) {
