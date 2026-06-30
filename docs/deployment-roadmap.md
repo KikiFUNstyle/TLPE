@@ -72,8 +72,8 @@ Le dépôt TLPE Manager livre aujourd'hui un socle fonctionnel complet (backend 
 |----------|-------------|--------|
 | `NODE_ENV=production` | Mode production | Fixe |
 | `PORT=4000` | Port d'écoute interne | Fixe |
-| `TLPE_JWT_SECRET` | Clé de signature JWT (min 32 chars) | Générer |  |
-| `TLPE_DATA_KEY` | Clé AES-256 pour chiffrement au repos | Générer |  |
+| `TLPE_JWT_SECRET` | Clé de signature JWT (min 32 chars) | Générer |
+| `TLPE_DATA_KEY` | Clé AES-256 pour chiffrement au repos | Générer |
 | `TLPE_DATA_KEY_VERSION` | Version de la clé (incrémenter en rotation) | Incrémental |
 | `SMTP_HOST` | Serveur SMTP transactionnel | Config |
 | `SMTP_PORT` | Port SMTP | Config |
