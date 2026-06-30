@@ -75,6 +75,10 @@ function buildStatusLabel(statut: string): string {
   return STATUT_LABELS[statut] ?? statut;
 }
 
+function escapeLike(value: string): string {
+  return value.replace(/[%_]/g, (char) => `\\${char}`);
+}
+
 function buildWhere(filters: NotificationsFilters) {
   const clauses: string[] = [];
   const params: Array<string | number> = [];
@@ -84,8 +88,8 @@ function buildWhere(filters: NotificationsFilters) {
     params.push(filters.statut);
   }
   if (filters.email_destinataire) {
-    clauses.push('LOWER(n.email_destinataire) LIKE LOWER(?)');
-    params.push(`%${filters.email_destinataire}%`);
+    clauses.push("LOWER(n.email_destinataire) LIKE LOWER(?) ESCAPE '\\'");
+    params.push(`%${escapeLike(filters.email_destinataire)}%`);
   }
   if (filters.template_code) {
     clauses.push('n.template_code = ?');
@@ -101,13 +105,13 @@ function buildWhere(filters: NotificationsFilters) {
   }
   if (filters.q) {
     clauses.push(`(
-      LOWER(COALESCE(n.email_destinataire, '')) LIKE LOWER(?)
-      OR LOWER(COALESCE(n.objet, '')) LIKE LOWER(?)
-      OR LOWER(COALESCE(a.raison_sociale, '')) LIKE LOWER(?)
-      OR LOWER(COALESCE(a.siret, '')) LIKE LOWER(?)
-      OR LOWER(COALESCE(n.template_code, '')) LIKE LOWER(?)
+      LOWER(COALESCE(n.email_destinataire, '')) LIKE LOWER(?) ESCAPE '\\'
+      OR LOWER(COALESCE(n.objet, '')) LIKE LOWER(?) ESCAPE '\\'
+      OR LOWER(COALESCE(a.raison_sociale, '')) LIKE LOWER(?) ESCAPE '\\'
+      OR LOWER(COALESCE(a.siret, '')) LIKE LOWER(?) ESCAPE '\\'
+      OR LOWER(COALESCE(n.template_code, '')) LIKE LOWER(?) ESCAPE '\\'
     )`);
-    const q = `%${filters.q}%`;
+    const q = `%${escapeLike(filters.q)}%`;
     params.push(q, q, q, q, q);
   }
 

@@ -62,6 +62,7 @@ export default function Notifications() {
   const canManage = hasRole('admin') || hasRole('gestionnaire');
   const canExport = canExportNotifications({ canManage });
   const [filters, setFilters] = useState<NotificationsFiltersForm>(() => defaultNotificationsFilters());
+  const [committedFilters, setCommittedFilters] = useState<NotificationsFiltersForm>(() => defaultNotificationsFilters());
   const [page, setPage] = useState(1);
   const [data, setData] = useState<NotificationsPayload | null>(null);
   const [loading, setLoading] = useState(false);
@@ -71,8 +72,8 @@ export default function Notifications() {
   const requestIdRef = useRef(0);
 
   const fetchUrl = useMemo(
-    () => buildNotificationsPath(filters, { page }),
-    [filters, page],
+    () => buildNotificationsPath(committedFilters, { page }),
+    [committedFilters, page],
   );
 
   useEffect(() => {
@@ -100,11 +101,14 @@ export default function Notifications() {
 
   function handleSearch(event: FormEvent) {
     event.preventDefault();
+    setCommittedFilters(filters);
     setPage(1);
   }
 
   function handleReset() {
-    setFilters(defaultNotificationsFilters());
+    const defaults = defaultNotificationsFilters();
+    setFilters(defaults);
+    setCommittedFilters(defaults);
     setPage(1);
   }
 
