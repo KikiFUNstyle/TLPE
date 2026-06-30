@@ -110,8 +110,7 @@ Les données doivent survivre au redémarrage des conteneurs. Volumes Docker à 
 FROM node:22-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
-COPY client/package.json client/package-lock.json ./
-COPY server/package.json server/package-lock.json ./
+COPY client/package.json server/package.json ./
 RUN npm run install:all
 COPY . .
 RUN npm run build
@@ -312,11 +311,17 @@ find "$BACKUP_DIR" -maxdepth 1 -type d -mtime +30 -exec rm -rf {} \;
 set -euo pipefail
 BACKUP_PATH="$1"
 
-# 1. Restore the database (the backup file is a valid SQLite database from better-sqlite3's .backup())
+# 1. Stop the app container to prevent SQLite corruption during file copy
+docker compose stop tlpe-app
+
+# 2. Restore the database (the backup file is a valid SQLite database from better-sqlite3's .backup())
 docker cp "$BACKUP_PATH/tlpe.db" "$(docker compose ps -q tlpe-app):/app/server/data/tlpe.db"
 
-# 2. Restore assets (uploads, receipts) into the container
+# 3. Restore assets (uploads, receipts) into the container
 docker cp "$BACKUP_PATH/assets.tar.gz" "$(docker compose ps -q tlpe-app):/tmp/"
+docker compose start tlpe-app
+# Wait for app to be ready, then extract assets inside running container
+sleep 3
 docker compose exec -T tlpe-app tar xzf /tmp/assets.tar.gz -C /app/server/data/
 docker compose exec -T tlpe-app rm /tmp/assets.tar.gz
 
