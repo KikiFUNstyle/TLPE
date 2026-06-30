@@ -10,6 +10,8 @@ Le dépôt TLPE Manager livre aujourd'hui un socle fonctionnel complet (backend 
 
 ### Vue d'ensemble
 
+![Architecture de déploiement TLPE — schéma d'infrastructure cible](assets/deployment-architecture.svg)
+
 ```ascii
 ┌─────────────────────────────────────────────────┐
 │                   Internet                       │
@@ -52,7 +54,7 @@ Le dépôt TLPE Manager livre aujourd'hui un socle fonctionnel complet (backend 
 
 | Composant | Image | Rôle |
 |-----------|-------|------|
-| `tlpe-app` | `ghcr.io/kikifunstyle/tlpe-app` (Node.js 20-slim) | Application TLPE |
+| `tlpe-app` | `ghcr.io/kikifunstyle/tlpe-app` (Node.js 22-slim) | Application TLPE |
 | `tlpe-reverse-proxy` | `caddy:2-alpine` | Reverse proxy TLS + routage |
 | Réseau | Bridge `tlpe-net` | Communication interne |
 
@@ -105,7 +107,7 @@ Les données doivent survivre au redémarrage des conteneurs. Volumes Docker à 
 ### Dockerfile
 
 ```dockerfile
-FROM node:20-slim AS build
+FROM node:22-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY client/package.json client/package-lock.json ./
@@ -286,8 +288,12 @@ set -euo pipefail
 BACKUP_DIR="/opt/backups/tlpe"
 DATE=$(date +%Y%m%d_%H%M%S)
 mkdir -p "$BACKUP_DIR/$DATE"
-docker compose exec -T tlpe-app \
-  sqlite3 /app/server/data/tlpe.db ".backup '/app/server/data/backup.tlpe.db'"
+docker compose exec -T tlpe-app node -e "
+  const Database = require('better-sqlite3');
+  const src = new Database('/app/server/data/tlpe.db');
+  src.backup('/app/server/data/backup.tlpe.db');
+  src.close();
+"
 docker cp "$(docker compose ps -q tlpe-app)":/app/server/data/backup.tlpe.db \
   "$BACKUP_DIR/$DATE/tlpe.db"
 docker compose exec -T tlpe-app \
@@ -305,10 +311,15 @@ find "$BACKUP_DIR" -maxdepth 1 -type d -mtime +30 -exec rm -rf {} \;
 # scripts/restore-test-production.sh
 set -euo pipefail
 BACKUP_PATH="$1"
-docker compose exec -T tlpe-app \
-  sqlite3 /app/server/data/tlpe.db ".restore '/app/server/data/backup.tlpe.db'"
-docker cp "$BACKUP_PATH/tlpe.db" "$(docker compose ps -q tlpe-app):/app/server/data/"
-tar xzf "$BACKUP_PATH/assets.tar.gz" -C /tmp/tlpe-restore-test/
+
+# 1. Restore the database (the backup file is a valid SQLite database from better-sqlite3's .backup())
+docker cp "$BACKUP_PATH/tlpe.db" "$(docker compose ps -q tlpe-app):/app/server/data/tlpe.db"
+
+# 2. Restore assets (uploads, receipts) into the container
+docker cp "$BACKUP_PATH/assets.tar.gz" "$(docker compose ps -q tlpe-app):/tmp/"
+docker compose exec -T tlpe-app tar xzf /tmp/assets.tar.gz -C /app/server/data/
+docker compose exec -T tlpe-app rm /tmp/assets.tar.gz
+
 echo "Restauration test effectuée depuis : $BACKUP_PATH"
 ```
 

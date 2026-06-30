@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 520" font-family="system-ui, -apple-system, sans-serif">
+  <rect width="800" height="520" fill="#1a1a2e" rx="8"/>
+  <text x="400" y="30" fill="#e0e0e0" font-size="16" text-anchor="middle" font-weight="bold">Architecture de déploiement TLPE</text>
+
+  <!-- Internet -->
+  <rect x="300" y="50" width="200" height="45" rx="8" fill="#16213e" stroke="#0f3460" stroke-width="2"/>
+  <text x="400" y="78" fill="#e0e0e0" font-size="14" text-anchor="middle">Internet</text>
+  <line x1="400" y1="95" x2="400" y2="125" stroke="#0f3460" stroke-width="2"/>
+  <polygon points="395,120 400,130 405,120" fill="#0f3460"/>
+  <text x="490" y="118" fill="#8899aa" font-size="11">HTTPS (80/443)</text>
+
+  <!-- Caddy Reverse Proxy -->
+  <rect x="275" y="130" width="250" height="65" rx="8" fill="#1a3a5c" stroke="#e94560" stroke-width="2"/>
+  <text x="400" y="155" fill="#e94560" font-size="14" text-anchor="middle" font-weight="bold">Reverse Proxy (Caddy)</text>
+  <text x="400" y="175" fill="#8899aa" font-size="11" text-anchor="middle">Terminaison TLS • Let's Encrypt • Routage HTTP</text>
+  <text x="400" y="190" fill="#8899aa" font-size="11" text-anchor="middle">Headers sécurité (HSTS, CSP)</text>
+  <line x1="400" y1="195" x2="400" y2="225" stroke="#0f3460" stroke-width="2"/>
+  <polygon points="395,220 400,230 405,220" fill="#0f3460"/>
+  <text x="490" y="218" fill="#8899aa" font-size="11">HTTP (interne)</text>
+
+  <!-- TLPE App Container -->
+  <rect x="250" y="230" width="300" height="90" rx="8" fill="#1a3a5c" stroke="#0f3460" stroke-width="2"/>
+  <text x="400" y="255" fill="#e0e0e0" font-size="14" text-anchor="middle" font-weight="bold">TLPE App Container (Node.js 22)</text>
+  <text x="400" y="275" fill="#8899aa" font-size="11" text-anchor="middle">Express API • Frontend React • SQLite (WAL mode)</text>
+  <text x="400" y="290" fill="#8899aa" font-size="11" text-anchor="middle">Port : 4000 • Healthcheck : /api/health</text>
+  <text x="400" y="305" fill="#8899aa" font-size="11" text-anchor="middle">Docker Engine + docker compose</text>
+  <line x1="400" y1="320" x2="400" y2="345" stroke="#0f3460" stroke-width="2"/>
+  <polygon points="395,340 400,350 405,340" fill="#0f3460"/>
+  <text x="490" y="343" fill="#8899aa" font-size="11">volume mount</text>
+
+  <!-- Persistent Storage -->
+  <rect x="225" y="350" width="350" height="95" rx="8" fill="#1a1a2e" stroke="#533483" stroke-width="2"/>
+  <text x="400" y="375" fill="#e0e0e0" font-size="14" text-anchor="middle" font-weight="bold">Stockage persistant (volume Docker)</text>
+  <text x="400" y="395" fill="#8899aa" font-size="11" text-anchor="middle">Base SQLite : /app/server/data/tlpe.db</text>
+  <text x="400" y="410" fill="#8899aa" font-size="11" text-anchor="middle">Pièces jointes : /app/server/data/uploads/</text>
+  <text x="400" y="425" fill="#8899aa" font-size="11" text-anchor="middle">Reçus PDF : /app/server/data/receipts/</text>
+  <text x="400" y="440" fill="#8899aa" font-size="11" text-anchor="middle">Sauvegardes : /app/server/data/backups/</text>
+
+  <!-- External access labels -->
+  <text x="120" y="165" fill="#8899aa" font-size="11" text-anchor="end">Ports firewall : 22, 80, 443</text>
+  <text x="120" y="180" fill="#8899aa" font-size="11" text-anchor="end">Nom de domaine dédié</text>
+  <text x="120" y="195" fill="#8899aa" font-size="11" text-anchor="end">Certificats Let's Encrypt</text>
+
+  <!-- Backup flow -->
+  <text x="680" y="395" fill="#8899aa" font-size="11" text-anchor="start">→ Sauvegarde quotidienne</text>
+  <text x="680" y="410" fill="#8899aa" font-size="11" text-anchor="start">→ Rétention 30 jours</text>
+  <text x="680" y="425" fill="#8899aa" font-size="11" text-anchor="start">→ Restauration test</text>
+
+  <!-- VM Host box -->
+  <rect x="10" y="460" width="780" height="50" rx="8" fill="#0d0d1a" stroke="#333" stroke-width="1" stroke-dasharray="4"/>
+  <text x="400" y="480" fill="#666" font-size="12" text-anchor="middle">VM Hôte : Debian 12 • Proxmox VE • 2 vCPU • 4 Go RAM • 20 Go SSD</text>
+  <text x="400" y="497" fill="#666" font-size="12" text-anchor="middle">Service systemd : auto-démarrage au boot • Backup sur /opt/backups/tlpe</text>
+</svg>
