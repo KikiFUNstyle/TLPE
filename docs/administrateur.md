@@ -14,10 +14,19 @@ L’administrateur intervient sur :
 
 ## Supervision et audit
 
-Le module **Journal d’audit** permet :
+Le module **Journal d'audit** permet :
 - de filtrer les événements critiques ;
-- d’exporter le journal pour analyse ;
+- d'exporter le journal pour analyse ;
 - de confirmer le caractère lecture seule et immuable des traces.
+
+## Déploiement et exploitation
+
+L'infrastructure cible de production est documentée dans la **[feuille de route déploiement infrastructure](deployment-roadmap.md)**, qui couvre :
+- l'architecture Docker / Docker Compose ;
+- le reverse proxy Caddy avec TLS automatique ;
+- les procédures d'installation, mise à jour, sauvegarde et restauration ;
+- l'observabilité et les diagnostics ;
+- la séparation entre documentation GitHub Pages et déploiement applicatif.
 
 ## Documentation et exploitation
 
