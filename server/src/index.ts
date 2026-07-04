@@ -25,6 +25,7 @@ import { exportsPersonnalisesRouter } from './routes/exportsPersonnalises';
 import { auditLogRouter } from './routes/auditLog';
 import { emailTemplatesRouter } from './routes/emailTemplates';
 import { notificationsRouter } from './routes/notifications';
+import { dgfipRecettesRouter } from './routes/dgfipRecettes';
 
 const PORT = Number(process.env.PORT || 4000);
 
@@ -68,6 +69,7 @@ app.use('/api/exports-personnalises', exportsPersonnalisesRouter);
 app.use('/api/audit-log', auditLogRouter);
 app.use('/api/email-templates', emailTemplatesRouter);
 app.use('/api/notifications', notificationsRouter);
+app.use('/api/dgfip-recettes', dgfipRecettesRouter);
 
 // Fichiers statiques du front en prod
 const clientDist = path.resolve(__dirname, '..', '..', 'client', 'dist');

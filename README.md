@@ -40,7 +40,8 @@ basée sur les articles L2333-6 à L2333-16 du CGCT.
 | Portail contribuable (accès restreint à sa fiche) | §11 | OK |
 | Carte des dispositifs (Leaflet + filtres + export GeoJSON) | §4.2 / §9.2 / §10.2 | OK |
 | Contrôles terrain (web responsive, géoloc navigateur, photos, rattachement/ création dispositif, file hors-ligne navigateur) | §9.1 / §9.2 / US7.1 | OK + tests |
-| Rapport de contrôle automatique (PDF/Excel, delta de taxe, rectification d’office/demande contribuable, ouverture de redressement) | §9.3 / US7.3 | OK + tests |
+| Rapport de contrôle automatique (PDF/Excel, delta de taxe, rectification d'office/demande contribuable, ouverture de redressement) | §9.3 / US7.3 | OK + tests |
+| Export DGFiP déclaration des recettes fiscales (XML avec validation XSD, sélecteur période annuel/trimestriel, contrôle de cohérence montants bruts/recouvrés/impayés, signature optionnelle ordonnateur, bordereau incrémental, historique exports + téléchargement, journalisation audit) | §10.3 / US8.7 | implémenté |
 
 ### Hors périmètre du MVP (prévu phases ultérieures)
 

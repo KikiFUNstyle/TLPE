@@ -745,6 +745,50 @@ CREATE TABLE IF NOT EXISTS exports_sauvegardes (
 CREATE INDEX IF NOT EXISTS idx_exports_sauvegardes_user_updated ON exports_sauvegardes(user_id, updated_at DESC);
 
 -- =====================================================================
+-- Exports DGFiP déclaration des recettes fiscales (US8.7 / §10.3)
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS dgfip_recettes_exports (
+  id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+  annee                 INTEGER NOT NULL,
+  trimestre             INTEGER CHECK (trimestre IS NULL OR trimestre IN (1,2,3,4)),
+  type_periode          TEXT NOT NULL DEFAULT 'annuel' CHECK (type_periode IN ('annuel','trimestriel')),
+  numero_bordereau      INTEGER NOT NULL UNIQUE,
+  xml_filename          TEXT NOT NULL,
+  xml_content           TEXT NOT NULL,
+  xml_hash              TEXT NOT NULL,
+  xsd_validation_ok     INTEGER NOT NULL DEFAULT 0 CHECK (xsd_validation_ok IN (0,1)),
+  xsd_validation_report TEXT,
+  total_montant_brut    REAL NOT NULL DEFAULT 0,
+  total_montant_recouvre REAL NOT NULL DEFAULT 0,
+  total_montant_impaye  REAL NOT NULL DEFAULT 0,
+  titres_count          INTEGER NOT NULL DEFAULT 0,
+  coherence_ok          INTEGER NOT NULL DEFAULT 1 CHECK (coherence_ok IN (0,1)),
+  signature_ordonnateur TEXT,
+  exported_at           TEXT NOT NULL DEFAULT (datetime('now')),
+  exported_by           INTEGER,
+  FOREIGN KEY (exported_by) REFERENCES users(id) ON DELETE SET NULL,
+  CHECK (type_periode = 'annuel' OR (type_periode = 'trimestriel' AND trimestre IS NOT NULL)),
+  CHECK (ROUND(total_montant_brut, 2) = ROUND(total_montant_recouvre + total_montant_impaye, 2))
+);
+CREATE INDEX IF NOT EXISTS idx_dgfip_recettes_exports_annee ON dgfip_recettes_exports(annee, trimestre, exported_at DESC);
+
+CREATE TABLE IF NOT EXISTS dgfip_recettes_export_titres (
+  export_id    INTEGER NOT NULL,
+  titre_id     INTEGER NOT NULL,
+  assujetti_id INTEGER NOT NULL,
+  montant_titre REAL NOT NULL,
+  montant_paye REAL NOT NULL DEFAULT 0,
+  montant_impaye REAL NOT NULL DEFAULT 0,
+  statut_titre TEXT NOT NULL CHECK (statut_titre IN ('paye','paye_partiel','impaye','mise_en_demeure','transmis_comptable','admis_en_non_valeur')),
+  exported_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (export_id, titre_id),
+  FOREIGN KEY (export_id) REFERENCES dgfip_recettes_exports(id) ON DELETE CASCADE,
+  FOREIGN KEY (titre_id) REFERENCES titres(id) ON DELETE RESTRICT,
+  FOREIGN KEY (assujetti_id) REFERENCES assujettis(id) ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS idx_dgfip_recettes_export_titres_titre ON dgfip_recettes_export_titres(titre_id);
+
+-- =====================================================================
 -- Audit log (traçabilite cf. section 12.2)
 -- =====================================================================
 CREATE TABLE IF NOT EXISTS audit_log (
