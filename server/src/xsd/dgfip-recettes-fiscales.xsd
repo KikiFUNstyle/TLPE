@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" elementFormDefault="qualified">
+  <xs:element name="DGFiPRecettesFiscales">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="Entete">
+          <xs:complexType>
+            <xs:sequence>
+              <xs:element name="Collectivite" type="xs:string" />
+              <xs:element name="Siret" type="xs:string" minOccurs="0" />
+              <xs:element name="Ordonnateur" type="xs:string" />
+              <xs:element name="NumeroBordereau" type="xs:string" />
+              <xs:element name="HorodatageExport" type="xs:dateTime" />
+              <xs:element name="TypePeriode">
+                <xs:simpleType>
+                  <xs:restriction base="xs:string">
+                    <xs:enumeration value="annuel" />
+                    <xs:enumeration value="trimestriel" />
+                  </xs:restriction>
+                </xs:simpleType>
+              </xs:element>
+              <xs:element name="Annee" type="xs:integer" />
+              <xs:element name="Trimestre" type="xs:integer" minOccurs="0" />
+            </xs:sequence>
+          </xs:complexType>
+        </xs:element>
+
+        <xs:element name="Recapitulatif">
+          <xs:complexType>
+            <xs:sequence>
+              <xs:element name="TotalTitresEmis" type="xs:integer" />
+              <xs:element name="TotalMontantBrut" type="xs:decimal" />
+              <xs:element name="TotalMontantRecouvre" type="xs:decimal" />
+              <xs:element name="TotalMontantImpaye" type="xs:decimal" />
+              <xs:element name="CoherenceVerifiee" type="xs:boolean" />
+              <xs:element name="DateArrete" type="xs:date" />
+            </xs:sequence>
+          </xs:complexType>
+        </xs:element>
+
+        <xs:element name="Titres">
+          <xs:complexType>
+            <xs:sequence>
+              <xs:element name="Titre" maxOccurs="unbounded">
+                <xs:complexType>
+                  <xs:sequence>
+                    <xs:element name="NumeroTitre" type="xs:string" />
+                    <xs:element name="IdentifiantAssujetti" type="xs:string" />
+                    <xs:element name="DenominationAssujetti" type="xs:string" />
+                    <xs:element name="SiretAssujetti" type="xs:string" minOccurs="0" />
+                    <xs:element name="AdresseAssujetti" type="xs:string" minOccurs="0" />
+                    <xs:element name="DateEmission" type="xs:date" />
+                    <xs:element name="DateEcheance" type="xs:date" />
+                    <xs:element name="MontantTitre" type="xs:decimal" />
+                    <xs:element name="MontantRecouvre" type="xs:decimal" />
+                    <xs:element name="MontantImpaye" type="xs:decimal" />
+                    <xs:element name="Statut">
+                      <xs:simpleType>
+                        <xs:restriction base="xs:string">
+                          <xs:enumeration value="paye" />
+                          <xs:enumeration value="paye_partiel" />
+                          <xs:enumeration value="impaye" />
+                          <xs:enumeration value="mise_en_demeure" />
+                          <xs:enumeration value="transmis_comptable" />
+                          <xs:enumeration value="admis_en_non_valeur" />
+                        </xs:restriction>
+                      </xs:simpleType>
+                    </xs:element>
+                    <xs:element name="ModalitesPaiement" minOccurs="0">
+                      <xs:complexType>
+                        <xs:sequence>
+                          <xs:element name="Paiement" maxOccurs="unbounded">
+                            <xs:complexType>
+                              <xs:sequence>
+                                <xs:element name="DatePaiement" type="xs:date" />
+                                <xs:element name="Montant" type="xs:decimal" />
+                                <xs:element name="Modalite" type="xs:string" />
+                                <xs:element name="Reference" type="xs:string" minOccurs="0" />
+                              </xs:sequence>
+                            </xs:complexType>
+                          </xs:element>
+                        </xs:sequence>
+                      </xs:complexType>
+                    </xs:element>
+                  </xs:sequence>
+                </xs:complexType>
+              </xs:element>
+            </xs:sequence>
+          </xs:complexType>
+        </xs:element>
+
+        <xs:element name="SignatureOptionnelle" minOccurs="0">
+          <xs:complexType>
+            <xs:sequence>
+              <xs:element name="Signataire" type="xs:string" />
+              <xs:element name="Fonction" type="xs:string" />
+              <xs:element name="DateSignature" type="xs:date" />
+              <xs:element name="ValeurSignature" type="xs:string" />
+            </xs:sequence>
+          </xs:complexType>
+        </xs:element>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+</xs:schema>
