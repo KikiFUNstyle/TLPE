@@ -119,7 +119,7 @@ function buildRecettesXml(params: {
     date_emission: string;
     date_echeance: string;
     montant: number;
-    montant_paye: number;
+    montant_recouvre: number;
     montant_impaye: number;
     statut: string;
     paiements: Array<{
@@ -184,7 +184,7 @@ function buildRecettesXml(params: {
     lines.push(`      <DateEmission>${toDateStr(t.date_emission)}</DateEmission>`);
     lines.push(`      <DateEcheance>${toDateStr(t.date_echeance)}</DateEcheance>`);
     lines.push(`      <MontantTitre>${t.montant.toFixed(2)}</MontantTitre>`);
-    lines.push(`      <MontantRecouvre>${t.montant_paye.toFixed(2)}</MontantRecouvre>`);
+    lines.push(`      <MontantRecouvre>${t.montant_recouvre.toFixed(2)}</MontantRecouvre>`);
     lines.push(`      <MontantImpaye>${t.montant_impaye.toFixed(2)}</MontantImpaye>`);
     lines.push(`      <Statut>${escapeXml(t.statut)}</Statut>`);
 
@@ -269,10 +269,10 @@ function buildExportData(params: { annee: number; trimestre?: number }) {
         a.adresse_rue AS assujetti_adresse
       FROM titres t
       JOIN assujettis a ON a.id = t.assujetti_id
-      WHERE t.annee = ?
+      WHERE t.annee = ?${trimestre !== undefined ? ' AND t.date_emission >= ? AND t.date_emission < ?' : ''}
       ORDER BY t.numero`
     )
-    .all(annee) as Array<{
+    .all(trimestre !== undefined ? [annee, dateDebut, dateFin] : [annee]) as Array<{
     id: number;
     numero: string;
     montant: number;
@@ -342,6 +342,8 @@ function buildExportData(params: { annee: number; trimestre?: number }) {
     annee,
     trimestre,
     typePeriode,
+    dateDebut,
+    dateFin,
     titres: titresWithPayments,
     totalMontantBrut: Math.round(totalMontantBrut * 100) / 100,
     totalMontantRecouvre: Math.round(totalMontantRecouvre * 100) / 100,
@@ -471,9 +473,9 @@ dgfipRecettesRouter.post(
         SELECT ?, t.id, t.assujetti_id, t.montant, t.montant_paye,
           MAX(0, t.montant - t.montant_paye), t.statut
         FROM titres t
-        WHERE t.annee = ?`
+        WHERE t.annee = ?${trimestre !== undefined ? ' AND t.date_emission >= ? AND t.date_emission < ?' : ''}`
       );
-      insertLien.run(exportId, annee);
+      insertLien.run(trimestre !== undefined ? [exportId, annee, exportData.dateDebut, exportData.dateFin] : [exportId, annee]);
 
       // Audit log
       const logAudit = db.prepare(
