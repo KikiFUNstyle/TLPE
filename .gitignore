@@ -17,6 +17,7 @@ coverage/
 **/data/uploads/mises_en_demeure_titres/
 **/data/uploads/rapports/
 **/*.tsbuildinfo
+.husky/
 uploads/
 site/
 TLPE/
