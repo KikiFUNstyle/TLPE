@@ -8,7 +8,7 @@
     "client"
   ],
   "scripts": {
-    "install:all": "npm install || echo 'Ignoring root npm install failure' && npm install --workspace=server && npm install --workspace=client",
+    "install:all": "npm install || echo \"Echec de l'installation racine (prepare/husky absent), poursuite avec les workspaces\" && npm install --workspace=server && npm install --workspace=client",
     "dev": "concurrently -n server,client -c blue,green \"npm run dev --workspace=server\" \"npm run dev --workspace=client\"",
     "dev:server": "npm run dev --workspace=server",
     "dev:client": "npm run dev --workspace=client",
